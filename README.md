@@ -1,6 +1,17 @@
 # Quality Gate Skill
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 **A quality harness for autonomous coding agents (Ralph Loop pattern).** Validates code produced by AI agents running in autonomous loops, generating checkpoints that enable agents to verify their own output before commit.
+
+### Key Features
+
+- 🔒 **Fail-Fast Security** — Catches issues in <1 min before expensive mutation testing
+- 🤖 **Agent-Native** — Checkpoints designed for autonomous self-verification
+- 📊 **5-Layer Coverage** — From linting to security scans, SOLID to antipatterns
+- 🔄 **Self-Correction** — Recovery playbooks guide agents back to the right layer
+- 🎯 **Format-Agnostic** — JSON checkpoint works with any CI/CD or agent framework
 
 ## Table of Contents
 
@@ -535,13 +546,37 @@ layer4:
 
 ## Contributing
 
-1. Fork the repository
-2. Create a branch for feature or fix
-3. Ensure all checks pass (L3A first)
-4. Submit PR
+Contributions are welcome! If this skill proves useful to you, please consider giving it a star ⭐ on GitHub — it helps the project gain visibility and encourages further development.
+
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
+3. **Ensure all checks pass** (run L3A smoke test first: `python3 scripts/security_scanner.py .`)
+4. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
+5. **Push to the branch** (`git push origin feature/amazing-feature`)
+6. **Open a Pull Request**
+
+### Development Guidelines
+
+- Follow the existing code style and conventions
+- Update documentation if you add new features
+- Add tests if applicable (especially for new analysis scripts)
+- Ensure the checkpoint JSON structure remains format-agnostic
+
+---
+
+## Support This Project
+
+If `harness-quality-gate` helps you build better autonomous coding agents, consider:
+
+- ⭐ **Starring** this repository on GitHub
+- 🐛 **Reporting issues** with detailed reproduction steps
+- 📝 **Contributing** improvements or new features
+- 📢 **Sharing** with other developers working on Ralph Loop agents
 
 ---
 
 ## License
 
-MIT
+MIT License
