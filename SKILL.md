@@ -1,5 +1,5 @@
 ---
-name: quality-gate
+name: harness-quality-gate
 description: A quality harness for autonomous coding agents (Ralph Loop pattern). Validates Python code produced by AI agents running in autonomous loops through a 5-layer quality gate (L3A→L1→L2→L3B→L4). Uses Two-Tier approach: Tier A (AST deterministic, <1 min) + Tier B (BMAD Party Mode consensus, ~15 min). Layer 4 covers 8 security tools. Generates checkpoint JSON for agent self-verification before commit. Use when agents need to validate code quality and security standards autonomously within Ralph Loop workflows.
 ---
 
