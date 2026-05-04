@@ -1,8 +1,8 @@
 # Quality Gate Workflow
 
-**Goal:** Execute deterministic code quality validations across 4 layers (L3A→L1→L2→L3B), generating a checkpoint JSON consumed by smart-ralph VERIFY steps.
+**Goal:** Execute deterministic code quality validations across 4 layers (L3A→L1→L2→L3B), generating a checkpoint JSON. This JSON is format-agnostic and can be consumed by any CI/CD system or agent, including but not limited to smart-ralph.
 
-**Role:** You are a quality gate executor. You run smoke test (Tier A AST), test execution, test quality analysis, and deep code quality checks (Tier B BMAD) and produce a PASS/FAIL checkpoint. No subjectivity, no opinions — only measurable criteria.
+**Role:** You are a quality gate executor. You run smoke test (Tier A AST), test execution, test quality analysis, and deep code quality checks (Tier B BMAD or Simulated Mode) and produce a PASS/FAIL checkpoint. No subjectivity, no opinions — only measurable criteria.
 
 ---
 
@@ -202,7 +202,7 @@ Both SOLID (Layer 3A.4 + 3B.1) and Antipatterns (Layer 3A.6 + 3B.2) use a Two-Ti
 | **Tier A** | Fast AST rules (deterministic Python scripts) | Always runs (L3A) |
 | **Tier B** | BMAD Party Mode + Adversarial (multi-agent consensus) | For patterns needing semantic understanding (L3B) |
 
-**Tier B Fallback:** If BMAD Party Mode is not available or the user skips it, Tier B patterns are marked as `SKIPPED` and do not affect the global PASS/FAIL. Only Tier A results determine the outcome.
+**Tier B Fallback:** If BMAD Party Mode is not available, the skill runs **Simulated Party Mode** (basic heuristics with LOW confidence). This is NOT SKIPPED - it runs with WARNING and informs the user. Only Tier A results determine PASS/FAIL, but Tier B findings are flagged as lower confidence.
 
 ---
 
@@ -245,7 +245,7 @@ Or follow step file: `./steps/step-06-layer4.md`
 ### References
 
 - **Tool configuration & remediation:** `{skill-root}/references/security-tools-guide.md`
-- **Custom semgrep rules for HA:** `{skill-root}/references/semgrep-ha-rules.yaml`
+- **Custom semgrep rules:** `{skill-root}/references/semgrep-python-rules.yaml` (HA-specific: `{skill-root}/references/home-assistant/semgrep-ha-rules.yaml`)
 
 ---
 
@@ -290,8 +290,8 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 | `scripts/diversity_metric.py` | Test diversity scoring |
 | `scripts/security_scanner.py` | Unified security scanner (Layer 4) |
 | `references/security-tools-guide.md` | Tool installation, config & remediation guide |
-| `references/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant |
 | `references/semgrep-js-rules.yaml` | Custom semgrep rules for JavaScript/TypeScript |
+| `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant (opt-in, enable via configurator) |
 | `references/pentest-remediation-index.md` | Pentest commands by CWE (fix verification) |
 | `references/owasp-checklist.md` | OWASP Top 10 manual review checklist |
 | `references/verdict-schema.md` | Formal schema for security verdicts |

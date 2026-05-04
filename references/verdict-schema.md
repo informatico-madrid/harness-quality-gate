@@ -55,7 +55,7 @@ Verdict:
 
 ```json
 {
-  "finding_id": "bandit-B608-emhass_adapter.py-142",
+  "finding_id": "bandit-B608-my_adapter.py-142",
   "agent": "LLM",
   "verdict": "NEEDS_CONSENSUS",
   "confidence": 0.45,
@@ -70,7 +70,7 @@ Verdict:
 
 ```json
 {
-  "finding_id": "bandit-B608-emhass_adapter.py-142",
+  "finding_id": "bandit-B608-my_adapter.py-142",
   "agent": "Winston",
   "verdict": "CONFIRMED",
   "confidence": 0.85,
@@ -85,7 +85,7 @@ Verdict:
 
 ```json
 {
-  "finding_id": "bandit-B608-emhass_adapter.py-142",
+  "finding_id": "bandit-B608-my_adapter.py-142",
   "agent": "Murat",
   "verdict": "CONFIRMED",
   "confidence": 0.90,
@@ -100,7 +100,7 @@ Verdict:
 
 ```json
 {
-  "finding_id": "bandit-B608-emhass_adapter.py-142",
+  "finding_id": "bandit-B608-my_adapter.py-142",
   "agent": "Amelia",
   "verdict": "CONFIRMED",
   "confidence": 0.80,
@@ -216,7 +216,7 @@ Verdict:
 ```
 
 Examples:
-- `bandit-B608-emhass_adapter.py-142`
+- `bandit-B608-my_adapter.py-142`
 - `semgrep-js-hardcoded-secret-auth.ts-55`
 - `checkov-CKV_DOCKER_1-dockerfile-12`
 - `gitleaks-gitsecrets-secrets.yaml-23`
@@ -237,7 +237,7 @@ The checkpoint JSON should include verdicts in `layer4_security_defense`:
     "escalated_findings": 1,
     "findings": [
       {
-        "finding_id": "bandit-B608-emhass_adapter.py-142",
+        "finding_id": "bandit-B608-my_adapter.py-142",
         "verdicts": [
           {"agent": "LLM", "verdict": "NEEDS_CONSENSUS", "confidence": 0.45},
           {"agent": "Winston", "verdict": "CONFIRMED", "confidence": 0.85},

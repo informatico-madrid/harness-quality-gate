@@ -9,7 +9,7 @@ layer1:
   pytest_timeout_seconds: 300
   e2e:
     command: "make e2e"
-    mandatory: true  # E2E tests are OBLIGATORY in Layer 1
+    mandatory: false  # E2E tests are OPTIONAL in Layer 1
 
 # Layer 2: Test Quality
 layer2:
@@ -176,7 +176,7 @@ layer4:
   bandit:
     priority: required
     targets:
-    - custom_components
+    - src
     - scripts
     # Skip rules (false positives for HA projects)
     skip_rules:
@@ -202,10 +202,10 @@ layer4:
     configs:
     - p/security-audit
     - p/owasp-top-ten
-    - "{skill-root}/references/semgrep-ha-rules.yaml"
-    - "{skill-root}/references/semgrep-js-rules.yaml"
-    # Project-specific rules (optional)
-    # project_rules: ".semgrep/rules.yaml"
+    - "{skill-root}/references/semgrep-python-rules.yaml"  # Generic Python security rules (ALWAYS included)
+    - "{skill-root}/references/semgrep-js-rules.yaml"      # JavaScript/TypeScript rules
+    # The following are OPT-IN via configurator:
+    # - "{skill-root}/references/home-assistant/semgrep-ha-rules.yaml"  # HA-specific rules (enable via configurator)
 
   checkov:
     priority: recommended
@@ -219,10 +219,10 @@ layer4:
     - node_modules
     - .venv
     - _bmad-output
+    - tests
 
   deptry:
     priority: recommended
-    # known_first_party: ["custom_components"]
 
   vulture:
     priority: recommended
@@ -236,7 +236,7 @@ layer4:
 
 # Output configuration
 output:
-  folder: _bmad-output/quality-gate
+  folder: _quality-gate  # Configurable via QUALITY_GATE_OUTPUT env var
   checkpoint_filename: quality-gate-{timestamp}.json
   latest_alias: quality-gate-latest.json
 

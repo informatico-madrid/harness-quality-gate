@@ -24,7 +24,7 @@ Data source:
     This script uses `mutmut results --all true` to get per-mutant status,
     then aggregates by module name extracted from the mutant identifier.
 
-    Format: "custom_components.ev_trip_planner.<module>.<func>__mutmut_N: <status>"
+    Format: "src.<module>.<func>__mutmut_N: <status>" or "mymodule.py::func__mutmut_N: <status>"
 """
 
 import json
@@ -46,13 +46,15 @@ except ImportError:
 PYPROJECT_TOML = "pyproject.toml"
 
 # Pattern to extract module from mutmut 3.x mutant names:
-# With module: "custom_components.ev_trip_planner.calculations.x_func__mutmut_42: killed"
-# Without module (__init__.py): "custom_components.ev_trip_planner.x_async_setup__mutmut_1: killed"
-MUTMUT_NAME_WITH_MODULE = re.compile(
-    r"^custom_components\.ev_trip_planner\.(\w+)\.\w+__mutmut_\d+: (\w+)$"
+# Format: "package.subpackage.module.func__mutmut_N: status"
+# The module name is extracted from the dotted path before the function.
+# Example: "src.calculations.x_func__mutmut_42: killed" → module "calculations"
+# Example: "mymodule.py::x_func__mutmut_42: killed" → module "mymodule"
+MUTMUT_DOTTED_PATH = re.compile(
+    r"^([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\.(\w+)__mutmut_\d+: (\w+)$"
 )
-MUTMUT_NAME_NO_MODULE = re.compile(
-    r"^custom_components\.ev_trip_planner\.\w+__mutmut_\d+: (\w+)$"
+MUTMUT_PYC_FILE = re.compile(
+    r"^([a-zA-Z_][a-zA-Z0-9_]*\.py)::(\w+)__mutmut_\d+: (\w+)$"
 )
 
 
@@ -109,18 +111,20 @@ def parse_mutmut_results(project_root: Path) -> dict[str, Any]:
         status = status.strip().lower()
 
         # Try to extract module name from mutmut 3.x naming convention
-        # Pattern 1: custom_components.ev_trip_planner.<module>.<func>__mutmut_N
-        match = MUTMUT_NAME_WITH_MODULE.match(line)
+        # Pattern 1: Dotted path "pkg.subpkg.module.func__mutmut_N"
+        match = MUTMUT_DOTTED_PATH.match(line)
         if match:
-            module_name = match.group(1)
-        # Pattern 2: custom_components.ev_trip_planner.<func>__mutmut_N (package-level, __init__.py)
-        elif MUTMUT_NAME_NO_MODULE.match(line):
-            module_name = "__init__"
+            full_path = match.group(1)
+            parts = full_path.split(".")
+            module_name = parts[-1] if parts else full_path
+        # Pattern 2: py file "mymodule.py::func__mutmut_N"
+        elif MUTMUT_PYC_FILE.match(line):
+            module_name = name.split("::")[0].replace(".py", "")
         else:
             # Fallback: try to extract from dotted path
             parts = name.split(".")
-            if len(parts) >= 4 and parts[0] == "custom_components" and parts[1] == "ev_trip_planner":
-                module_name = parts[2]
+            if len(parts) >= 2:
+                module_name = parts[-1] if parts[-1] else parts[-2]
             else:
                 module_name = "_other"
                 other_count += 1

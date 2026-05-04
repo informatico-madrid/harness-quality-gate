@@ -1,0 +1,30 @@
+# Ralph Agent Files
+.roo/
+.roomodes
+
+# Ralph Quality Gate outputs
+_bmad-output/
+ralph-output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+*.egg
+
+# Coverage
+coverage.xml
+.coverage
+htmlcov/
+
+# mutmut
+.mutmut/
+
+# OS
+.DS_Store
+Thumbs.db

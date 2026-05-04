@@ -36,20 +36,20 @@
 
 ```bash
 # Check for missing authorization decorators
-grep -rn "requires_auth\|@login_required\|@admin_required" custom_components/
+grep -rn "requires_auth\|@login_required\|@admin_required" src/
 
 # Check for direct object reference patterns
-grep -rn "entity_id\|device_id\|user_id" custom_components/ | grep -v "_id:"
+grep -rn "entity_id\|device_id\|user_id" src/ | grep -v "_id:"
 
 # Check JWT usage for alg:none attacks
-grep -rn "jwt\|JWT\|algorithm" custom_components/ | grep -i "none\|algorithm"
+grep -rn "jwt\|JWT\|algorithm" src/ | grep -i "none\|algorithm"
 
 # Check CORS configuration
-grep -rn "Access-Control" custom_components/ | grep -v "allowed_domains\|cors_allowed_origins"
+grep -rn "Access-Control" src/ | grep -v "allowed_domains\|cors_allowed_origins"
 ```
 
-### Findings in This Project
-- **emhass_adapter.py:** Direct hass.data access without access control checks
+### Example Findings (from a real HA integration)
+- **my_adapter.py:** Direct hass.data access without access control checks
 - **services.py:** Service handlers without user context validation
 - **coordinator.py:** DataUpdateCoordinator without authentication context
 
@@ -70,16 +70,16 @@ grep -rn "Access-Control" custom_components/ | grep -v "allowed_domains\|cors_al
 
 ```bash
 # Check for hardcoded secrets
-grep -rn "password\|secret\|api_key\|token" custom_components/*.py | grep -v "os.environ\|os.getenv"
+grep -rn "password\|secret\|api_key\|token" src/*.py | grep -v "os.environ\|os.getenv"
 
 # Check for weak crypto usage
-grep -rn "hashlib\|crypto\|AES\|RSA\|DES\|MD5\|SHA1" custom_components/
+grep -rn "hashlib\|crypto\|AES\|RSA\|DES\|MD5\|SHA1" src/
 
 # Check for plaintext secrets in logs
-grep -rn "logging\|log\." custom_components/ | grep -i "password\|token\|secret\|key"
+grep -rn "logging\|log\." src/ | grep -i "password\|token\|secret\|key"
 
 # Check for HTTP (non-TLS) usage
-grep -rn "http://" custom_components/ | grep -v "localhost\|127.0.0.1"
+grep -rn "http://" src/ | grep -v "localhost\|127.0.0.1"
 ```
 
 ### Findings in This Project
@@ -103,21 +103,21 @@ grep -rn "http://" custom_components/ | grep -v "localhost\|127.0.0.1"
 
 ```bash
 # SQL Injection (Bandit B608 patterns)
-python3 -m bandit -r custom_components/ -f json | jq '.results[] | select(.issue_cwe=="CWE-89")'
+python3 -m bandit -r src/ -f json | jq '.results[] | select(.issue_cwe=="CWE-89")'
 
 # Command Injection
-grep -rn "subprocess\|os.system\|os.popen\|eval\|exec" custom_components/
+grep -rn "subprocess\|os.system\|os.popen\|eval\|exec" src/
 
 # YAML unsafe load
-grep -rn "yaml.load\|yaml.safe_load" custom_components/ | grep -v "SafeLoader\|FullLoader"
+grep -rn "yaml.load\|yaml.safe_load" src/ | grep -v "SafeLoader\|FullLoader"
 
 # Check for path traversal in file operations
-grep -rn "open\|read\|write" custom_components/ | grep -E "\(.*\+|\.format\(" | grep -v "safe\|sanitize"
+grep -rn "open\|read\|write" src/ | grep -E "\(.*\+|\.format\(" | grep -v "safe\|sanitize"
 ```
 
-### Findings in This Project
-- **emhass_adapter.py:** SQL-like patterns in energy calculations
-- **yaml_trip_storage.py:** YAML deserialization with potential unsafe load
+### Example Findings (from a real HA integration)
+- **my_adapter.py:** SQL-like patterns in energy calculations
+- **yaml_storage.py:** YAML deserialization with potential unsafe load
 
 ---
 
@@ -136,16 +136,16 @@ grep -rn "open\|read\|write" custom_components/ | grep -E "\(.*\+|\.format\(" | 
 
 ```bash
 # Check for missing rate limiting
-grep -rn "rate_limit\|throttle\|max_requests" custom_components/
+grep -rn "rate_limit\|throttle\|max_requests" src/
 
 # Check for missing authentication checks in services
-grep -rn "hass.auth\|user_id\|current_user" custom_components/services.py
+grep -rn "hass.auth\|user_id\|current_user" src/services.py
 
 # Check for sensitive data in logs
-grep -rn "logging" custom_components/ | grep -E "password|token|secret|api_key|coordinate|location"
+grep -rn "logging" src/ | grep -E "password|token|secret|api_key|coordinate|location"
 
 # Check for missing input validation
-grep -rn "assert\|raise\|ValueError" custom_components/ | grep -v "if\|check\|valid"
+grep -rn "assert\|raise\|ValueError" src/ | grep -v "if\|check\|valid"
 ```
 
 ### Findings in This Project
@@ -169,16 +169,16 @@ grep -rn "assert\|raise\|ValueError" custom_components/ | grep -v "if\|check\|va
 
 ```bash
 # Check for debug mode in production
-grep -rn "debug\|DEBUG" custom_components/ | grep -v "if.*debug\|log.*debug\|logger"
+grep -rn "debug\|DEBUG" src/ | grep -v "if.*debug\|log.*debug\|logger"
 
 # Check for exposed stack traces in error handlers
-grep -rn "except\|traceback\|exc_info" custom_components/ | grep -v "log\|logger\|logging"
+grep -rn "except\|traceback\|exc_info" src/ | grep -v "log\|logger\|logging"
 
 # Check for missing security headers in HTTP responses
-grep -rn "Content-Security-Policy\|X-Frame-Options\|X-Content-Type" custom_components/
+grep -rn "Content-Security-Policy\|X-Frame-Options\|X-Content-Type" src/
 
 # Check for default HA configuration exposures
-grep -rn "allow_backup\|debugger\|profiler" custom_components/manifest.json
+grep -rn "allow_backup\|debugger\|profiler" src/manifest.json
 ```
 
 ### Findings in This Project
@@ -207,15 +207,15 @@ pip-audit || safety check
 pip freeze | grep -E "flask|django|jinja|requests|urllib"
 
 # Check for known vulnerable patterns
-semgrep --config=p/security-audit custom_components/
+semgrep --config=p/security-audit src/
 
 # Check for deprecated API usage
-grep -rn "warnings.warn\|DeprecationWarning" custom_components/
+grep -rn "warnings.warn\|DeprecationWarning" src/
 ```
 
-### Findings in This Project
+### Example Findings (from a real HA integration)
 - **requirements in manifest.json:** Need to verify against latest HA core requirements
-- **emhass_adapter.py:** httpx client version should be pinned
+- **my_adapter.py:** HTTP client version should be pinned
 
 ---
 
@@ -234,16 +234,16 @@ grep -rn "warnings.warn\|DeprecationWarning" custom_components/
 
 ```bash
 # Check for hardcoded credentials
-grep -rn "password\|passwd\|pwd" custom_components/*.py | grep -v "os.environ\|getenv\|secrets"
+grep -rn "password\|passwd\|pwd" src/*.py | grep -v "os.environ\|getenv\|secrets"
 
 # Check for weak session management
-grep -rn "session\|Session\|cookie" custom_components/
+grep -rn "session\|Session\|cookie" src/
 
 # Check for exposed tokens in URLs
-grep -rn "token\|api_key" custom_components/ | grep -E "url|URL|request|get|post"
+grep -rn "token\|api_key" src/ | grep -E "url|URL|request|get|post"
 
 # Check for missing logout functionality
-grep -rn "logout\|revoke\|invalidate" custom_components/
+grep -rn "logout\|revoke\|invalidate" src/
 ```
 
 ### Findings in This Project
@@ -267,13 +267,13 @@ grep -rn "logout\|revoke\|invalidate" custom_components/
 
 ```bash
 # Check for pickle deserialization
-grep -rn "pickle\|Unpickler" custom_components/
+grep -rn "pickle\|Unpickler" src/
 
 # Check for YAML unsafe loading
-grep -rn "yaml.load" custom_components/ | grep -v "SafeLoader"
+grep -rn "yaml.load" src/ | grep -v "SafeLoader"
 
 # Check for unsigned external resources
-grep -rn "import\|require\|pip install" custom_components/ | grep -v "requirements"
+grep -rn "import\|require\|pip install" src/ | grep -v "requirements"
 
 # Check for git repository integrity
 git log --show-signature 2>/dev/null || echo "No signed commits"
@@ -299,16 +299,16 @@ git log --show-signature 2>/dev/null || echo "No signed commits"
 
 ```bash
 # Check for missing audit events
-grep -rn "logging\|logger" custom_components/ | grep -E "INFO|ERROR|WARNING" | wc -l
+grep -rn "logging\|logger" src/ | grep -E "INFO|ERROR|WARNING" | wc -l
 
 # Check for sensitive data in logs
-grep -rn "log\|debug" custom_components/ | grep -iE "password|token|secret|coordinate|lat|lon"
+grep -rn "log\|debug" src/ | grep -iE "password|token|secret|coordinate|lat|lon"
 
 # Check for monitoring gaps
-grep -rn "try\|except" custom_components/ | grep -v "log\|logger" | wc -l
+grep -rn "try\|except" src/ | grep -v "log\|logger" | wc -l
 
 # Check for unhandled exceptions
-grep -rn "raise\|AssertionError" custom_components/ | grep -v "if\|check\|valid"
+grep -rn "raise\|AssertionError" src/ | grep -v "if\|check\|valid"
 ```
 
 ### Findings in This Project
@@ -331,20 +331,20 @@ grep -rn "raise\|AssertionError" custom_components/ | grep -v "if\|check\|valid"
 
 ```bash
 # Check for URL fetching without validation
-grep -rn "requests\.\|httpx\.\|urllib\|fetch\|curl\|wget" custom_components/
+grep -rn "requests\.\|httpx\.\|urllib\|fetch\|curl\|wget" src/
 
 # Check for localhost/internal network access
-grep -rn "localhost\|127.0.0.1\|0\.0\.0\.0\|internal\|private" custom_components/
+grep -rn "localhost\|127.0.0.1\|0\.0\.0\.0\|internal\|private" src/
 
 # Check for missing URL validation
-grep -rn "verify\|allowlist\|blocklist\|validate.*url" custom_components/
+grep -rn "verify\|allowlist\|blocklist\|validate.*url" src/
 
 # Check for unrestricted ports
-grep -rn ":\|port\|socket" custom_components/ | grep -v "config\|const\|DEFAULT"
+grep -rn ":\|port\|socket" src/ | grep -v "config\|const\|DEFAULT"
 ```
 
-### Findings in This Project
-- **emhass_adapter.py:** EMHASS API calls without URL validation
+### Example Findings (from a real HA integration)
+- **my_adapter.py:** External API calls without URL validation
 - **utils.py:** Potential HTTP client usage with internal URLs
 
 ---

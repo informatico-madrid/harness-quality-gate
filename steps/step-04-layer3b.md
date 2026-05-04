@@ -117,7 +117,48 @@ Combine results from both mechanisms:
 
 If Tier B consensus explicitly identifies a Tier A violation as a **false positive**, the verdict can be **downgraded to WARNING** (not FAIL). This requires 3/3 agents agreeing it is a false positive AND adversarial reviewer concurring.
 
-**Fallback:** If BMAD Party Mode is not available, skip Tier B and mark as `SKIPPED`.
+### Fallback: Simulated Party Mode
+
+**If BMAD Party Mode is not available**, instead of SKIPPING, the skill runs a **Simulated Party Mode**:
+
+1. **Notify user with WARNING:**
+   ```
+   ⚠️ BMAD Party Mode not available. Running Simulated Party Mode...
+   WARNING: This is a basic heuristic analysis, NOT consensus from Winston/Murat/Amelia.
+   Install bmad-party-mode skill for full Tier B deep quality analysis.
+   ```
+
+2. **Run basic heuristic analysis:**
+   - Use simple AST-based heuristics to flag potential issues
+   - Score each violation with confidence: LOW (heuristic only)
+   - Mark all findings as `confidence: "SIMULATED"` not `"CONSENSUS"`
+
+3. **Update state with WARNING instead of SKIPPED:**
+   ```json
+   {
+     "layer3b_deep_quality": {
+       "SOLID_tier_b": {
+         "status": "WARNING",
+         "method": "SIMULATED_PARTY_MODE",
+         "reason": "BMAD Party Mode not available - basic heuristics only",
+         "confidence": "LOW",
+         "warning": "Install bmad-party-mode skill for full consensus analysis",
+         "violations": <array of LOW-confidence findings>
+       }
+     }
+   }
+   ```
+
+4. **Layer 3B can still PASS** with Simulated Mode, but findings are flagged as lower confidence.
+
+**The key difference:**
+| Mode | Status | Confidence | Effect |
+|------|--------|------------|--------|
+| Full BMAD | PASS/FAIL | HIGH (consensus) | Normal gate behavior |
+| Simulated | WARNING | LOW (heuristic) | Gate continues but findings flagged |
+| Not Available (old) | SKIPPED | None | Tier B not executed |
+
+**User notification is critical:** Always inform the user when running in Simulated Mode.
 
 **Update state:**
 ```json

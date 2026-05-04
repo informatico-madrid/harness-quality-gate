@@ -1,0 +1,221 @@
+rules:
+  # =====================================================================
+  # Generic Python Security Rules
+  # =====================================================================
+  # These rules are NOT specific to any framework (Home Assistant, Flask, etc.)
+  # They detect common Python security vulnerabilities applicable to any project.
+
+  # Rule 1: eval/exec usage
+  - id: python-eval-exec
+    patterns:
+      - pattern-either:
+          - pattern: eval($EXPR)
+          - pattern: exec($CODE)
+          - pattern: exec($CODE, ...)
+    message: "eval/exec usage is dangerous and can lead to code injection. Use ast.literal_eval() for safe evaluation or alternative design patterns."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-94: Code Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Rule 2: YAML unsafe load
+  - id: python-yaml-unsafe-load
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load($DATA)
+          - pattern: yaml.load($DATA, Loader=yaml.Loader)
+          - pattern: yaml.load($DATA, Loader=yaml.UnsafeLoader)
+      - pattern-not: yaml.safe_load($DATA)
+      - pattern-not: yaml.load($DATA, Loader=yaml.SafeLoader)
+    message: "Unsafe YAML load detected. Use yaml.safe_load() or yaml.load(data, Loader=yaml.SafeLoader) to prevent arbitrary code execution."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+
+  # Rule 3: Pickle deserialization
+  - id: python-pickle-usage
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($DATA)
+          - pattern: pickle.load($FILE)
+          - pattern: pickle.Unpickler(...)
+    message: "Pickle deserialization of untrusted data can lead to arbitrary code execution. Use JSON, msgpack, or marshmallow for safe serialization."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+
+  # Rule 4: Hardcoded credentials
+  - id: python-hardcoded-password
+    patterns:
+      - pattern-either:
+          - pattern: $X = "$PASSWORD"
+          - pattern: $X = '$PASSWORD'
+          - pattern: password = "$VALUE"
+          - pattern: password = '$VALUE'
+          - pattern: api_key = "$VALUE"
+          - pattern: api_key = '$VALUE'
+          - pattern: secret = "$VALUE"
+          - pattern: secret = '$VALUE'
+      - pattern-not-regex: (password|api_key|secret)\s*=\s*os\.getenv|sys\.argv|environ\.get
+    message: "Potential hardcoded credential detected. Use environment variables or a secrets management system instead."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Rule 5: SQL injection via string formatting
+  - id: python-sql-injection
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute("SELECT ... %s ..." % $VAR)
+          - pattern: $CUR.execute("SELECT ... " + $VAR + " ...")
+          - pattern: $CUR.execute(f"SELECT ... {$VAR} ...")
+      - pattern-not: $CUR.execute("SELECT ... %s ...", ($VAR,))
+      - pattern-not: $CUR.execute($QUERY, $PARAMS)
+    message: "Potential SQL injection vulnerability. Use parameterized queries instead of string formatting."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Rule 6: subprocess with shell=True
+  - id: python-subprocess-shell
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+    message: "subprocess with shell=True is vulnerable to command injection. Use list form: subprocess.run(['cmd', arg1, arg2])"
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Rule 7: Use of insecure hash functions (MD5, SHA1)
+  - id: python-insecure-hash
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+    message: "MD5 and SHA1 are insecure for cryptographic purposes. Use hashlib.sha256() or hashlib.sha512() instead."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Rule 8: insecure tempfile
+  - id: python-insecure-tempfile
+    patterns:
+      - pattern: tempfile.mktemp(...)
+    message: "tempfile.mktemp() is insecure due to race conditions. Use tempfile.mkstemp() or tempfile.NamedTemporaryFile() instead."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-377: Insecure Temporary File"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Rule 9: Weak random number generator
+  - id: python-random-not-secure
+    patterns:
+      - pattern: random.$FUNC(...)
+    message: "random module is not cryptographically secure. Use secrets module for security-sensitive operations."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Rule 10: Debug mode enabled
+  - id: python-debug-mode
+    patterns:
+      - pattern-either:
+          - pattern: $APP.run(..., debug=True, ...)
+          - pattern: $APP.debug = True
+    message: "Debug mode should be disabled in production to prevent information disclosure."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-11: Improper Restriction of Rendered UI Layers or Web Pages"
+
+  # Rule 11: SSL verification disabled
+  - id: python-ssl-verify-disabled
+    patterns:
+      - pattern-either:
+          - pattern: requests.$FUNC(..., verify=False, ...)
+          - pattern: urllib.$FUNC(..., ca_certs=None, ...)
+    message: "Disabling SSL verification can lead to MITM attacks. Always verify certificates in production."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Rule 12: Path traversal
+  - id: python-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: open($PATH, ...)
+          - pattern: os.$FUNC($PATH, ...)
+      - pattern-regex: (\.\./|\.\.\\|/%2e%2e/)
+    message: "Potential path traversal vulnerability. Validate and sanitize user input before using in file operations."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Rule 13:危险文件权限 (Dangerous file permissions)
+  - id: python-unsafe-file-permissions
+    patterns:
+      - pattern: os.chmod($PATH, 0o777)
+      - pattern: os.chmod($PATH, 0o755)
+    message: "Setting overly permissive file permissions (777, 755) can allow unauthorized access. Use more restrictive permissions."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-732: Incorrect Permission Assignment for Critical Resource"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Rule 14: Use of __import__ with user input
+  - id: python-dynamic-import
+    patterns:
+      - pattern: $VAR = __import__($NAME)
+      - pattern: importlib.import_module($NAME)
+    message: "Dynamic imports can be dangerous if $NAME comes from user input. Validate and sanitize input thoroughly."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-94: Code Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Rule 15: Jinja2 autoescape disabled
+  - id: python-jinja2-autoescape-off
+    patterns:
+      - pattern: Environment(..., autoescape=False, ...)
+    message: "Disabling autoescape in Jinja2 can lead to XSS vulnerabilities. Ensure proper escaping if you disable it."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation"
+      owasp: "A03:2021 - Injection"

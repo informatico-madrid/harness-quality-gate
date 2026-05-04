@@ -106,7 +106,7 @@ Create `.bandit.yaml` in project root:
 ```yaml
 # .bandit.yaml
 targets:
-  - custom_components
+  - src
   - scripts
 skips:
   - B101  # assert used (OK in tests)
@@ -249,8 +249,8 @@ In `pyproject.toml`:
 
 ```toml
 [tool.deptry]
-extend_ignore = ["HA"]  # HA modules available at runtime
-known_first_party = ["custom_components"]
+extend_ignore = ["HA"]  # Ignore Home Assistant runtime modules if present
+known_first_party = ["src"]
 ```
 
 ### Remediation
@@ -329,7 +329,7 @@ repos:
     hooks:
       - id: bandit
         args: ["-c", ".bandit.yaml"]
-        files: ^custom_components/
+        files: ^src/
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.4

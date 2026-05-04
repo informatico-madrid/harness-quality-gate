@@ -111,7 +111,7 @@ cd {project-root} && . .venv/bin/activate && mutmut run 2>&1 || true
 
 **This command:**
 - Runs `mutmut results --all true` to get per-mutant status (killed/survived/timeout/no_tests)
-- Extracts module name from mutant identifiers (e.g., `custom_components.ev_trip_planner.calculations.x_func__mutmut_42: killed` → module `calculations`)
+- Extracts module name from mutant identifiers (e.g., `src/my_module/my_func.py::my_func__mutmut_42: killed` → module `my_module`)
 - Reads `pyproject.toml` `[tool.quality-gate.mutation]` for per-module thresholds
 - Compares each module's kill rate against its threshold
 - Outputs a human-readable table + JSON with OK/NOK gate result
@@ -174,18 +174,22 @@ Report to user:
 
 ---
 
-## 1.5 Run E2E Tests (MANDATORY)
+## 1.5 Run E2E Tests (OPTIONAL)
 
-**This step is BLOCKING and OBLIGATORY.** E2E tests must be executed via `make e2e`. If `make e2e` is not available or fails, Layer 1 FAILS.
+**E2E tests are OPTIONAL.** If `make e2e` is not available, skip this step with status `SKIPPED`.
 
 ```bash
-cd {project-root} && make e2e 2>&1
+cd {project-root} && make e2e 2>&1 || true
 ```
 
 **Capture:**
 - Exit code
 - E2E tests total / passed / failed counts
 - Duration in seconds
+
+**If make e2e fails:**
+- E2E is OPTIONAL, so this is a WARNING, not a FAIL
+- Continue to Layer 1 PASS/FAIL determination
 
 **Update state:**
 ```json
@@ -222,7 +226,7 @@ cd {project-root} && make e2e 2>&1
 - pytest status = PASS
 - coverage status = PASS
 - mutation_testing status = PASS (FAIL if not installed OR kill_rate < threshold)
-- **e2e status = PASS** (E2E tests are MANDATORY — FAIL if not run or fails)
+- e2e status = PASS or SKIPPED (E2E is OPTIONAL)
 
 **Update state:**
 ```json

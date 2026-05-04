@@ -1,13 +1,14 @@
 ---
 name: quality-gate
-description: Execute deterministic code quality validations as a quality gate for smart-ralph task execution. Runs Layer 3A smoke test (Tier A AST, <1 min), Layer 1 (test execution), Layer 2 (test quality analysis), Layer 3B (Tier B BMAD Party Mode, ~15 min), and Layer 4 (Security & Defense, ~2-5 min). Uses Two-Tier approach: Tier A (AST deterministic) + Tier B (BMAD Party Mode consensus). Layer 4 covers 8 security tools: bandit, safety/pip-audit, gitleaks, semgrep, checkov, deptry, vulture, trivy. Generates a checkpoint JSON consumed by smart-ralph VERIFY steps. Use when you need to validate that code meets quality and security standards before COMMIT.
+description: A quality harness for autonomous coding agents (Ralph Loop pattern). Validates Python code produced by AI agents running in autonomous loops through a 5-layer quality gate (L3A→L1→L2→L3B→L4). Uses Two-Tier approach: Tier A (AST deterministic, <1 min) + Tier B (BMAD Party Mode consensus, ~15 min). Layer 4 covers 8 security tools. Generates checkpoint JSON for agent self-verification before commit. Use when agents need to validate code quality and security standards autonomously within Ralph Loop workflows.
 ---
 
 ## When to Use This Skill
 
 Activate this skill when:
-- Running smart-ralph `[VERIFY]` steps
-- Validating code quality before `COMMIT`
+- Autonomous coding agents need to verify their own output (Ralph Loop pattern)
+- Running agent `[VERIFY]` steps in Ralph Loop workflows
+- Validating code quality before `COMMIT` in autonomous agent loops
 - Performing pre-merge quality checks
 - Executing sprint quality gates
 - Running security scans before deployment
@@ -19,13 +20,11 @@ Do NOT activate this skill when:
 - Just exploring the codebase
 - Running single unit tests (pytest alone is sufficient)
 - Only need one security tool (run it directly instead)
+- Not using Ralph Loop or similar autonomous coding patterns
 
 ## Inputs Required
 
-- `{project-root}`: The repository working directory (must contain `src/` or `custom_components/` and `tests/`)
-- `{project-root}/tests/`: Python test directory to analyze
-- `{project-root}/tests/e2e/`: End-to-end test directory (Playwright E2E tests)
-- `{project-root}/Makefile`: Must contain `make e2e` target
+- `{project-root}`: The repository working directory (must contain `src/` and `tests/`)
 
 ## Conventions
 
@@ -62,7 +61,7 @@ The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L
 │  ├── pytest                                                         │
 │  ├── coverage check                                                │
 │  ├── mutation testing (per-module gate)                             │
-│  └── E2E tests (make e2e) [MANDATORY]                              │
+│  └── E2E tests (make e2e) [OPTIONAL]                              │
 │                              │                                      │
 │              ┌───────────────┴───────────────┐                     │
 │              ▼                               ▼                     │
@@ -140,23 +139,37 @@ The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L
 | L3B FAIL | Refactorizar código → volver a L3A (NO a L1) |
 | L4 FAIL | Corregir vulnerabilidades → volver a L4 (no re-run L1-L3B) |
 
-### E2E Tests (MANDATORY)
+### E2E Tests (OPTIONAL)
 
-E2E tests are **OBLIGATORY** in Layer 1 and must be executed via `make e2e`.
-This command automatically starts Home Assistant if needed and runs Playwright E2E tests.
-
-**If `make e2e` fails, Layer 1 FAILS** — no exceptions.
+E2E tests are **OPTIONAL** in Layer 1. If `make e2e` is not available or fails, the step is marked as `SKIPPED` or `WARNING` and does not block Layer 1 PASS.
 
 ---
 
 ## On Activation
 
+### First Time Setup (Recommended)
+
+Before running the quality gate for the first time, run the configurator to auto-discover your project structure and confirm settings:
+
+```bash
+python3 {skill-root}/scripts/configurator.py {project-root}
+```
+
+This will:
+1. Auto-detect source/tests directories
+2. Detect Docker, E2E setup
+3. Ask confirmation for each setting with default inferred values
+4. Generate `{project-root}/_quality-gate/quality-gate.yaml`
+
+### Normal Workflow
+
 1. Read `{skill-root}/workflow.md` and follow it exactly.
-2. The workflow will guide you through all 5 layers sequentially: L3A → L1 → L2 → L3B → L4.
-3. L3A is the smoke test — if it fails, stop immediately without running L1/L2/L3B/L4.
-4. L4 is the security gate — runs after all quality/test layers pass.
-5. Each layer produces a PASS/FAIL result stored in the checkpoint JSON.
-6. The final checkpoint is consumed by smart-ralph `[COMMIT]` decision.
+2. If a custom configuration exists at `{project-root}/_quality-gate/quality-gate.yaml`, it will be used. Otherwise, defaults are used from `{skill-root}/config/quality-gate.yaml`.
+3. The workflow will guide you through all 5 layers sequentially: L3A → L1 → L2 → L3B → L4.
+4. L3A is the smoke test — if it fails, stop immediately without running L1/L2/L3B/L4.
+5. L4 is the security gate — runs after all quality/test layers pass.
+6. Each layer produces a PASS/FAIL result stored in the checkpoint JSON.
+7. The checkpoint enables agents to verify their own output before proceeding
 
 ---
 
@@ -191,7 +204,7 @@ python3 {skill-root}/scripts/security_scanner.py {project-root} --severity-thres
 **Individual tools** (if unified scanner unavailable):
 ```bash
 # REQUIRED
-python3 -m bandit -r custom_components/ -f json
+python3 -m bandit -r src/ -f json
 python3 -m safety check --json
 gitleaks detect --source . --report-format json --no-banner
 
@@ -199,7 +212,7 @@ gitleaks detect --source . --report-format json --no-banner
 python3 -m semgrep --config p/security-audit --config p/owasp-top-ten --json .
 python3 -m checkov -d . --framework dockerfile yaml json --output json
 python3 -m deptry .
-python3 -m vulture custom_components/ --min-confidence 80
+python3 -m vulture src/ --min-confidence 80
 
 # OPTIONAL
 trivy config --format json .
@@ -210,7 +223,7 @@ trivy config --format json .
 | File | When to read |
 |------|-------------|
 | `references/security-tools-guide.md` | When a tool reports findings and you need remediation guidance, or when installing tools |
-| `references/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant integrations (12 rules covering HA-specific patterns) |
+| `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant integrations (12 rules, opt-in via configurator) |
 | `references/semgrep-js-rules.yaml` | Custom semgrep rules for JavaScript/TypeScript (13 rules, provenance metadata included) |
 | `references/pentest-remediation-index.md` | **Primary index** mapping finding types to pentest verification commands and checklists |
 
@@ -239,7 +252,72 @@ trivy config --format json .
 | `scripts/diversity_metric.py` | Test diversity scoring (Levenshtein edit distance) |
 | `scripts/security_scanner.py` | Unified security scanner (Layer 4, 8 tools) |
 | `references/security-tools-guide.md` | Tool installation, config & remediation guide |
-| `references/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant |
+| `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant (opt-in) |
+
+---
+
+## External Skills & Dependencies
+
+The quality gate skill has **soft dependencies** on other skills. They are NOT required but enhance functionality when available.
+
+### Skill Dependencies
+
+| Skill | Type | When Recommended | What It Does |
+|-------|------|------------------|--------------|
+| `mutation-testing` | RECOMMENDED | When mutation testing fails | Provides guidance on improving weak tests that don't kill mutants |
+| `bmad-party-mode` | OPTIONAL | For Tier B deep quality (L3B) | Multi-agent consensus for SOLID Tier B and Antipatterns Tier B |
+| `pentest-commands` | REFERENCE | Post-gate fix validation | Specific commands to verify security fixes actually work |
+| `pentest-checklist` | REFERENCE | Post-gate verification | Structured checklists for penetration testing categories |
+
+### How Dependencies Work
+
+1. **mutation-testing** skill:
+   - When mutation testing FAILS (NOK), the skill RECOMMENDS activating this skill
+   - Agent can choose to activate it for guidance, but it's not required
+   - If not activated, gate remains in FAIL until agent improves tests independently
+
+2. **bmad-party-mode** skill:
+   - Tier B (L3B) uses this if available; if not, Tier B is marked SKIPPED
+   - SKIPPED does NOT block the gate — only Tier A results determine PASS/FAIL
+   - Graceful degradation: quality gate still functions without BMAD
+
+3. **pentest-commands** and **pentest-checklist**:
+   - These are REFERENCE documentation, NOT gate components
+   - Used in Layer 4 Phase 5 (Fix Validation Loop) to verify security fixes
+   - Can be consulted manually but don't block/unblock the gate
+
+### Agent Integration
+
+This skill is designed to be consumed by **any autonomous agent or CI/CD system**:
+
+- Layer L3A → L1 → L2 → L3B → L4 executes sequentially
+- Each layer produces PASS/FAIL stored in checkpoint JSON
+- **Checkpoint JSON is format-agnostic** - it is a standard JSON file that any system can parse
+- Agents use the checkpoint to verify their own output before proceeding
+- If checkpoint.PASS = true → agent can proceed with the next step
+
+### Skill Availability Notifications
+
+When optional skills are not available, the user is informed:
+
+| Skill Missing | Notification | Action |
+|--------------|--------------|--------|
+| `bmad-party-mode` | `⚠️ WARNING: Running Simulated Party Mode...` | Run basic heuristics, flag findings as LOW confidence |
+| `mutation-testing` | `⚠️ WARNING: mutation-testing skill not available...` | Continue without mutation guidance |
+| `pentest-commands` | `ℹ️ INFO: pentest-commands not available...` | Use references/security-tools-guide.md instead |
+| `pentest-checklist` | `ℹ️ INFO: pentest-checklist not available...` | Use references/owasp-checklist.md instead |
+
+**The gate continues** with degraded functionality, with user notification.
+
+### BMAD Party Mode Agents
+
+BMAD Party Mode (when available) spawns these agents for consensus:
+
+| Agent | Role |
+|-------|------|
+| Winston | Architect — trust boundaries, data flows |
+| Murat | Test Architect — exploitability, attack surface |
+| Amelia | Developer — fix feasibility, implementation |
 
 ---
 
@@ -251,14 +329,7 @@ Both SOLID and Antipatterns use a Two-Tier approach for maximum accuracy:
 Deterministic checks using AST parsing — no external dependencies.
 
 ### Tier B: BMAD Multi-Agent Consensus (Runs in L3B)
-For patterns needing semantic understanding:
-- Uses context generators (`llm_solid_judge.py`, `antipattern_judge.py`)
-- Spawns BMAD Party Mode with Winston (Architect) + Murat (Test Architect)
-- Runs BMAD Adversarial Review to eliminate false positives
-- Reaches consensus: violation confirmed if 2/3 agents agree
-
-**Fallback:** If BMAD Party Mode is not available, Tier B patterns are marked as `SKIPPED`
-and do not affect the global PASS/FAIL. Only Tier A results determine the outcome.
+For patterns needing semantic understanding. Uses `bmad-party-mode` skill when available. If not available, Tier B patterns are marked as `SKIPPED` and do not affect global PASS/FAIL. Only Tier A results determine the outcome.
 
 ---
 

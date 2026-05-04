@@ -475,7 +475,7 @@ def run_bandit(project_root: str, verbose: bool = False, config: dict | None = N
 
     # Determine target paths
     targets = []
-    for candidate in ["custom_components", "src", "scripts"]:
+    for candidate in ["src", "lib", "app", "scripts"]:
         p = Path(project_root) / candidate
         if p.exists():
             targets.append(str(p))
@@ -919,7 +919,7 @@ def run_vulture(project_root: str, verbose: bool = False, config: dict | None = 
 
     # Determine target paths
     targets = []
-    for candidate in ["custom_components", "src", "scripts"]:
+    for candidate in ["src", "lib", "app", "scripts"]:
         p = Path(project_root) / candidate
         if p.exists():
             targets.append(str(p))

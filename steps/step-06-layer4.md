@@ -131,7 +131,7 @@ If the unified scanner is unavailable, run each tool individually:
 #### Bandit (REQUIRED)
 
 ```bash
-cd {project-root} && python3 -m bandit -r custom_components/ -f json 2>&1
+cd {project-root} && python3 -m bandit -r src/ -f json 2>&1
 ```
 
 #### Safety (REQUIRED)
@@ -184,7 +184,7 @@ cd {project-root} && python3 -m deptry . 2>&1
 #### Vulture (RECOMMENDED)
 
 ```bash
-cd {project-root} && python3 -m vulture custom_components/ --min-confidence 80 2>&1
+cd {project-root} && python3 -m vulture src/ --min-confidence 80 2>&1
 ```
 
 #### Trivy (OPTIONAL)
@@ -331,14 +331,14 @@ Compile all `NEEDS_CONSENSUS` findings with their full code context into a revie
         "tool": "bandit",
         "rule_id": "B608",
         "severity": "HIGH",
-        "file": "custom_components/ev_trip_planner/emhass_adapter.py",
+        "file": "src/my_integration/my_adapter.py",
         "line": 142,
         "message": "SQL injection via string concatenation",
         "code_context": "...",
         "llm_reasoning": "The query uses f-string but the source of the variable is unclear"
       }
     ],
-    "project_context": "Home Assistant EV Trip Planner integration with EMHASS",
+    "project_context": "Home Assistant integration with external API",
     "owasp_categories_affected": ["A03:2021 - Injection"]
   }
 }
