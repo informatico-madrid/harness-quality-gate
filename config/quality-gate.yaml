@@ -1,0 +1,258 @@
+# Quality Gate Configuration
+# All thresholds are configurable per-project
+
+# Layer 1: Test Execution
+layer1:
+  coverage_threshold: 85.0
+  mutation_kill_threshold: 0.70  # Global fallback — overridden by per-module targets
+  mutation_targets_source: "pyproject.toml"  # [tool.quality-gate.mutation] section
+  pytest_timeout_seconds: 300
+  e2e:
+    command: "make e2e"
+    mandatory: true  # E2E tests are OBLIGATORY in Layer 1
+
+# Layer 2: Test Quality
+layer2:
+  # Weak test thresholds (rules A1-A8)
+  weak_test:
+    max_assertions_single: 1      # A1: ≤1 assert = ERROR
+    min_assertions: 3             # A2: <3 asserts = WARNING
+    max_mock_ratio: 0.8           # A4: >80% mocks = ERROR
+    max_nesting_for_stateless: 0   # A5: stateless without fixtures = WARNING
+    allow_sleep: false             # A6: any sleep = ERROR
+    allow_empty_raises: false     # A7: empty raises = ERROR
+    allow_trivial_assertions: false # A8: always-true = ERROR
+  # Diversity threshold
+  min_edit_distance: 20           # minimum edit distance between test cases
+  diversity_similarity_threshold: 0.8  # >80% similarity = similar pair
+
+# Layer 3: Code Quality
+layer3:
+  # SOLID principles
+  solid:
+    srp:
+      max_public_methods: 7
+      max_loc_per_class: 200
+      max_arity: 5
+    ocp:
+      min_abc_usage: true          # must use at least one ABC or Protocol
+    lsp:
+      type_hint_coverage: 0.90    # 90% of functions must have type hints
+    isp:
+      max_unused_methods_ratio: 0.5
+    dip:
+      max_import_depth: 3
+      zero_cycles: true
+
+  # Additional principles
+  principles:
+    dry:
+      duplicate_code_threshold: 6  # lines of duplicate code
+    kiss:
+      max_function_complexity: 10  # McCabe cyclomatic complexity
+      max_nesting_depth: 4
+      max_parameters: 5
+    yagni:
+      unused_imports_ratio: 0       # zero unused imports
+      dead_code_ratio: 0           # zero dead code
+    lod:
+      max_chain_length: 3
+      no_dot_chaining: true
+    coi:
+      inheritance_depth_max: 2
+      composition_ratio: 0.5
+
+  # Antipattern thresholds — Tier A (AST-detectable)
+  # Tier B patterns (AP14-AP16, AP19, AP27-AP29, AP32-AP38, AP40-AP50)
+  # are evaluated by BMAD Party Mode and don't have numeric thresholds.
+  antipatterns:
+    ap01_god_class:
+      max_loc: 500
+      max_public_methods: 20
+    ap02_functional_decomposition:
+      min_static_methods: 3
+    ap03_poltergeist:
+      max_class_loc: 60
+    ap04_spaghetti_code:
+      min_nesting: 6
+      min_loc: 50
+    ap05_magic_numbers:
+      allow_hardcoded: false
+    ap06_long_method:
+      max_lines: 100
+    ap07_large_class:
+      max_instance_variables: 15
+    ap08_long_parameter_list:
+      max_parameters: 5
+    ap09_feature_envy:
+      min_foreign_calls: 3
+    ap10_data_class:
+      min_attributes: 3
+    ap11_lazy_class:
+      max_methods: 3
+    ap12_speculative_generality:
+      max_implementations: 1
+    ap13_middle_man:
+      delegation_ratio: 0.8
+    ap17_refused_bequest:
+      empty_method_ratio: 0.5
+    ap18_switch_statements:
+      max_cases: 5
+    ap20_deep_nesting:
+      max_nesting: 5
+    ap21_message_chains:
+      max_chain: 3
+    ap22_dead_code: {}
+    ap23_duplicate_code:
+      duplicate_lines: 6
+    ap24_primitive_obsession:
+      max_primitive_args: 5
+    ap25_data_clumps:
+      min_repetitions: 3
+      min_param_count: 3
+    ap26_inconsistent_naming:
+      allow_ruff_violations: false
+    ap30_circular_dependency:
+      max_cycles: 0
+    ap31_hub_spoke:
+      max_incoming_imports: 15
+    ap39_yoyo_problem:
+      max_inheritance_depth: 5
+
+# Layer 4: Security & Defense (Autonomous Ralph Loop)
+layer4:
+  # Severity threshold: findings at or above this level block the gate
+  # Options: critical, high, medium, low
+  severity_threshold: high
+
+  # Confidence threshold: findings below this confidence are non-blocking
+  # Range: 0.0-1.0 (default: 0.7)
+  confidence_threshold: 0.7
+
+  # Phase control
+  phases:
+    phase1_deterministic: true    # Always run
+    phase2_dedup_confidence: true # Always run if Phase 1 has findings
+    phase3_llm_triage: true       # Run if findings ≥ confidence threshold
+    phase4_party_mode: true       # Run if LLM triage produces NEEDS_CONSENSUS
+    phase5_fix_validation: true   # Run if confirmed findings exist
+
+  # LLM disabled fallback: what to do when LLM triage cannot run
+  # Options: SKIP_TO_PARTY_MODE | FAIL | PROCEED_DETERMINISTIC
+  llm_disabled_behavior: SKIP_TO_PARTY_MODE
+
+  # Confidence thresholds (separate gates for Phase 3 and Phase 4)
+  confidence_threshold: 0.7      # Phase 3 gate: LLM classifies if confidence ≥ 0.7
+  consensus_escalation_threshold: 0.5  # Phase 4 gate: if LLM confidence < 0.5 → auto-escalar a Party Mode
+
+  # Fix validation loop limits
+  fix_validation:
+    max_attempts_per_finding: 2   # Max fix attempts per individual finding
+    max_total_attempts: 5         # Max total fix attempts per Layer 4 run
+    re_run_phase1_only: true      # Only re-run deterministic scan after fix
+
+  # Party Mode consensus settings
+  party_mode:
+    agents:
+    - Winston   # Architect — trust boundaries, data flows
+    - Murat     # Test Architect — exploitability, attack surface
+    - Amelia    # Developer — fix feasibility, implementation
+    max_consensus_rounds: 3
+    require_adversarial_review: true
+    # Fallback if Party Mode unavailable: all NEEDS_CONSENSUS → WARNING
+    fallback_verdict: WARNING
+
+  # CWE deduplication settings
+  dedup:
+    enabled: true
+    line_range_tolerance: 5  # ±5 lines considered same location
+    # Cross-validation bonus: +0.3 if ≥2 tools report same CWE in same file
+    cross_validation_bonus: 0.3
+    # Known-vulnerable pattern bonus: +0.2
+    known_pattern_bonus: 0.2
+
+  # Tool priority: required (blocks gate if missing), recommended (blocks if findings), optional (never blocks)
+  tools:
+  bandit:
+    priority: required
+    targets:
+    - custom_components
+    - scripts
+    # Skip rules (false positives for HA projects)
+    skip_rules:
+    - B101 # assert_used (OK in tests)
+    - B311 # random module (OK for non-crypto)
+    # Max findings per severity before FAIL
+    max_critical: 0
+    max_high: 0
+    max_medium: 10 # WARNING threshold
+
+  safety:
+    priority: required
+    fallback: pip-audit # Use pip-audit if safety not available
+    ignore_cvss_below: 0.0 # Report all CVEs
+    # ignore_cves: [] # Add specific CVEs to ignore with justification
+
+  gitleaks:
+    priority: required
+    # All secrets are treated as CRITICAL regardless of type
+
+  semgrep:
+    priority: recommended
+    configs:
+    - p/security-audit
+    - p/owasp-top-ten
+    - "{skill-root}/references/semgrep-ha-rules.yaml"
+    - "{skill-root}/references/semgrep-js-rules.yaml"
+    # Project-specific rules (optional)
+    # project_rules: ".semgrep/rules.yaml"
+
+  checkov:
+    priority: recommended
+    frameworks:
+    - dockerfile
+    - yaml
+    - json
+    skip_paths:
+    - .git
+    - __pycache__
+    - node_modules
+    - .venv
+    - _bmad-output
+
+  deptry:
+    priority: recommended
+    # known_first_party: ["custom_components"]
+
+  vulture:
+    priority: recommended
+    min_confidence: 80
+    # whitelist: ".vulture-whitelist.py"
+
+  trivy:
+    priority: optional
+    # Only runs if Dockerfile or Dockerfile.custom exists
+    scan_type: config # config, image, fs
+
+# Output configuration
+output:
+  folder: _bmad-output/quality-gate
+  checkpoint_filename: quality-gate-{timestamp}.json
+  latest_alias: quality-gate-latest.json
+
+# Tool availability
+tools:
+  pytest: required
+  ruff: required
+  pyright: required
+  check_headers: required
+  mutmut: optional  # mutation testing
+  bmad_party_mode: optional  # Tier B semantic evaluation
+  bandit: required  # Layer 4 security
+  safety: required  # Layer 4 dependency scanning
+  gitleaks: required  # Layer 4 secret detection
+  semgrep: optional  # Layer 4 semantic security
+  checkov: optional  # Layer 4 config validation
+  deptry: optional  # Layer 4 import consistency
+  vulture: optional  # Layer 4 dead code
+  trivy: optional  # Layer 4 Docker scanning

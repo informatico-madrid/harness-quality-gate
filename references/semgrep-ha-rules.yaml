@@ -1,0 +1,210 @@
+rules:
+  # =====================================================================
+  # Home Assistant Custom Integration Security Rules
+  # =====================================================================
+
+  # Rule 1: Blocking I/O in async context
+  - id: ha-blocking-io-in-async
+    patterns:
+      - pattern-either:
+          - pattern: |
+              async def $FUNC(...):
+                  ...
+                  $X = open($FILE, ...)
+          - pattern: |
+              async def $FUNC(...):
+                  ...
+                  $DATA = $VAR.read()
+          - pattern: |
+              async def $FUNC(...):
+                  ...
+                  $VAR.write($DATA)
+          - pattern: |
+              async def $FUNC(...):
+                  ...
+                  time.sleep($DURATION)
+    message: "Blocking I/O or time.sleep() in async function. Use aiofiles or asyncio.sleep() instead to avoid blocking the HA event loop."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: performance
+      technology: [homeassistant]
+      references:
+        - https://developers.home-assistant.io/docs/asyncio_working_with_async/
+
+  # Rule 2: Missing error handling in service handler
+  - id: ha-service-handler-no-try
+    patterns:
+      - pattern: |
+          async def handle_$SERVICE(call):
+              ...
+              $ACTION
+      - pattern-not: |
+          async def handle_$SERVICE(call):
+              ...
+              try:
+                  ...
+              except ...:
+                  ...
+    message: "Service handler lacks try/except. HA service handlers should catch and log errors to prevent crashing the integration."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: error-handling
+      technology: [homeassistant]
+
+  # Rule 3: Unsafe hass.data access without key check
+  - id: ha-unsafe-hass-data-access
+    patterns:
+      - pattern: |
+          hass.data[$DOMAIN][$KEY]
+      - pattern-not: |
+          hass.data[$DOMAIN].get($KEY)
+      - pattern-not-inside: |
+          if $DOMAIN in hass.data:
+              ...
+    message: "Direct hass.data[domain][key] access without checking key existence. Use hass.data[domain].get(key) or check domain exists first."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: reliability
+      technology: [homeassistant]
+
+  # Rule 4: Hardcoded URL without HTTPS
+  - id: ha-http-url
+    patterns:
+      - pattern: |
+          "http://..."
+      - pattern-not: |
+          "http://localhost..."
+      - pattern-not: |
+          "http://127.0.0.1..."
+    message: "HTTP URL detected (not localhost). Use HTTPS for external URLs to prevent MITM attacks."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+
+  # Rule 5: eval/exec usage
+  - id: ha-eval-exec-usage
+    patterns:
+      - pattern-either:
+          - pattern: eval($EXPR)
+          - pattern: exec($CODE)
+          - pattern: |
+              __import__($MOD)
+    message: "eval/exec/__import__ usage is dangerous. Use ast.literal_eval() for safe evaluation or importlib for dynamic imports."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-94: Code Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Rule 6: YAML unsafe load
+  - id: ha-yaml-unsafe-load
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load($DATA)
+          - pattern: yaml.load($DATA, Loader=yaml.Loader)
+          - pattern: yaml.load($DATA, Loader=yaml.UnsafeLoader)
+      - pattern-not: yaml.safe_load($DATA)
+      - pattern-not: yaml.load($DATA, Loader=yaml.SafeLoader)
+    message: "Unsafe YAML load. Use yaml.safe_load() or yaml.load(data, Loader=yaml.SafeLoader) to prevent arbitrary code execution."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+
+  # Rule 7: Subprocess with shell=True
+  - id: ha-subprocess-shell
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+    message: "subprocess with shell=True is vulnerable to command injection. Use list form: subprocess.run(['cmd', arg1])"
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+
+  # Rule 8: Pickle deserialization
+  - id: ha-pickle-usage
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($DATA)
+          - pattern: pickle.load($FILE)
+    message: "Pickle deserialization of untrusted data can lead to arbitrary code execution. Use JSON or msgpack."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+
+  # Rule 9: Insecure temporary file
+  - id: ha-insecure-tempfile
+    patterns:
+      - pattern: |
+          tempfile.mktemp(...)
+    message: "tempfile.mktemp() is insecure (race condition). Use tempfile.mkstemp() or tempfile.NamedTemporaryFile()."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-377: Insecure Temporary File"
+
+  # Rule 10: Missing type hints in HA platform functions
+  - id: ha-missing-setup-type-hints
+    patterns:
+      - pattern-either:
+          - pattern: |
+              async def setup(hass, config):
+                  ...
+          - pattern: |
+              async def async_setup(hass, config):
+                  ...
+          - pattern: |
+              async def async_setup_entry(hass, entry):
+                  ...
+      - pattern-not: |
+          async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+              ...
+    message: "HA platform function missing type hints. Use (hass: HomeAssistant, entry: ConfigEntry) -> bool for consistency and type safety."
+    severity: INFO
+    languages: [python]
+    metadata:
+      category: maintainability
+      technology: [homeassistant]
+
+  # Rule 11: Logging sensitive data
+  - id: ha-log-sensitive-data
+    patterns:
+      - pattern-either:
+          - pattern: _LOGGER.debug(f"...{$VAR.password}...")
+          - pattern: _LOGGER.info(f"...{$VAR.token}...")
+          - pattern: _LOGGER.debug(f"...{$VAR.api_key}...")
+          - pattern: _LOGGER.debug(f"...{$VAR.secret}...")
+    message: "Potential logging of sensitive data (password/token/api_key/secret). Use _LOGGER.debug('...%s...', '***REDACTED***') instead."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  # Rule 12: Missing coordinator update interval
+  - id: ha-coordinator-no-update-interval
+    patterns:
+      - pattern: |
+          class $NAME(DataUpdateCoordinator):
+              ...
+      - pattern-not-inside: |
+          class $NAME(DataUpdateCoordinator):
+              ...
+              update_interval = ...
+    message: "DataUpdateCoordinator without explicit update_interval. Set update_interval = timedelta(minutes=X) for predictable polling."
+    severity: INFO
+    languages: [python]
+    metadata:
+      category: reliability
+      technology: [homeassistant]
