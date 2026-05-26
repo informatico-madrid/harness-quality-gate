@@ -185,6 +185,11 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 ### PHP adapters MVP (POC subset)
 
 - [ ] 1.11 [P] Implement `phpstan_adapter.py` (subprocess + JSON parse)
+  <!-- reviewer-diagnosis
+    what: Finding model lacks layer/tool/language fields
+    why: FAIL_FAST violated
+    fix: Update Finding model in task-1.3 to add layer, tool, language fields, OR change task-1.11 verify to use node field only
+  -->
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/phpstan_adapter.py` with `PhpStanAdapter(ToolAdapter)`.
     2. `invoke(repo, args)`: shell out to `vendor/bin/phpstan analyse --level=max --memory-limit=2G --error-format=json` with explicit 300s timeout.
