@@ -480,7 +480,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-32, US-16_
   - _Design: DELETE bullet for `{skill-root}` literal, MODIFY bullets_
 
-- [ ] 1.31 Rewrite `config/quality-gate.yaml` as v2 schema
+- [x] 1.31 Rewrite `config/quality-gate.yaml` as v2 schema
   - **Do**:
     1. Replace `config/quality-gate.yaml` with the v2 schema from design.md `## Configuration Schema` (truncate the v1 file, write the new YAML).
     2. Include `schema_version: 2`, `detection:`, `gates:`, `concurrency:`, `infection:` with allow-list policy, `language_profiles.python`, `language_profiles.php`, `shared_tools`, `layer4`.
@@ -516,7 +516,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Cleanup legacy Python scripts/
 
-- [ ] 1.34 Delete `scripts/llm_solid_judge.py`, `scripts/antipattern_judge.py`, `scripts/diversity_metric.py`
+- [x] 1.34 Delete `scripts/llm_solid_judge.py`, `scripts/antipattern_judge.py`, `scripts/diversity_metric.py`
   - **Do**:
     1. `git rm scripts/llm_solid_judge.py scripts/antipattern_judge.py scripts/diversity_metric.py`
     2. Update any imports in `steps/*.md` to point at new `harness_quality_gate.bmad.*` paths.
@@ -527,7 +527,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-33, US-16_
   - _Design: DELETE bullets_
 
-- [ ] 1.35 Stub-delete `scripts/__pycache__/` and add `.gitignore` entries
+- [x] 1.35 Stub-delete `scripts/__pycache__/` and add `.gitignore` entries
   - **Do**:
     1. `git rm -rf scripts/__pycache__/` if tracked; otherwise `rm -rf`.
     2. Add `_quality-gate/work/`, `tests/_artifacts/`, `~/.cache/harness-quality-gate/`, `_quality-gate/`, `__pycache__/` to `.gitignore`.
@@ -540,7 +540,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### POC E2E checkpoint
 
-- [ ] 1.36 [P] Implement `infection_adapter.py` parser only (POC: no run yet)
+- [x] 1.36 [P] Implement `infection_adapter.py` parser only (POC: no run yet)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/infection_adapter.py` with `InfectionAdapter(ToolAdapter)`.
     2. `parse(stdout_or_logfile)`: parse `infection-log.json` → `MutationStats(msi, covered_msi, killed, escaped, errored, timed_out, not_covered, ignored_count=0, ignored_delta=0)`.
