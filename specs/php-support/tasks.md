@@ -383,7 +383,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-30, US-12_
   - _Design: installer component_
 
-- [ ] 1.25 Create `messages_fr.py` for French diagnostics
+- [x] 1.25 Create `messages_fr.py` for French diagnostics
   <!-- reviewer-diagnosis
     what: ruff/unimport error in checkpoint_v2.py
     why: spec quality gate violated
