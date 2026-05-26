@@ -283,7 +283,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, FR-41, US-3_
   - _Design: python_adapter component_
 
-- [ ] 1.18 [P] Relocate `scripts/llm_solid_judge.py` → `bmad/llm_solid_judge.py`
+- [x] 1.18 [P] Relocate `scripts/llm_solid_judge.py` → `bmad/llm_solid_judge.py`
   - **Do**:
     1. Move `scripts/llm_solid_judge.py` content into `harness_quality_gate/bmad/llm_solid_judge.py`.
     2. Update internal imports.
