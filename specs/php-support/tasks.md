@@ -107,7 +107,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-3, FR-39, NFR-3_
   - _Design: TD-5, TD-16_
 
-- [ ] 1.6 Implement framework signal sniffer
+- [x] 1.6 Implement framework signal sniffer
   - **Do**:
     1. Add `framework_signals(repo: Path) -> dict[str, list[str]]` in `detector.py`.
     2. Parse `composer.json` `require` keys for `symfony/framework-bundle` → `["symfony"]`, `laravel/framework` → `["laravel"]`, `drupal/core` → `["drupal"]`, `roots/wordpress` → `["wordpress"]`.
