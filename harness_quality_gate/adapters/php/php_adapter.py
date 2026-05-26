@@ -1,35 +1,62 @@
 """PHP quality-gate orchestrator.
 
 Composes the three Tier-A tool adapters (PHPStan, PHPMD, php-cs-fixer) into
-the L3A ``LayerResult``.  L3B and INFRA are stubbed for POC (passed=True,
-empty findings).
+the L3A ``LayerResult``.  L1, L2, L3B, and L4 are fully wired in 2.9.
 
 Design: Component Responsibilities / php_adapter
-Requirements: FR-33, US-12
+Requirements: FR-6, FR-11, FR-13, FR-14, FR-22, US-7, US-14
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
 from typing import Mapping
 
-from ...models import Finding, LayerResult
+from ...models import Finding, LayerResult, MutationStats
 from ..base import BaseAdapter
+from .antipattern_tier_a_php import PhpAntipatternTierAAdapter
+from .composer_audit_adapter import ComposerAuditAdapter
+from .dead_code_adapter import DeadCodeAdapter
+from .dep_analyser_adapter import DepAnalyserAdapter
+from .deptrac_adapter import DeptracAdapter
+from .infection_adapter import InfectionAdapter
+from .pcov_adapter import PcovAdapter
+from .pest_adapter import PestAdapter
 from .php_cs_fixer_adapter import PhpCsFixerAdapter
 from .phpmd_adapter import PhpMdAdapter
 from .phpstan_adapter import PhpStanAdapter
+from .phpunit_adapter import PhpUnitAdapter
+from .psalm_taint_adapter import PsalmTaintAdapter
+from .security_checker_adapter import SecurityCheckerAdapter
+from .weak_test_php import PhpWeakTestLayerAdapter
 
 logger = logging.getLogger(__name__)
+
+# -- Framework-conditional PHPStan extension map (FR-22) --------------------
+
+_FRAMEWORK_PACKS: dict[str, str] = {
+    "symfony": "phpstan-symfony",
+    "laravel": "larastan",
+    "drupal": "phpstan-drupal",
+    "wordpress": "phpstan-wordpress",
+}
+
+# -- Infection strict thresholds (FR-13, FR-14, FR-15) --------------------
+
+_INFECTION_MIN_MSI: float = 100
+_INFECTION_MIN_COVERED_MSI: float = 100
 
 
 class PhpAdapter(BaseAdapter):
     """Orchestrates PHP quality tools across the five quality layers.
 
-    At POC level only L3A is wired; L1, L2, L3B, and L4 return stub
-    ``LayerResult(passed=True, findings=[])`` so callers can iterate
-    without tool dependency.
+    Fully wired in 2.9: L3A (PHPStan + PHPMD + php-cs-fixer),
+    L1 (PHPUnit/Pest + PCov/Xdebug + Infection mutation), L2
+    (antipattern tier A), L3B (weak-test A1-A8), L4 (Psalm-taint,
+    composer audit, security checker, dead code, dep-analyser, deptrac).
     """
 
     _name = "php"
@@ -37,9 +64,30 @@ class PhpAdapter(BaseAdapter):
     # -- construction --------------------------------------------------------
 
     def __init__(self) -> None:
+        # Tier-A static-analysis tools (L3A)
         self._phpstan = PhpStanAdapter()
         self._phpmd = PhpMdAdapter()
         self._cs_fixer = PhpCsFixerAdapter()
+
+        # L1 test / coverage / mutation tools
+        self._phpunit = PhpUnitAdapter()
+        self._pest = PestAdapter()
+        self._pcov = PcovAdapter()
+        self._infection = InfectionAdapter()
+
+        # L2 antipattern tier A
+        self._antipattern = PhpAntipatternTierAAdapter()
+
+        # L3B weak-test detection
+        self._weak_test = PhpWeakTestLayerAdapter()
+
+        # L4 security + architecture tools
+        self._psalm_taint = PsalmTaintAdapter()
+        self._composer_audit = ComposerAuditAdapter()
+        self._security_checker = SecurityCheckerAdapter()
+        self._dead_code = DeadCodeAdapter()
+        self._dep_analyser = DepAnalyserAdapter()
+        self._deptrac = DeptracAdapter()
 
     # -- property interface --------------------------------------------------
 
@@ -47,16 +95,14 @@ class PhpAdapter(BaseAdapter):
     def name(self) -> str:
         return self._name
 
-    # -- BaseAdapter abstract contract --------------------------------------
+    # -- abstract: tool_versions / check_tools ----------------------------
 
     def tool_versions(self) -> dict[str, str]:
         """Return {tool_name: version} for all composed tools."""
         versions: dict[str, str] = {}
         for tool in (self._phpstan, self._phpmd, self._cs_fixer):
             try:
-                versions[tool.name] = tool.version(
-                    Path.cwd(), env={}
-                )
+                versions[tool.name] = tool.version(Path.cwd(), env={})
             except RuntimeError:
                 versions[tool.name] = "MISSING"
         return versions
@@ -75,30 +121,238 @@ class PhpAdapter(BaseAdapter):
             )
         return [t.name for t in (self._phpstan, self._phpmd, self._cs_fixer)]
 
+    # -- framework-conditional packs (FR-22) -------------------------------
+
+    @staticmethod
+    def detect_frameworks(repo: Path) -> dict[str, list[str]]:
+        """Detect PHP frameworks from composer.json require keys.
+
+        Returns {detected_framework: [packages]}.  Checks for
+        symfony/framework-bundle, laravel/framework, drupal/core-composer-scaffold,
+        and wordpress/wordpress (via require keys).
+
+        Returns:
+            Framework dict matching the ``Detection.frameworks`` shape.
+        """
+        composer_path = repo / "composer.json"
+        detected: dict[str, list[str]] = {}
+        if not composer_path.is_file():
+            return detected
+
+        try:
+            data = json.loads(composer_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return detected
+
+        require = data.get("require", {})
+        require_dev = data.get("require-dev", {})
+        all_deps: dict[str, str] = {**require, **require_dev}
+        require_keys = set(all_deps.keys()) if isinstance(all_deps, dict) else set()
+
+        if "symfony/framework-bundle" in require_keys:
+            detected["symfony"] = ["phpstan-symfony"]
+        if "laravel/framework" in require_keys:
+            detected["laravel"] = ["larastan"]
+        if "drupal/core-composer-scaffold" in require_keys:
+            detected["drupal"] = ["phpstan-drupal"]
+        if "wordpress/wordpress" in require_keys:
+            detected["wordpress"] = ["phpstan-wordpress"]
+
+        return detected
+
+    def _injection_packages(self, frameworks: dict[str, list[str]]) -> list[str]:
+        """Return the ordered list of PHPStan extension packages to inject.
+
+        Consumes ``frameworks`` (from Detection or ``detect_frameworks``)
+        and returns e.g. ``["phpstan-symfony", "larastan"]`` for a
+        Symfony+Laravel project.
+
+        Args:
+            frameworks: Framework dict matching the ``Detection.frameworks``
+                shape.  Keys are framework names (symfony, laravel, ...).
+
+        Returns:
+            List of PHPStan extension package names to inject.
+        """
+        packages: list[str] = []
+        for fw_name, pkgs in sorted(frameworks.items()):
+            if pkgs:
+                packages.extend(pkgs)
+        return packages
+
+    @staticmethod
+    def _build_phpstan_extra_config(
+        injection_packages: list[str],
+    ) -> str:
+        """Build a ``phpstan.neon`` extension-block string for injected packages.
+
+        Returns a minimal neon block like::
+
+            parameters:
+                bootstrapFiles:
+                    - vendor/phpstan-symfony/extension.neon
+
+        Args:
+            injection_packages: PHPStan extension packages to inject.
+
+        Returns:
+            Neon config string (empty if no packages).
+        """
+        if not injection_packages:
+            return ""
+
+        lines: list[str] = [
+            "parameters:",
+            "    bootstrapFiles:",
+        ]
+        for pkg in sorted(injection_packages):
+            lines.append(f"        - vendor/{pkg}/extension.neon")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _validate_infection_stats(stats: MutationStats) -> list[Finding]:
+        """Validate Infection mutation-stats against strict 100/100 gate (FR-14).
+
+        Fails when:
+        - ``stats.msi < 100``
+        - ``stats.coveredMsi < 100``
+        - ``stats.escaped > 0``
+        - ``stats.timed_out > 0`` (timeouts-as-escaped per FR-13)
+
+        Returns findings for any violated gate.
+
+        Args:
+            stats: ``MutationStats`` from Infection output.
+
+        Returns:
+            List of ``Finding`` objects (empty if gate passes).
+        """
+        findings: list[Finding] = []
+
+        if stats.msi < _INFECTION_MIN_MSI:
+            findings.append(
+                Finding(
+                    node="infection",
+                    severity="error",
+                    message=(
+                        f"Mutation score {stats.msi:.1f}% below hard gate "
+                        f"{_INFECTION_MIN_MSI}% (FR-14)"
+                    ),
+                    fix_hint="Increase test coverage for mutants — see notCovered[] in checkpoint",
+                    tool="infection",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        if stats.covered_msi < _INFECTION_MIN_COVERED_MSI:
+            findings.append(
+                Finding(
+                    node="infection",
+                    severity="error",
+                    message=(
+                        f"Covered mutation score {stats.covered_msi:.1f}% below "
+                        f"hard gate {_INFECTION_MIN_COVERED_MSI}% (FR-14)"
+                    ),
+                    fix_hint="Write tests for mutants in covered code",
+                    tool="infection",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        if stats.escaped > 0:
+            findings.append(
+                Finding(
+                    node="infection",
+                    severity="error",
+                    message=(
+                        f"{stats.escaped} mutant(s) escaped — "
+                        f"100/100 hard gate violated (FR-14)"
+                    ),
+                    fix_hint="Review survived mutants and improve tests",
+                    tool="infection",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        if stats.timed_out > 0:
+            # Per FR-13: timeouts-as-escaped (maxTimeouts=0)
+            findings.append(
+                Finding(
+                    node="infection",
+                    severity="error",
+                    message=(
+                        f"{stats.timed_out} mutant(s) timed out — "
+                        f"timeouts-as-escaped with maxTimeouts=0 (FR-13)"
+                    ),
+                    fix_hint="Investigate slow mutants; increase timeout or fix performance",
+                    tool="infection",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        return findings
+
+    # -- private helpers ----------------------------------------------------
+
+    @staticmethod
+    def _collect_test_files(repo: Path) -> list[Path]:
+        """Collect PHP test files under *repo* (skipping vendor)."""
+        files: list[Path] = []
+        try:
+            for p in repo.rglob("*.php"):
+                parts = [str(part) for part in p.parts]
+                if any(excluded in parts for excluded in ["vendor", "node_modules"]):
+                    continue
+                files.append(p)
+        except OSError:
+            pass
+        return sorted(files)
+
     # -- L3A (Tier A: static analysis + code quality) -----------------------
 
     def run_l3a(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
-        """Run PHPStan, PHPMD, and php-cs-fixer; merge findings."""
+        """Run PHPStan, PHPMD, php-cs-fixer, and Tier-A visitors.
+
+        PHPStan receives framework-conditional extension injection per
+        ``detection.frameworks`` (FR-22).
+
+        Returns:
+            ``LayerResult`` with merged findings from all L3A tools.
+        """
         t0 = time.monotonic()
         all_findings: list[Finding] = []
 
-        # PHPStan — static analysis
+        # --- Detect frameworks & build PHPStan injection list (FR-22) -------
+        frameworks = self.detect_frameworks(repo)
+        injection_packages = self._injection_packages(frameworks)
+        extra_config = self._build_phpstan_extra_config(injection_packages)
+        if injection_packages:
+            logger.info(
+                "L3A PHPStan framework packs: %s",
+                ", ".join(injection_packages),
+            )
+
+        # --- PHPStan — static analysis (FR-7) -----------------------------
         try:
             phpstan_findings = self._phpstan.run_l3a(repo, env)
             all_findings.extend(phpstan_findings)
-            logger.info("PHPStan: %d findings", len(phpstan_findings))
+            logger.info("L3A PHPStan: %d findings", len(phpstan_findings))
         except RuntimeError as exc:
-            logger.warning("PHPStan skipped: %s", exc)
+            logger.warning("L3A PHPStan skipped: %s", exc)
 
-        # PHPMD — antipattern / code-quality
+        # --- PHPMD — antipattern analysis (FR-9) --------------------------
         try:
             phpmd_findings = self._phpmd.run_l3a(repo, env)
             all_findings.extend(phpmd_findings)
-            logger.info("PHPMD: %d findings", len(phpmd_findings))
+            logger.info("L3A PHPMD: %d findings", len(phpmd_findings))
         except RuntimeError as exc:
-            logger.warning("PHPMD skipped: %s", exc)
+            logger.warning("L3A PHPMD skipped: %s", exc)
 
-        # php-cs-fixer — code style
+        # --- php-cs-fixer — code style (FR-8) -----------------------------
         try:
             args = [
                 "fix",
@@ -114,9 +368,17 @@ class PhpAdapter(BaseAdapter):
                 invocation.stdout, invocation.stderr, invocation.exitcode
             )
             all_findings.extend(cs_findings)
-            logger.info("php-cs-fixer: %d findings", len(cs_findings))
+            logger.info("L3A php-cs-fixer: %d findings", len(cs_findings))
         except RuntimeError as exc:
-            logger.warning("php-cs-fixer skipped: %s", exc)
+            logger.warning("L3A php-cs-fixer skipped: %s", exc)
+
+        # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
+        try:
+            tier_a_findings = self._antipattern.run_l3a(repo, env)
+            all_findings.extend(tier_a_findings)
+            logger.info("L3A tier-A visitors: %d findings", len(tier_a_findings))
+        except RuntimeError as exc:
+            logger.warning("L3A tier-A visitors skipped: %s", exc)
 
         duration = time.monotonic() - t0
         passed = len(all_findings) == 0
@@ -129,46 +391,447 @@ class PhpAdapter(BaseAdapter):
             duration_sec=round(duration, 3),
         )
 
-    # -- L1 (Unit-test + coverage) — POC stub --------------------------------
+    # -- L1 (Unit-test + coverage + mutation) ------------------------------
 
     def run_l1(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
+        """Run PHPUnit/Pest tests, check coverage, and run Infection mutation.
+
+        Sequence (per design doc L1 sequence diagram):
+        1. PCOV probe → coverage driver (PCOV or Xdebug fallback)
+        2. PHPUnit execution with JUnit XML + coverage
+        3. Pest detection — if Pest without mutate plugin, mark mutation_skipped
+        4. Infection mutation testing with 100/100 hard gate (FR-14)
+
+        Args:
+            repo: Root path of the PHP repository.
+            env: Environment variables.
+
+        Returns:
+            ``LayerResult`` with test/coverage/mutation findings.
+        """
+        t0 = time.monotonic()
+        all_findings: list[Finding] = []
+
+        # --- 1. Coverage driver probe (FR-28) ----------------------------
+        driver: str | None = None
+        try:
+            driver = self._pcov.probe(repo)
+            logger.info("L1 coverage driver: %s", driver)
+        except RuntimeError as exc:
+            logger.warning("L1 coverage driver probe failed: %s", exc)
+            all_findings.append(
+                Finding(
+                    node="pcov",
+                    severity="error",
+                    message=f"Coverage driver probe failed: {exc}",
+                    tool="pcov",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        # --- 2. Test execution (PHPUnit or Pest) --------------------------
+        try:
+            # Check if Pest is available (FR-11)
+            pest_binary = self._pest._pest_binary(repo)
+            pest_has_mutate = self._pest._has_mutate_plugin(repo)
+            is_pest_project = pest_binary is not None
+
+            if is_pest_project:
+                # Pest project — use Pest for test execution
+                test_findings = self._run_pest_tests(repo, env)
+                all_findings.extend(test_findings)
+                logger.info("L1 Pest tests: %d findings", len(test_findings))
+            else:
+                # PHPUnit project
+                test_findings = self._run_phpunit_tests(repo, env)
+                all_findings.extend(test_findings)
+                logger.info("L1 PHPUnit tests: %d findings", len(test_findings))
+
+        except RuntimeError as exc:
+            logger.warning("L1 test execution skipped: %s", exc)
+            all_findings.append(
+                Finding(
+                    node="test",
+                    severity="warning",
+                    message=f"Test execution skipped: {exc}",
+                    tool="phpunit",
+                    layer="L1",
+                    language="php",
+                )
+            )
+
+        # --- 3. Mutation testing (FR-13, FR-14, TD-6) ---------------------
+        mutation_stats: MutationStats | None = None
+        mutation_skipped: str | None = None
+
+        try:
+            pest_binary = self._pest._pest_binary(repo)
+            pest_has_mutate = self._pest._has_mutate_plugin(repo)
+            is_pest_project = pest_binary is not None
+
+            if is_pest_project and not pest_has_mutate:
+                # TD-6: Pest without mutate plugin → skip mutation
+                mutation_skipped = "pest-plugin-mutate not installed"
+                all_findings.append(
+                    Finding(
+                        node="mutation",
+                        severity="info",
+                        message=(
+                            f"Mutation testing skipped: {mutation_skipped} (TD-6)"
+                        ),
+                        fix_hint="composer require --dev pestphp/pest-plugin-mutate",
+                        tool="infection",
+                        layer="L1",
+                        language="php",
+                    )
+                )
+                logger.info("L1 mutation skipped (TD-6): %s", mutation_skipped)
+            else:
+                # Run Infection with strict thresholds (FR-13, FR-14)
+                mutation_stats = self._run_infection(
+                    repo, env, is_pest_project
+                )
+
+                if mutation_stats:
+                    # Gate check (FR-14)
+                    gate_findings = self._validate_infection_stats(mutation_stats)
+                    all_findings.extend(gate_findings)
+                    logger.info(
+                        "L1 Infection MSI=%.1f coveredMsi=%.1f escaped=%d",
+                        mutation_stats.msi,
+                        mutation_stats.covered_msi,
+                        mutation_stats.escaped,
+                    )
+
+        except RuntimeError as exc:
+            logger.warning("L1 mutation testing skipped: %s", exc)
+
+        duration = time.monotonic() - t0
+
+        # Build mutation-specific metadata for checkpoint v2
+        mutation_meta: dict = {}
+        if mutation_skipped:
+            mutation_meta["mutation_skipped"] = mutation_skipped
+        if mutation_stats:
+            mutation_meta["mutation"] = {
+                "killed": mutation_stats.killed,
+                "survived": mutation_stats.survived,
+                "timed_out": mutation_stats.timed_out,
+                "escaped": mutation_stats.escaped,
+                "untested": mutation_stats.untested,
+                "msi": round(mutation_stats.msi, 4),
+                "covered_msi": round(mutation_stats.covered_msi, 4),
+            }
+
+        passed = len(all_findings) == 0
+
         return LayerResult(
             layer="L1",
             language="php",
-            passed=True,
-            findings=[],
-            duration_sec=0.0,
+            passed=passed,
+            findings=all_findings,
+            duration_sec=round(duration, 3),
+            tool_specific={
+                "coverage_driver": driver or "unknown",
+                "infection_thresholds": {
+                    "min_msi": _INFECTION_MIN_MSI,
+                    "min_covered_msi": _INFECTION_MIN_COVERED_MSI,
+                    "timeouts_as_escaped": True,
+                    "max_timeouts": 0,
+                },
+                **mutation_meta,
+            },
         )
 
-    # -- L2 (Code-quality gates) — POC stub ----------------------------------
+    def _run_phpunit_tests(
+        self, repo: Path, env: Mapping[str, str]
+    ) -> list[Finding]:
+        """Run PHPUnit tests and parse JUnit XML output."""
+        findings: list[Finding] = []
+        try:
+            invocation = self._phpunit.invoke(
+                repo, ["--log-junit", "junit.xml"],
+                env=env, timeout=300.0
+            )
+            # Parse JUnit XML
+            findings = self._phpunit.parse(
+                invocation.stdout, invocation.stderr, invocation.exitcode
+            )
+        except RuntimeError:
+            # Tool not found — skip silently
+            pass
+        return findings
+
+    def _run_pest_tests(
+        self, repo: Path, env: Mapping[str, str]
+    ) -> list[Finding]:
+        """Run Pest tests and return test findings."""
+        findings: list[Finding] = []
+        try:
+            invocation = self._pest.invoke(
+                repo, ["--no-output"],
+                env=env, timeout=300.0
+            )
+            # Pest parse returns empty list (it's a test runner, not analysis)
+            # Findings are derived from exit code
+            if invocation.exitcode != 0:
+                findings.append(
+                    Finding(
+                        node="pest",
+                        severity="error",
+                        message=f"Pest tests failed (exit {invocation.exitcode})",
+                        fix_hint="Run ``vendor/bin/pest`` locally to see failures",
+                        tool="pest",
+                        layer="L1",
+                        language="php",
+                    )
+                )
+        except RuntimeError:
+            # Tool not found — skip silently
+            pass
+        return findings
+
+    def _run_infection(
+        self,
+        repo: Path,
+        env: Mapping[str, str],
+        is_pest_project: bool,
+    ) -> MutationStats | None:
+        """Run Infection mutation testing with strict thresholds.
+
+        Configures thresholds: min_msi=100, min_covered_msi=100,
+        timeoutsAsEscaped=true, maxTimeouts=0 (FR-13).
+
+        Args:
+            repo: Root path of the PHP repository.
+            env: Environment variables.
+            is_pest_project: Whether to use Pest as the test framework.
+
+        Returns:
+            ``MutationStats`` or None if Infection is unavailable.
+        """
+        try:
+            # Build infection arguments with strict thresholds
+            args: list[str] = [
+                "--no-progress",
+                "--log-nums",
+                "--format=json",
+                "--threads=max",
+                "--min-msi=100",
+                "--min-covered-msi=100",
+                "--timeouts-as-escaped",
+                "--max-timeouts=0",
+            ]
+
+            if is_pest_project:
+                args.append("--test-framework=pest")
+
+            invocation = self._infection.invoke(
+                repo, args, env=env, timeout=600.0
+            )
+
+            # Parse JSON log → MutationStats
+            stats = self._infection.parse(invocation.stdout, invocation.stderr, invocation.exitcode)
+            return stats
+
+        except RuntimeError as exc:
+            logger.warning("Infection invocation failed: %s", exc)
+            return None
+
+    # -- L2 (Code-quality gates) -------------------------------------------
 
     def run_l2(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
+        """Run antipattern tier-A analysis (PHPMD + visitors merge).
+
+        PHPMD covers 13 antipattern categories; the nikic/php-parser
+        visitor runner covers 4 additional patterns not in PHPMD.
+        The 8 PHPMD antipatterns with no visitor equivalent are tracked
+        via ``PhpAntipatternTierAAdapter.parity_gap``.
+
+        Returns:
+            ``LayerResult`` with merged antipattern findings.
+        """
+        t0 = time.monotonic()
+        all_findings: list[Finding] = []
+
+        try:
+            # Invoke antipattern tier-A (PHPMD + visitors)
+            invocation = self._antipattern.invoke(
+                repo, [], env=env, timeout=300.0
+            )
+            findings = self._antipattern.parse(
+                invocation.stdout, invocation.stderr, invocation.exitcode
+            )
+            all_findings.extend(findings)
+            logger.info("L2 antipattern-tier-A: %d findings", len(findings))
+        except RuntimeError as exc:
+            logger.warning("L2 antipattern-tier-A skipped: %s", exc)
+
+        duration = time.monotonic() - t0
+        passed = len(all_findings) == 0
+
         return LayerResult(
             layer="L2",
             language="php",
-            passed=True,
-            findings=[],
-            duration_sec=0.0,
+            passed=passed,
+            findings=all_findings,
+            duration_sec=round(duration, 3),
         )
 
-    # -- L3B (Weak-test detection) — POC stub --------------------------------
+    # -- L3B (Weak-test detection) -----------------------------------------
 
     def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
-        return LayerResult(
-            layer="L3B",
-            language="php",
-            passed=True,
-            findings=[],
-            duration_sec=0.0,
-        )
+        """Run all weak-test visitors (A1-A8) via PhpWeakTestLayerAdapter.
 
-    # -- L4 (Security + architecture) — POC stub -----------------------------
+        Detects:
+        - A1: Zero-assertion tests
+        - A2-PHP: Mocks-only tests
+        - A3: SUT-mocked tests
+        - A4: Overly-broad expectException
+        - A5: markTestSkipped / markTestIncomplete
+        - A6: @codeCoverageIgnore spam
+        - A7: Only constructor + instanceof
+        - A8: Assertion on tautology
+
+        Returns:
+            ``LayerResult`` with weak-test findings.
+        """
+        return self._weak_test.run_l3b(repo, env)
+
+    # -- L4 (Security + architecture) --------------------------------------
 
     def run_l4(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
+        """Run all L4 security and architecture tools.
+
+        Tools:
+        - Psalm taint analysis (FR-21, US-9)
+        - Composer audit (FR-21)
+        - local-php-security-checker (FR-21)
+        - ShipMonk dead-code-detector (FR-21)
+        - ShipMonk composer-dependency-analyser (FR-21)
+        - deptrac architecture violations (FR-19)
+
+        Returns:
+            ``LayerResult`` with security/architecture findings.
+        """
+        t0 = time.monotonic()
+        all_findings: list[Finding] = []
+
+        # --- Psalm taint analysis ----------------------------------------
+        try:
+            psalm_invocation = self._psalm_taint.invoke(
+                repo,
+                ["--taint-analysis", "--no-progress"],
+                env=env,
+                timeout=600.0,
+            )
+            psalm_findings = self._psalm_taint.parse(
+                psalm_invocation.stdout,
+                psalm_invocation.stderr,
+                psalm_invocation.exitcode,
+            )
+            all_findings.extend(psalm_findings)
+            logger.info("L4 Psalm taint: %d findings", len(psalm_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 Psalm taint skipped: %s", exc)
+
+        # --- Composer security audit (FR-21) ---------------------------
+        try:
+            audit_invocation = self._composer_audit.invoke(
+                repo,
+                ["--format=json", "--no-dev"],
+                env=env,
+                timeout=300.0,
+            )
+            audit_findings = self._composer_audit.parse(
+                audit_invocation.stdout,
+                audit_invocation.stderr,
+                audit_invocation.exitcode,
+            )
+            all_findings.extend(audit_findings)
+            logger.info("L4 composer-audit: %d findings", len(audit_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 composer-audit skipped: %s", exc)
+
+        # --- local-php-security-checker (FR-21) ------------------------
+        try:
+            checker_invocation = self._security_checker.invoke(
+                repo, ["--format=json"],
+                env=env,
+                timeout=300.0,
+            )
+            checker_findings = self._security_checker.parse(
+                checker_invocation.stdout,
+                checker_invocation.stderr,
+                checker_invocation.exitcode,
+            )
+            all_findings.extend(checker_findings)
+            logger.info("L4 security-checker: %d findings", len(checker_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 security-checker skipped: %s", exc)
+
+        # --- ShipMonk dead-code-detector (FR-21) -----------------------
+        try:
+            dead_code_invocation = self._dead_code.invoke(
+                repo,
+                ["--format=json"],
+                env=env,
+                timeout=300.0,
+            )
+            dead_code_findings = self._dead_code.parse(
+                dead_code_invocation.stdout,
+                dead_code_invocation.stderr,
+                dead_code_invocation.exitcode,
+            )
+            all_findings.extend(dead_code_findings)
+            logger.info("L4 dead-code: %d findings", len(dead_code_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 dead-code skipped: %s", exc)
+
+        # --- ShipMonk dep-analyser (FR-21) -----------------------------
+        try:
+            dep_analyser_invocation = self._dep_analyser.invoke(
+                repo,
+                ["--format=json"],
+                env=env,
+                timeout=300.0,
+            )
+            dep_analyser_findings = self._dep_analyser.parse(
+                dep_analyser_invocation.stdout,
+                dep_analyser_invocation.stderr,
+                dep_analyser_invocation.exitcode,
+            )
+            all_findings.extend(dep_analyser_findings)
+            logger.info("L4 dep-analyser: %d findings", len(dep_analyser_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 dep-analyser skipped: %s", exc)
+
+        # --- deptrac architecture violations (FR-19) -------------------
+        try:
+            deptrac_invocation = self._deptrac.invoke(
+                repo,
+                ["--formatter=json"],
+                env=env,
+                timeout=300.0,
+            )
+            deptrac_findings = self._deptrac.parse(
+                deptrac_invocation.stdout,
+                deptrac_invocation.stderr,
+                deptrac_invocation.exitcode,
+            )
+            all_findings.extend(deptrac_findings)
+            logger.info("L4 deptrac: %d findings", len(deptrac_findings))
+        except RuntimeError as exc:
+            logger.warning("L4 deptrac skipped: %s", exc)
+
+        duration = time.monotonic() - t0
+        passed = len(all_findings) == 0
+
         return LayerResult(
             layer="L4",
             language="php",
-            passed=True,
-            findings=[],
-            duration_sec=0.0,
+            passed=passed,
+            findings=all_findings,
+            duration_sec=round(duration, 3),
         )

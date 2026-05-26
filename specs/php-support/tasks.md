@@ -730,7 +730,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-9, FR-10_
   - _Design: TD-12_
 
-- [ ] 2.9 Implement `php_adapter.py` full 5-layer wiring + framework conditional packs
+- [x] 2.9 Implement `php_adapter.py` full 5-layer wiring + framework conditional packs
   - **Do**:
     1. Complete `PhpAdapter.run_l1`, `run_l2`, `run_l3b`, `run_l4` per design L1/L3B/L4 sequences.
     2. Consume `detection.frameworks` to conditionally inject `phpstan-symfony`/`larastan`/`phpstan-drupal`/`phpstan-wordpress` in PHPStan config rendering.

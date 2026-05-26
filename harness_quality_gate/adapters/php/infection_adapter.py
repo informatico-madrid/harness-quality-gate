@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Mapping
 
@@ -41,9 +42,38 @@ class InfectionAdapter(ToolAdapter):
         args: list[str],
         *,
         env: Mapping[str, str] | None = None,
-        timeout: float = 300.0,
+        timeout: float = 600.0,
     ) -> ToolInvocation:
-        raise NotImplementedError("infection invocation not implemented (POC)")
+        """Run Infection mutation testing against *repo*.
+
+        Uses ``vendor/bin/infection`` or the ``infection`` binary on PATH.
+        Default arguments produce JSON log + text summary.
+
+        Args:
+            repo: Root path of the PHP repository.
+            args: Additional CLI arguments.
+            env: Optional environment variables.
+            timeout: Maximum seconds to wait (default 600).
+
+        Returns:
+            A :class:`ToolInvocation` with stdout/stderr/exit code.
+        """
+        infection_bin = shutil.which("infection")
+        if infection_bin is None:
+            vendor_bin = repo / "vendor" / "bin" / "infection"
+            if vendor_bin.is_file():
+                infection_bin = str(vendor_bin)
+            else:
+                return ToolInvocation(
+                    stdout="",
+                    stderr="infection not found on PATH or in vendor/bin",
+                    exitcode=3,
+                    duration_seconds=0.0,
+                )
+        cmd = [infection_bin, "--no-progress", "--log-nums", "--format=json"]
+        if args:
+            cmd.extend(args)
+        return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]
         self,
