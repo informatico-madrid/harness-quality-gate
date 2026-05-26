@@ -125,7 +125,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-22, US-14, US-7_
   - _Design: Component Responsibilities / detector framework_signals_
 
-- [ ] V1 [VERIFY] Quality checkpoint: ruff + mypy on package skeleton
+- [x] V1 [VERIFY] Quality checkpoint: ruff + mypy on package skeleton
   - **Do**: Run `ruff check harness_quality_gate/` and `mypy harness_quality_gate/ --ignore-missing-imports`.
   - **Verify**: Both exit 0
   - **Done when**: No lint errors, no type errors on detector/models/exit_codes
@@ -145,7 +145,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-6, design interview_
   - _Design: TD-2, TD-17_
 
-- [ ] 1.8 [P] Implement `state.py` scratch-dir helper
+- [x] 1.8 [P] Implement `state.py` scratch-dir helper
   - **Do**:
     1. Create `harness_quality_gate/state.py` with `scratch_dir(repo: Path, language: str, tool: str) -> Path`.
     2. Path layout: `<repo>/_quality-gate/work/<language>/<tool>/`. Create on demand.
