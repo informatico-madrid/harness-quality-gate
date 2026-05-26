@@ -107,7 +107,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-3, FR-39, NFR-3_
   - _Design: TD-5, TD-16_
 
-- [ ] 1.6 Implement framework signal sniffer
+- [x] 1.6 Implement framework signal sniffer
   <!-- reviewer-diagnosis
     what: framework_sniffer not integrated in detect()
     why: FAIL_FAST violated

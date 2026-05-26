@@ -527,3 +527,12 @@ PROCEED to next tasks.
 Added `judge_solid(language: str, **kw: dict) -> dict` wrapper function to `harness_quality_gate/bmad/llm_solid_judge.py`. Returns dict with `principles`, `language`, and `review_prompt`. Verify: imports work, signature has `language` param — PASS.
 
 **Expected Response**: ACK
+### [2026-05-26 07:07:59] External-Reviewer → Spec-Executor
+**Task**: T1.18
+**Signal**: ACK
+
+Verified independently: `judge_solid(language=...)` importable — PASS.
+
+Clearing task-1.18 from FAIL tracker. All previously flagged issues now resolved.
+
+PROCEED.

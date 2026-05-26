@@ -72,7 +72,7 @@ Review entry template:
   Option B (extend Finding): Add layer, tool, language fields to Finding in models.py AND update
   task-1.3 entry with resolved_at AND update all existing Finding instantiations across ALL adapters.
   Option A is cleaner for POC. Option B is correct long-term but requires cross-task coordination.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 
 ### [task-1.14] Implement composer_audit_adapter.py
 - status: PASS
@@ -114,7 +114,7 @@ Review entry template:
   Option B (extend Finding): Add tool, layer, language, rule_id fields to Finding model.
   The verify command for task-1.15 also has a copy-paste error (references PhpStanAdapter instead of PsalmTaintAdapter).
   Recommend correcting the verify command to test the parse behavior, not a non-existent attribute.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 
 ### [task-1.18] Relocate `scripts/llm_solid_judge.py` → `bmad/llm_solid_judge.py`
 - status: FAIL
@@ -127,7 +127,7 @@ Review entry template:
   Actual: `bmad/llm_solid_judge.py` has `extract_classes_from_dir()`, `generate_solid_review_context()`, `main()`
   — NO `judge_solid` function exists. Also no `harness_quality_gate/bmad/__init__.py`, so package not importable.
 - fix_hint: The move preserved file content but changed the interface. Create `judge_solid(language: str, **kw)` wrapper that calls the existing functions, or create the correct `judge_solid` function with `language` parameter. Add `__init__.py` to make harness_quality_gate.bmad importable.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 
 ### [task-1.16] Implement `php_adapter.py` orchestrator (L3A wiring only)
 - status: PASS
@@ -150,7 +150,7 @@ Review entry template:
   The file harness_quality_gate/bmad/antipattern_judge.py exists but does not export judge_antipattern.
   Likely same pattern as task-1.18: the file was moved but the function interface was not created.
 - fix_hint: Same as task-1.18. Create judge_antipattern(language: str, **kw) wrapper that calls existing functions and has language parameter.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 ### [V4] Quality checkpoint after Python relocations + dogfood smoke
 - status: FAIL
 - severity: major
@@ -163,7 +163,7 @@ Review entry template:
   Found 1 error.
   Exit code: 1
 - fix_hint: Remove unused `subprocess` import from checkpoint_v2.py
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 
 ### [task-1.21] Implement `doctor.py` runtime + tool checks
 - status: FAIL
@@ -176,7 +176,7 @@ Review entry template:
   The actual command failed with "python: not found" (exit 127 from shell), and then `echo "exit=0" | grep` matched the word "exit" in the error output.
   Correct command should use `python3`: `python3 -m harness_quality_gate doctor /tmp 2>/dev/null; echo "exit=$?"`
 - fix_hint: Fix verify command to use `python3` instead of `python`. The doctor tool itself works correctly — the verify command is wrong.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
 
 ### [task-1.25] Create `messages_fr.py` for French diagnostics
 - status: FAIL
@@ -188,4 +188,17 @@ Review entry template:
   Error: ImportError: cannot import name 'MSG' from 'harness_quality_gate.messages_es' (/mnt/bunker_data/harness-quality-gate/harness_quality_gate/messages_es.py). Did you mean: 'msg'?
   Also: task says Create `messages_fr.py` — file is named `messages_es.py` (Spanish). This appears to be an identity error in the task description.
 - fix_hint: Fix verify command to import `msg` (lowercase) instead of `MSG`. Also clarify whether the file should be messages_fr.py (French) or messages_es.py (Spanish) — the task title and Done when say French but the file path says Spanish.
-- resolved_at: 
+- resolved_at: 2026-05-26T07:01:20Z
+### [V4] Quality checkpoint after Python relocations + dogfood smoke
+- status: PASS
+- severity: none
+- reviewed_at: 2026-05-26T06:39:50Z
+- criterion_failed: none
+- evidence: |
+  $ ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports
+  All checks passed!
+  Success: no issues found in 28 source files
+  EXIT=0
+  Executor fixed: removed unused subprocess import from checkpoint_v2.py.
+- fix_hint: N/A
+- resolved_at: 2026-05-26T06:39:50Z

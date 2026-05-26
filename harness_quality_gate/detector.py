@@ -19,6 +19,7 @@ import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
+from .framework_sniffer import sniff_framework
 from .models import Detection, Runtime
 
 # Directories skipped during file scanning.
@@ -247,6 +248,62 @@ def _detect_concurrency_mode() -> str:
 
 
 # ------------------------------------------------------------------
+# Framework signal sniffing (FR-22, US-14, US-7)
+# ------------------------------------------------------------------
+
+def framework_signals(repo: Path) -> dict[str, list[str]]:
+    """Detect framework signals in *repo*.
+
+    Returns a dict mapping language (``"php"`` / ``"python"``) to a list
+    of canonical framework names (lowercase).
+
+    PHP signals
+    -----------
+    - Composer ``require`` / ``require-dev`` keys for framework packages:
+
+      ``symfony/framework-bundle`` → ``["symfony"]``
+      ``laravel/framework`` → ``["laravel"]``
+      ``drupal/core`` → ``["drupal"]``
+      ``roots/wordpress`` → ``["wordpress"]``
+
+    - Pest test runner co-presence: both ``pestphp/pest`` AND
+      ``pestphp/pest-plugin-mutate`` in composer.json ``require-dev``
+      emits ``["pest"]``.
+
+    Python signals
+    --------------
+    Delegates to :func:`sniff_framework <harness_quality_gate.framework_sniffer.sniff_framework>`.
+    """
+    repo = repo.resolve()
+    result: dict[str, list[str]] = {}
+
+    # PHP — sniff via existing sniffer
+    php_fw = sniff_framework(repo, "php")
+    if php_fw is not None:
+        result["php"] = [php_fw]
+
+    # PHP — Pest test runner co-presence (require + require-dev)
+    composer = repo / "composer.json"
+    if composer.is_file():
+        try:
+            data = json.loads(composer.read_text(encoding="utf-8"))
+            dev = data.get("require-dev", {})
+            has_pest = "pestphp/pest" in dev
+            has_mutate = "pestphp/pest-plugin-mutate" in dev
+            if has_pest and has_mutate:
+                result.setdefault("php", []).append("pest")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Python — sniff via existing sniffer
+    py_fw = sniff_framework(repo, "python")
+    if py_fw is not None:
+        result["python"] = [py_fw]
+
+    return result
+
+
+# ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
 
@@ -292,7 +349,7 @@ def detect(repo: Path, force: bool = False) -> Detection:
                 ci=_detect_ci_environment(),
             ),
             languages_detected=[language],
-            frameworks={},
+            frameworks=framework_signals(repo),
             file_counts={language: 0},
         )
 
@@ -350,7 +407,7 @@ def detect(repo: Path, force: bool = False) -> Detection:
             ci=_detect_ci_environment(),
         ),
         languages_detected=languages_detected,
-        frameworks={},
+        frameworks=framework_signals(repo),
         file_counts=file_counts,
     )
 
