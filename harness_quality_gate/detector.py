@@ -13,10 +13,12 @@ Returns a :class:`~harness_quality_gate.models.Detection`.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +67,115 @@ PHP_MANIFESTS: set[str] = {
     "composer.json",
     "composer.lock",
 }
+
+
+# ------------------------------------------------------------------
+# Cache helpers (FR-3, NFR-3, TD-5, TD-16)
+# ------------------------------------------------------------------
+
+CACHE_DIR = "_quality-gate"
+CACHE_FILE = "detection.json"
+FINGERPRINT_FILE = ".detection-fingerprint"
+
+_MANIFEST_NAMES = PYTHON_MANIFESTS | PHP_MANIFESTS
+
+
+def _cache_path(repo: Path) -> Path:
+    """Return the path to the cache JSON file inside the repo."""
+    return repo / CACHE_DIR / CACHE_FILE
+
+
+def _fingerprint_path(repo: Path) -> Path:
+    """Return the path to the git-HEAD fingerprint file inside the repo."""
+    return repo / CACHE_DIR / FINGERPRINT_FILE
+
+
+def _current_git_head(repo: Path) -> str | None:
+    """Return the current git HEAD sha, or None if not a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, cwd=str(repo),
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _any_manifest_stale(repo: Path, cache_mtime: float) -> bool:
+    """Return True if any manifest file was modified after the cache was written."""
+    for name in _MANIFEST_NAMES:
+        p = repo / name
+        if p.is_file():
+            try:
+                if p.stat().st_mtime > cache_mtime:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+def _load_cache(repo: Path) -> Detection | None:
+    """Load a cached Detection from ``_quality-gate/detection.json``.
+
+    Returns ``None`` when the cache is absent, corrupted, or stale
+    (manifest mtime changed or git HEAD diverged).
+    """
+    cache = _cache_path(repo)
+    if not cache.is_file():
+        return None
+
+    try:
+        cache_mtime = cache.stat().st_mtime
+    except OSError:
+        return None
+
+    # Stale-manifest check
+    if _any_manifest_stale(repo, cache_mtime):
+        return None
+
+    # Stale-git-HEAD check
+    fingerprint = _fingerprint_path(repo)
+    if fingerprint.is_file():
+        try:
+            stored_head = fingerprint.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        # Skip comparison when either side is non-git
+        if stored_head != "<no-git>":
+            current_head = _current_git_head(repo)
+            if current_head is not None and stored_head != current_head:
+                return None
+
+    # Read + reconstruct
+    try:
+        raw = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    # The cache stores all fields except the read-only `primary` alias.
+    try:
+        return Detection(**raw)
+    except TypeError:
+        return None
+
+
+def _save_cache(repo: Path, detection: Detection) -> None:
+    """Write *detection* and the current git HEAD to the cache files."""
+    cache_dir = repo / CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    cache = _cache_path(repo)
+    cache.write_text(
+        json.dumps(asdict(detection), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    fingerprint = _fingerprint_path(repo)
+    head = _current_git_head(repo)
+    fingerprint.write_text((head or "<no-git>") + "\n", encoding="utf-8")
 
 
 # ------------------------------------------------------------------
@@ -150,7 +261,7 @@ def detect(repo: Path, force: bool = False) -> Detection:
     repo:
         Path to the repository root.
     force:
-        If ``True``, skip any caching layer (reserved for future use).
+        If ``True``, bypass the cache and always re-run detection.
 
     Returns
     -------
@@ -159,6 +270,12 @@ def detect(repo: Path, force: bool = False) -> Detection:
         detected language(s), framework signals, and source-file counts.
     """
     repo = repo.resolve()
+
+    # ---- Cache lookup (skip when --force) ----
+    if not force:
+        cached = _load_cache(repo)
+        if cached is not None:
+            return cached
 
     # ---- Tier 1: explicit override ----
     override_file = repo / ".quality-gate-lang"
@@ -225,7 +342,7 @@ def detect(repo: Path, force: bool = False) -> Detection:
     manifest_hit = bool(py_manifests or php_manifests)
     confidence = 1.0 if manifest_hit else min(0.9, 0.5 + min(py_file_count + php_file_count, 50) / 50)
 
-    return Detection(
+    result = Detection(
         repo_path=str(repo),
         language=primary,
         framework=None,
@@ -239,3 +356,6 @@ def detect(repo: Path, force: bool = False) -> Detection:
         frameworks={},
         file_counts=file_counts,
     )
+
+    _save_cache(repo, result)
+    return result

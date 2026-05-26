@@ -94,7 +94,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-1, FR-2, US-1_
   - _Design: Component Responsibilities / detector_
 
-- [ ] 1.5 [P] Implement detection cache + fingerprint file
+- [x] 1.5 [P] Implement detection cache + fingerprint file
   - **Do**:
     1. In `detector.py` add `_load_cache(repo)` reading `_quality-gate/detection.json` + `.detection-fingerprint`.
     2. Invalidate cache when manifest mtime > cache mtime OR git HEAD differs from fingerprint (subprocess `git rev-parse HEAD`).
