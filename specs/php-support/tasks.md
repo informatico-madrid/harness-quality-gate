@@ -43,7 +43,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Bootstrap & package skeleton
 
-- [ ] 1.1 Create Python package skeleton
+- [x] 1.1 Create Python package skeleton
   - **Do**:
     1. Create directory `harness_quality_gate/` with empty subdirs `adapters/`, `adapters/python/`, `adapters/php/`, `adapters/php/visitors/`, `adapters/shared/`, `bmad/`.
     2. Create `harness_quality_gate/__init__.py` with `__version__ = "2.0.0"`.
@@ -312,7 +312,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37_
   - _Design: bmad/diversity_metric_
 
-- [ ] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
+- [x] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
   <!-- reviewer-diagnosis
     what: verify still fails
     why: wrong file content
@@ -328,7 +328,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Doctor + Installer (POC: composer-local path only)
 
-- [ ] 1.21 Implement `doctor.py` runtime + tool checks
+- [x] 1.21 Implement `doctor.py` runtime + tool checks
   <!-- reviewer-diagnosis
     what: ruff/unimport error in checkpoint_v2.py
     why: spec quality gate violated
@@ -347,7 +347,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-26, FR-27, FR-28, FR-31, US-11_
   - _Design: doctor component, E2, E11, E12_
 
-- [ ] 1.22 Create `config/php-tool-taxonomy.json`
+- [x] 1.22 Create `config/php-tool-taxonomy.json`
   - **Do**:
     1. Create JSON with critical tools: `phpunit`, `phpstan`, `infection`, `psalm`, `deptrac`, `phpmd`, `php-cs-fixer`, `composer-audit`, `nikic/php-parser`.
     2. Optional tools: `shipmonk/phpstan-rules-extra`, `ergebnis/phpstan-rules-extra`, `shipmonk/dead-code-detector`, `shipmonk/composer-dependency-analyser`.
@@ -359,7 +359,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-26, FR-27_
   - _Design: TD-4, config/php-tool-taxonomy.json_
 
-- [ ] 1.23 Create `config/php-tool-versions.json` (pinned versions)
+- [x] 1.23 Create `config/php-tool-versions.json` (pinned versions)
   - **Do**:
     1. Create JSON with strict-SemVer pins for `phpunit`, `phpstan`, `infection`, `psalm`, `deptrac`, `php-cs-fixer`, `phpmd`.
     2. Each entry: `{version: "X.Y.Z", phar_url: "...", sha256: "abc..."}`. For POC, sha256 may be placeholder; populated in Phase 2.
@@ -371,7 +371,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-29, FR-45, NFR-18_
   - _Design: TD-11_
 
-- [ ] 1.24 Implement `installer.py` (composer-local path)
+- [x] 1.24 Implement `installer.py` (composer-local path)
   - **Do**:
     1. Create `harness_quality_gate/installer.py` with `install(repo, plan) -> InstallReport`.
     2. POC: if `composer` on PATH, run `composer require --dev <pkg>:<version>` per critical tool in `php-tool-versions.json`.

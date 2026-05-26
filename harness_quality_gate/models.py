@@ -128,3 +128,11 @@ class DoctorReport:
     composer_version: str
     tools: list[ToolCheckReport]
     warnings: list[str]
+
+
+@dataclass(frozen=True)
+class InstallReport:
+    status: str
+    tools_installed: list[str]
+    tools_failed: list[str]
+    errors: list[str]
