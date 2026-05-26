@@ -317,7 +317,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37_
   - _Design: bmad/diversity_metric_
 
-- [ ] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
+- [x] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
   - **Do**:
     1. `ruff check harness_quality_gate/`
     2. `mypy harness_quality_gate/ --ignore-missing-imports`
