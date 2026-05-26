@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 
 class PyrightAdapter(ToolAdapter):

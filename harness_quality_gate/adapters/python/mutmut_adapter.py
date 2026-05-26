@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import MutationStats
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 
 class MutmutAdapter(ToolAdapter):
@@ -49,7 +49,7 @@ class MutmutAdapter(ToolAdapter):
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
         stderr: str = "",

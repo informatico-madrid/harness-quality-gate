@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 
 class PytestAdapter(ToolAdapter):
@@ -72,7 +72,6 @@ class PytestAdapter(ToolAdapter):
             classname = testcase.get("classname", "")
             name = testcase.get("name", "")
             full_name = f"{classname}.{name}" if classname else name
-            duration = float(testcase.get("time", 0))
 
             failure = testcase.find("failure")
             error = testcase.find("error")

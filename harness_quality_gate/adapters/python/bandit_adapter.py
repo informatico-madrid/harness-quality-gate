@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 
 class BanditAdapter(ToolAdapter):
@@ -77,7 +77,6 @@ class BanditAdapter(ToolAdapter):
             filename = issue.get("filename", "")
             issue_id = issue.get("issue_id", "")
             severity_raw = issue.get("issue_severity", "MEDIUM")
-            confidence_raw = issue.get("issue_severity", "MEDIUM")
             message = issue.get("issue_text", "")
             line_no = issue.get("line_number", 0)
             cwe = issue.get("cwe", {})

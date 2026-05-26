@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 
 class DeptryAdapter(ToolAdapter):
@@ -104,7 +104,7 @@ class DeptryAdapter(ToolAdapter):
 
                 findings.append(
                     Finding(
-                        node=filepath or module,
+                        node=filepath or module or "<unknown>",
                         severity=severity,
                         message=detail,
                         fix_hint=f"Review {category} for '{module}'",
