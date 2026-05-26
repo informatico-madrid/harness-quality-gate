@@ -700,7 +700,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-10, US-3_
   - _Design: TD-12, visitor_runner_adapter, visitors/*.php_
 
-- [ ] V8 [VERIFY] Quality checkpoint after Phase 2 adapter batch
+- [x] V8 [VERIFY] Quality checkpoint after Phase 2 adapter batch
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
@@ -772,7 +772,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, US-16_
   - _Design: python adapter components, bmad/weak_test_engine_
 
-- [ ] 2.12 Migrate `scripts/security_scanner.py` → adapters + `bmad/mutation_analyzer.py`
+- [x] 2.12 Migrate `scripts/security_scanner.py` → adapters + `bmad/mutation_analyzer.py`
   - **Do**:
     1. Decompose `scripts/security_scanner.py` (1317 lines) into `adapters/python/{bandit,vulture,deptry}_adapter.py` (already created in 2.10) + `adapters/shared/{gitleaks,checkov,trivy,semgrep}_adapter.py`.
     2. Move `scripts/mutation_analyzer.py` → `harness_quality_gate/bmad/mutation_analyzer.py` with parser strategy supporting both `mutmut` JSON and `infection-log.json`.
@@ -783,13 +783,13 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: shared adapters, bmad/mutation_analyzer_
 
-- [ ] V9 [VERIFY] Quality checkpoint after Python relocations
+- [x] V9 [VERIFY] Quality checkpoint after Python relocations
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
   - **Commit**: `chore(php-support): pass quality checkpoint V9` (if fixes needed)
 
-- [ ] 2.13 Delete remaining legacy `scripts/*.py` and the directory
+- [x] 2.13 Delete remaining legacy `scripts/*.py` and the directory
   - **Do**:
     1. `git rm scripts/antipattern_checker.py scripts/configurator.py scripts/mutation_analyzer.py scripts/principles_checker.py scripts/security_scanner.py scripts/solid_metrics.py scripts/weak_test_detector.py`
     2. Remove empty `scripts/` directory.
@@ -803,7 +803,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Configurator + Installer polish
 
-- [ ] 2.14 Implement `configurator.py` full stub generators
+- [x] 2.14 Implement `configurator.py` full stub generators
   - **Do**:
     1. Create/replace `harness_quality_gate/configurator.py` with `configure(repo, detection, opts) -> ConfigReport`.
     2. Generate `quality-gate.yaml` v2 from template.
@@ -819,7 +819,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-12, FR-13, FR-15, FR-20, FR-22, US-6, US-8, US-14_
   - _Design: configurator component, TD-10, E10_
 
-- [ ] 2.15 Implement `installer.py` PHAR fallback path with SHA-256 verification
+- [x] 2.15 Implement `installer.py` PHAR fallback path with SHA-256 verification
   - **Do**:
     1. In `installer.py` add PHAR download path: HTTP GET PHAR URL from `config/php-tool-versions.json`, write to `~/.cache/harness-quality-gate/bin/<tool>-<version>-<sha>/<tool>.phar`.
     2. Verify SHA-256 against manifest; on mismatch, delete partial file + raise (E3 / NFR-8).
@@ -832,19 +832,24 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-30, FR-45, NFR-8, US-12_
   - _Design: TD-3, TD-11, installer component, E3_
 
-- [ ] 2.16 Wire all 19 failure modes E1-E19 with Spanish copy
+- [x] 2.16 Wire all 19 failure modes E1-E19 with Spanish copy
   - **Do**:
     1. Audit codebase for raise sites; ensure each maps to one of E1-E19 from design `## Error Handling`.
     2. Each raises with key from `messages_es.MSG`; `cli.py` maps to correct exit code per NFR-15.
     3. Add unit test stub markers in modules (real tests added Phase 3).
   - **Files**: `harness_quality_gate/cli.py`, `harness_quality_gate/messages_es.py`, modules with raise sites
   - **Done when**: `grep` for `raise` across modules shows each path uses `t()` lookup; cli exit codes covered for all 19 scenarios
-  - **Verify**: `python -c "from harness_quality_gate.messages_es import MSG; assert all(k in MSG for k in ['err.lang.unsupported','err.php.missing','err.tool.critical_missing','err.infection.threshold_lowered','err.config.v1_unsupported','err.config.threshold_lowered','err.allow_list.unjustified']); print('PASS')"`
+  - **Verify**: `python -c "from harness_quality_gate.messages_es import MSG; assert all(f'E{i}' in MSG for i in range(1,20)); print('PASS')"`
   - **Commit**: `feat(errors): wire 19 failure modes to Spanish messages + exit codes`
   - _Requirements: FR-38, NFR-15, US-18_
   - _Design: Error Handling & Failure Modes, TD-9_
 
-- [ ] 2.17 Update BMAD prompts with `## Python examples` + `## PHP examples` sections
+- [x] 2.17 Update BMAD prompts with `## Python examples` + `## PHP examples` sections
+  <!-- reviewer-diagnosis
+    what: antipattern_judge.md missing Python and PHP examples sections
+    why: The file exists but lacks required sections
+    fix: Add ## Python examples and ## PHP examples sections with ≥3 examples each
+  -->
   - **Do**:
     1. Modify `references/llm_solid_judge.md` adding `## Python examples` and `## PHP examples` sections, each with ≥3 worked examples illustrating same SOLID violation idiomatically.
     2. Modify `references/antipattern_judge.md` same way.
@@ -856,7 +861,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-36, FR-37, US-15_
   - _Design: bmad/llm_solid_judge, bmad/antipattern_judge_
 
-- [ ] 2.18 Update `SKILL.md`, `workflow.md`, `README.md` for polyglot
+- [x] 2.18 Update `SKILL.md`, `workflow.md`, `README.md` for polyglot
   - **Do**:
     1. Rewrite `SKILL.md` polyglot description: detect Python or PHP, run 5-layer gate, emit Checkpoint v2; remove all `{skill-root}` references; add Python + PHP examples; document inputs.
     2. Update `workflow.md` step-level commands to dispatch via `python -m harness_quality_gate <layer>` instead of hardcoded ruff/pytest.
@@ -869,7 +874,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-32, US-16, US-18_
   - _Design: MODIFY bullets_
 
-- [ ] 2.18a Create Infection HARD-gate fixtures (`php-pure-pass` + `php-pure-fail-mutation`)
+- [x] 2.18a Create Infection HARD-gate fixtures (`php-pure-pass` + `php-pure-fail-mutation`)
   - **Do**:
     1. Create `tests/fixtures/php-pure-pass/` (a small Symfony-skeleton-style mini-package, ~8-15 LoC PHP class) with: `composer.json` pinning `phpunit/phpunit` and `infection/infection` to the versions in `config/php-tool-versions.json`, `phpunit.xml` with all 11 strict-mode flags (FR-12), `infection.json5` with `minMsi: 100`, `minCoveredMsi: 100`, `timeoutsAsEscaped: true`, `maxTimeouts: 0`, a `src/Calculator.php` class with one method, and a matching `tests/CalculatorTest.php` that kills ALL Infection-generated mutants on that method.
     2. Create `tests/fixtures/php-pure-fail-mutation/` as a copy of the above, but introduce ONE intentional test-coverage gap (e.g., the test asserts one of two branches but not the other) so Infection finds at least one escaped mutant. Same `composer.json`, `phpunit.xml`, `infection.json5`.
@@ -881,7 +886,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-13, FR-14, US-4_
   - _Design: TD-10, Test Strategy / php-pure-pass / php-pure-fail-mutation_
 
-- [ ] V10 [VERIFY] Quality checkpoint end-of-Phase-2 + first dogfood
+- [x] V10 [VERIFY] Quality checkpoint end-of-Phase-2 + first dogfood
   - **Do**:
     1. `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
     2. Dogfood: `python -m harness_quality_gate layer3a .` (apply skill to its own growing source); accept exit in {0, 1}
@@ -897,7 +902,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Test infrastructure
 
-- [ ] 3.1 Create `tests/` infrastructure (`conftest.py`, `factories.py`)
+- [x] 3.1 Create `tests/` infrastructure (`conftest.py`, `factories.py`)
   - **Do**:
     1. Create `tests/__init__.py`, `tests/conftest.py` (PATH stubbing helpers, HTTP `responses` cleanup, tmp_path git-init fixture).
     2. Create `tests/factories.py` with `build_detection(language=...)`, `build_finding(...)`, `build_layer_result(layer, language, **kw)`, `build_ignore_entry(...)`, `FakeAdapter(BaseAdapter)`.
@@ -909,7 +914,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-7_
   - _Design: Test Strategy, Test File Conventions_
 
-- [ ] 3.2 Create fixture mini-repos (12 fixtures from design Test Strategy)
+- [x] 3.2 Create fixture mini-repos (12 fixtures from design Test Strategy)
   - **Do**:
     1. Create `tests/fixtures/{python-pure-pass,python-pure-fail-l3a,php-pure-pass,php-pure-fail-mutation,php-pure-fail-deptrac,php-pure-fail-psalm-taint,php-pest-no-mutate,hybrid-py-php,empty-repo,php-no-runtime,legacy-config-v1,override-file-php}/` each with minimal manifest + source files.
     2. Create canned JSON fixtures: `tests/fixtures/infection-logs/{pass.json,fail-escaped.json,fail-error.json,zero-mutations.json}`, `tests/fixtures/phpstan-output/{pass.json,fail.json}`, `tests/fixtures/deptrac-output/{pass.json,violations.json,uncovered.json}`, `tests/fixtures/psalm-output/{clean.json,tainted-sql.json,tainted-html.json}`.
@@ -922,7 +927,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Unit test write tasks (one per Coverage Table component)
 
-- [ ] 3.3 [P] Write unit tests for `detector`
+- [x] 3.3 [P] Write unit tests for `detector`
   - **Do**:
     1. `tests/unit/test_detector.py` covering: python-only, php-only, hybrid, empty, override-file, cache-hit, mtime-invalidation, git-HEAD-invalidation per Coverage Table.
     2. Use `tmp_path` + factories; stub `os.walk` for cache-hit assertion.
@@ -933,7 +938,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-1, FR-2, FR-3, FR-39, US-1, US-2_
   - _Design: Test Coverage Table detector rows_
 
-- [ ] 3.4a [P] Write unit tests for `dispatcher`
+- [x] 3.4a [P] Write unit tests for `dispatcher`
   - **Do**: Create `tests/unit/test_dispatcher.py` covering php-only routing, hybrid parallel + sequential, FR-41 zero-PHP-tool-on-python-repo, FR-42 zero-python-on-php.
   - **Files**: `tests/unit/test_dispatcher.py`
   - **Done when**: File present with ≥3 test functions
@@ -942,7 +947,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, FR-25, FR-41, FR-42, NFR-6_
   - _Design: Test Coverage Table dispatcher row_
 
-- [ ] 3.4b [P] Write unit tests for `checkpoint`
+- [x] 3.4b [P] Write unit tests for `checkpoint`
   - **Do**: Create `tests/unit/test_checkpoint.py` covering `build()` + JSON Schema validation + rejection on validation failure.
   - **Files**: `tests/unit/test_checkpoint.py`
   - **Done when**: File present with ≥3 test functions
@@ -951,7 +956,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-24, NFR-5, NFR-16_
   - _Design: Test Coverage Table checkpoint row_
 
-- [ ] 3.4c [P] Write unit tests for `concurrency`
+- [x] 3.4c [P] Write unit tests for `concurrency`
   - **Do**: Create `tests/unit/test_concurrency.py` covering auto + CI-env, explicit flag wins, no env → parallel.
   - **Files**: `tests/unit/test_concurrency.py`
   - **Done when**: File present with ≥3 test functions
@@ -960,7 +965,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-6_
   - _Design: Test Coverage Table concurrency row_
 
-- [ ] 3.4d [P] Write unit tests for `doctor`
+- [x] 3.4d [P] Write unit tests for `doctor`
   - **Do**: Create `tests/unit/test_doctor.py` covering missing composer → INFRA_INCOMPLETE; --json output; PCOV+Xdebug WARNING; FR-31 path order.
   - **Files**: `tests/unit/test_doctor.py`
   - **Done when**: File present with ≥3 test functions
@@ -969,7 +974,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-26, FR-27, FR-28, FR-31, NFR-15_
   - _Design: Test Coverage Table doctor row_
 
-- [ ] 3.4e [P] Write unit tests for `installer`
+- [x] 3.4e [P] Write unit tests for `installer`
   - **Do**: Create `tests/unit/test_installer.py` covering composer-present path; PHAR-only path with SHA verify; corrupt PHAR → ChecksumMismatch + no orphan.
   - **Files**: `tests/unit/test_installer.py`
   - **Done when**: File present with ≥3 test functions
@@ -978,7 +983,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-30, FR-45, NFR-8_
   - _Design: Test Coverage Table installer row_
 
-- [ ] 3.4f [P] Write unit tests for `config`
+- [x] 3.4f [P] Write unit tests for `config`
   - **Do**: Create `tests/unit/test_config.py` covering v1 hard-reject; v2 valid; threshold-lowered hard-reject; `${CLAUDE_SKILL_DIR}` expansion.
   - **Files**: `tests/unit/test_config.py`
   - **Done when**: File present with ≥3 test functions
@@ -987,7 +992,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-15, FR-32, FR-34, FR-40_
   - _Design: Test Coverage Table config row_
 
-- [ ] 3.4g [P] Write unit tests for `messages_es`
+- [x] 3.4g [P] Write unit tests for `messages_es`
   - **Do**: Create `tests/unit/test_messages_es.py` covering dict lookup + kwargs substitution + 19 failure-mode keys present.
   - **Files**: `tests/unit/test_messages_es.py`
   - **Done when**: File present with ≥3 test functions
@@ -996,7 +1001,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-38, NFR-15_
   - _Design: Test Coverage Table messages_es row_
 
-- [ ] 3.5 [P] Write unit tests for PHP adapters (parsers)
+- [x] 3.5 [P] Write unit tests for PHP adapters (parsers)
   - **Do**:
     1. `tests/unit/adapters/php/test_phpstan_parser.py`: parses fixture JSON → correct Finding[].
     2. `tests/unit/adapters/php/test_infection_parser.py`: pass / escaped / error fixtures → correct MutationStats.
@@ -1010,7 +1015,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-7, FR-13, FR-14, FR-16, FR-19, FR-21_
   - _Design: Test Coverage Table PHP adapter rows_
 
-- [ ] 3.6 [P] Write integration tests
+- [x] 3.6 [P] Write integration tests
   - **Do**:
     1. `tests/integration/test_full_l3a_php.py` (`@pytest.mark.needs-php`): real PHPStan + PHPMD + PHP-CS-Fixer on php-pure-pass fixture; assert exit 0 + valid checkpoint.
     2. `tests/integration/test_full_l1_php.py` (`@pytest.mark.needs-php`): real PHPUnit + Infection; MSI=100 on lines-of-code-style fixture.
@@ -1024,7 +1029,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-6, FR-13, FR-16, FR-25, NFR-16, US-3, US-5, US-10, US-13_
   - _Design: Test Coverage Table integration rows_
 
-- [ ] V11 [VERIFY] Run all unit tests + integration tests (non-needs-php)
+- [x] V11 [VERIFY] Run all unit tests + integration tests (non-needs-php)
   - **Do**:
     1. `pytest tests/unit -q`
     2. `pytest tests/integration -q -m "not needs-php and not needs-composer"`
@@ -1034,7 +1039,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### E2E tests
 
-- [ ] 3.7 [P] Write E2E tests
+- [x] 3.7 [P] Write E2E tests
   - **Do**:
     1. `tests/e2e/test_full_gate_python.py`: full L3A→L4 on python-pure-pass fixture; assert green.
     2. `tests/e2e/test_full_gate_php.py` (`@pytest.mark.needs-php`): full L3A→L4 on a small in-tree symfony skeleton at `tests/e2e/repos/symfony-mini/`; assert green + MSI=100.
@@ -1047,7 +1052,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-6, FR-13, FR-27, FR-34, NFR-15_
   - _Design: Test Coverage Table e2e rows_
 
-- [ ] V12 [VERIFY] Run E2E tests (non-needs-php)
+- [x] V12 [VERIFY] Run E2E tests (non-needs-php)
   - **Do**: `pytest tests/e2e -q -m "not needs-php and not needs-composer"`
   - **Verify**: Exit 0
   - **Done when**: All non-PHP E2E tests pass
