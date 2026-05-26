@@ -8,9 +8,9 @@
 
 ## PATH RESOLUTION
 
-- `{skill-root}` resolves to this workflow skill's installed directory.
+- `${CLAUDE_SKILL_DIR}` resolves to this workflow skill's installed directory.
 - `{project-root}` resolves to the repository working directory.
-- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps-c/...`, `steps-v/...`, and templates from `{skill-root}`, not from the workspace root.
+- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps-c/...`, `steps-v/...`, and templates from `${CLAUDE_SKILL_DIR}`, not from the workspace root.
 
 ---
 
@@ -238,14 +238,14 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 ### L4 Execution
 
-Run via unified scanner: `python3 {skill-root}/scripts/security_scanner.py {project-root}`
+Run via unified scanner: `python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root}`
 
 Or follow step file: `./steps/step-06-layer4.md`
 
 ### References
 
-- **Tool configuration & remediation:** `{skill-root}/references/security-tools-guide.md`
-- **Custom semgrep rules:** `{skill-root}/references/semgrep-python-rules.yaml` (HA-specific: `{skill-root}/references/home-assistant/semgrep-ha-rules.yaml`)
+- **Tool configuration & remediation:** `${CLAUDE_SKILL_DIR}/references/security-tools-guide.md`
+- **Custom semgrep rules:** `${CLAUDE_SKILL_DIR}/references/semgrep-python-rules.yaml` (HA-specific: `${CLAUDE_SKILL_DIR}/references/home-assistant/semgrep-ha-rules.yaml`)
 
 ---
 
@@ -253,7 +253,7 @@ Or follow step file: `./steps/step-06-layer4.md`
 
 ### 1. Configuration Loading
 
-Load config from `{skill-root}/config/quality-gate.yaml`.
+Load config from `${CLAUDE_SKILL_DIR}/config/quality-gate.yaml`.
 
 If no config found, use defaults:
 - `output_folder = _bmad-output/quality-gate`

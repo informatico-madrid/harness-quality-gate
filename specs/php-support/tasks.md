@@ -461,7 +461,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-43, NFR-15, US-1, US-11_
   - _Design: CLI Surface, cli component_
 
-- [ ] V6 [VERIFY] Quality checkpoint after checkpoint + config + CLI
+- [x] V6 [VERIFY] Quality checkpoint after checkpoint + config + CLI
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports && python -m harness_quality_gate detect --help > /dev/null`
   - **Verify**: All exit 0
   - **Done when**: CLI invokable
@@ -469,7 +469,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Wire L3A end-to-end + first fixture
 
-- [ ] 1.30 Implement Spanish-key `${CLAUDE_SKILL_DIR}` migration in workflow/SKILL/config files
+- [x] 1.30 Implement Spanish-key `${CLAUDE_SKILL_DIR}` migration in workflow/SKILL/config files
   - **Do**:
     1. `grep -rl '{skill-root}' SKILL.md workflow.md steps/ config/quality-gate.yaml references/ | xargs sed -i 's/{skill-root}/${CLAUDE_SKILL_DIR}/g'`.
     2. Verify zero remaining `{skill-root}` literal occurrences.

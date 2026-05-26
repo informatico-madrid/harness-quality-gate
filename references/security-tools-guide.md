@@ -188,7 +188,7 @@ Semantic code patterns using custom rules. Covers OWASP Top 10, security anti-pa
 
 ### Custom HA Rules
 
-The skill includes custom semgrep rules at `{skill-root}/references/semgrep-ha-rules.yaml` covering:
+The skill includes custom semgrep rules at `${CLAUDE_SKILL_DIR}/references/semgrep-ha-rules.yaml` covering:
 
 - Unsafe `hass.data` access patterns
 - Blocking I/O in async HA functions
@@ -521,7 +521,7 @@ When Layer 4 detects findings, they are automatically mapped to OWASP Top 10 (20
 
 ### Semgrep JS Rules
 
-The skill includes custom semgrep rules for JavaScript/TypeScript at `{skill-root}/references/semgrep-js-rules.yaml` covering:
+The skill includes custom semgrep rules for JavaScript/TypeScript at `${CLAUDE_SKILL_DIR}/references/semgrep-js-rules.yaml` covering:
 
 - `eval()`/`Function()`/`setTimeout(string)` code injection
 - Hardcoded secrets (password, apiKey, token, secret)

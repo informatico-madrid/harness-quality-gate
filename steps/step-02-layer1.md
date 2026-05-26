@@ -106,7 +106,7 @@ cd {project-root} && . .venv/bin/activate && mutmut run 2>&1 || true
 ### 1.4.2 Run mutation gate with per-module thresholds
 
 ```bash
-. .venv/bin/activate && python3 {skill-root}/scripts/mutation_analyzer.py {project-root} --gate 2>&1
+. .venv/bin/activate && python3 ${CLAUDE_SKILL_DIR}/scripts/mutation_analyzer.py {project-root} --gate 2>&1
 ```
 
 **This command:**

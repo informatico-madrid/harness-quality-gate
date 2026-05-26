@@ -1,0 +1,119 @@
+[
+  {
+    "name": "phpunit",
+    "layer": "L1",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "phpunit/phpunit"
+  },
+  {
+    "name": "phpstan",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "phpstan/phpstan"
+  },
+  {
+    "name": "infection",
+    "layer": "L3B",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "infection/infection"
+  },
+  {
+    "name": "psalm",
+    "layer": "L4",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "vimeo/psalm"
+  },
+  {
+    "name": "deptrac",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "qossmic/deptrac"
+  },
+  {
+    "name": "phpmd",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "phpmd/phpmd"
+  },
+  {
+    "name": "php-cs-fixer",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "friendsofphp/php-cs-fixer"
+  },
+  {
+    "name": "composer-audit",
+    "layer": "L4",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": null
+  },
+  {
+    "name": "nikic/php-parser",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "critical",
+    "install_via": "composer",
+    "package": "nikic/php-parser"
+  },
+  {
+    "name": "shipmonk/phpstan-rules-extra",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "optional",
+    "install_via": "composer",
+    "package": "shipmonk/phpstan-rules-extra"
+  },
+  {
+    "name": "ergebnis/phpstan-rules-extra",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "optional",
+    "install_via": "composer",
+    "package": "ergebnis/phpstan-rules-extra"
+  },
+  {
+    "name": "shipmonk/dead-code-detector",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "optional",
+    "install_via": "composer",
+    "package": "shipmonk/dead-code-detector"
+  },
+  {
+    "name": "shipmonk/composer-dependency-analyser",
+    "layer": "L3A",
+    "language": "php",
+    "tier": "A",
+    "criticality": "optional",
+    "install_via": "composer",
+    "package": "shipmonk/composer-dependency-analyser"
+  }
+]

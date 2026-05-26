@@ -202,10 +202,10 @@ layer4:
     configs:
     - p/security-audit
     - p/owasp-top-ten
-    - "{skill-root}/references/semgrep-python-rules.yaml"  # Generic Python security rules (ALWAYS included)
-    - "{skill-root}/references/semgrep-js-rules.yaml"      # JavaScript/TypeScript rules
+    - "${CLAUDE_SKILL_DIR}/references/semgrep-python-rules.yaml"  # Generic Python security rules (ALWAYS included)
+    - "${CLAUDE_SKILL_DIR}/references/semgrep-js-rules.yaml"      # JavaScript/TypeScript rules
     # The following are OPT-IN via configurator:
-    # - "{skill-root}/references/home-assistant/semgrep-ha-rules.yaml"  # HA-specific rules (enable via configurator)
+    # - "${CLAUDE_SKILL_DIR}/references/home-assistant/semgrep-ha-rules.yaml"  # HA-specific rules (enable via configurator)
 
   checkov:
     priority: recommended

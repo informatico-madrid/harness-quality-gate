@@ -28,9 +28,9 @@ Do NOT activate this skill when:
 
 ## Conventions
 
-- `{skill-root}` resolves to this workflow skill's installed directory.
+- `${CLAUDE_SKILL_DIR}` resolves to this workflow skill's installed directory.
 - `{project-root}` resolves to the repository working directory.
-- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps/...`, and templates from `{skill-root}`, not from the workspace root.
+- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps/...`, and templates from `${CLAUDE_SKILL_DIR}`, not from the workspace root.
 
 ---
 
@@ -152,7 +152,7 @@ E2E tests are **OPTIONAL** in Layer 1. If `make e2e` is not available or fails, 
 Before running the quality gate for the first time, run the configurator to auto-discover your project structure and confirm settings:
 
 ```bash
-python3 {skill-root}/scripts/configurator.py {project-root}
+python3 ${CLAUDE_SKILL_DIR}/scripts/configurator.py {project-root}
 ```
 
 This will:
@@ -163,8 +163,8 @@ This will:
 
 ### Normal Workflow
 
-1. Read `{skill-root}/workflow.md` and follow it exactly.
-2. If a custom configuration exists at `{project-root}/_quality-gate/quality-gate.yaml`, it will be used. Otherwise, defaults are used from `{skill-root}/config/quality-gate.yaml`.
+1. Read `${CLAUDE_SKILL_DIR}/workflow.md` and follow it exactly.
+2. If a custom configuration exists at `{project-root}/_quality-gate/quality-gate.yaml`, it will be used. Otherwise, defaults are used from `${CLAUDE_SKILL_DIR}/config/quality-gate.yaml`.
 3. The workflow will guide you through all 5 layers sequentially: L3A → L1 → L2 → L3B → L4.
 4. L3A is the smoke test — if it fails, stop immediately without running L1/L2/L3B/L4.
 5. L4 is the security gate — runs after all quality/test layers pass.
@@ -198,7 +198,7 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 **Unified scanner (recommended):**
 ```bash
-python3 {skill-root}/scripts/security_scanner.py {project-root} --severity-threshold high --verbose
+python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root} --severity-threshold high --verbose
 ```
 
 **Individual tools** (if unified scanner unavailable):
