@@ -605,6 +605,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Remaining PHP adapters
 
+- [x] 2.1 [P] Implement `phpunit_adapter.py` with strict-mode XML generator
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/phpunit_adapter.py` with `PhpUnitAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/phpunit --log-junit junit.xml --coverage-php var/coverage` with 300s timeout.
