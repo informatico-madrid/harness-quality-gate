@@ -68,7 +68,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-14, NFR-15_
   - _Design: File Plan / CREATE `pyproject.toml`_
 
-- [ ] 1.3 Create `exit_codes.py` and `models.py` dataclasses
+- [x] 1.3 Create `exit_codes.py` and `models.py` dataclasses
   - **Do**:
     1. Create `harness_quality_gate/exit_codes.py` with constants `PASS=0`, `FAIL=1`, `UNSUPPORTED=2`, `INFRA_INCOMPLETE=3`, `CONFIG_INVALID=4`, `INTERNAL_ERROR=5`.
     2. Create `harness_quality_gate/models.py` with all 11 frozen dataclasses from design.md `## Data Models`: `Detection`, `Finding`, `MutationStats`, `IgnoreEntry`, `AuditReport`, `ToolCheckReport`, `LayerResult`, `Runtime`, `CheckpointV2`, `ToolTaxonomyEntry`, `ConcurrencyPlan`.
