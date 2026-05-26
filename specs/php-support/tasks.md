@@ -301,7 +301,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37, US-15_
   - _Design: bmad/antipattern_judge component_
 
-- [ ] 1.20 [P] Relocate `scripts/diversity_metric.py` → `bmad/diversity_metric.py`
+- [x] 1.20 [P] Relocate `scripts/diversity_metric.py` → `bmad/diversity_metric.py`
   - **Do**:
     1. Move into `harness_quality_gate/bmad/diversity_metric.py`.
     2. Parameterize file glob via `language: str` → `*.py` or `*.php`.
