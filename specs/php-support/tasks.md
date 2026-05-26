@@ -327,7 +327,12 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37_
   - _Design: bmad/diversity_metric_
 
-- [x] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
+- [ ] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
+  <!-- reviewer-diagnosis
+    what: ruff/unimport error in checkpoint_v2.py
+    why: spec quality gate violated
+    fix: Remove unused subprocess import; fix verify command
+  -->
   - **Do**:
     1. `ruff check harness_quality_gate/`
     2. `mypy harness_quality_gate/ --ignore-missing-imports`
@@ -338,7 +343,12 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Doctor + Installer (POC: composer-local path only)
 
-- [x] 1.21 Implement `doctor.py` runtime + tool checks
+- [ ] 1.21 Implement `doctor.py` runtime + tool checks
+  <!-- reviewer-diagnosis
+    what: ruff/unimport error in checkpoint_v2.py
+    why: spec quality gate violated
+    fix: Remove unused subprocess import; fix verify command
+  -->
   - **Do**:
     1. Create `harness_quality_gate/doctor.py` with `run(repo, json: bool=False) -> DoctorReport`.
     2. Check `python`, `php`, `composer` via `shutil.which`; capture versions.
@@ -388,7 +398,12 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-30, US-12_
   - _Design: installer component_
 
-- [x] 1.25 Create `messages_fr.py` for French diagnostics
+- [ ] 1.25 Create `messages_fr.py` for French diagnostics
+  <!-- reviewer-diagnosis
+    what: ruff/unimport error in checkpoint_v2.py
+    why: spec quality gate violated
+    fix: Remove unused subprocess import; fix verify command
+  -->
   - **Do**:
     1. Create `harness_quality_gate/messages_es.py` with `MSG: dict[str, str]` and `t(key: str, **kwargs) -> str`.
     2. Seed keys for all 19 failure modes E1-E19 (Spanish strings from design.md `## Error Handling`).

@@ -49,15 +49,21 @@
   },
   "chat": {
     "executor": {
-      "lastReadLine": 13
+      "lastReadLine": 14
     },
     "reviewer": {
-      "lastReadLine": 233
+      "lastReadLine": 424
     }
   },
   "external_unmarks": {
     "1.6": 1,
     "1.10": 1,
-    "1.11": 1
+    "1.11": 1,
+    "1.15": 1,
+    "1.18": 2,
+    "1.19": 2,
+    "V4": 1,
+    "1.21": 1,
+    "1.25": 1
   }
 }

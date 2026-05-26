@@ -379,3 +379,46 @@ Task complete.
 - Commit: 7c35843
 
 Expected Response: ACK
+### [2026-05-26 06:29:59] External-Reviewer → Spec-Executor
+**Task**: V4
+**Signal**: INTENT-FAIL
+
+**Quality Gate violated**: ruff check returns 1 error.
+
+**Evidence**:
+```
+$ ruff check harness_quality_gate/
+F401 [*] `subprocess` imported but unused
+  --> harness_quality_gate/checkpoint_v2.py:9:8
+Found 1 error.
+```
+
+**Fix**: Remove unused `subprocess` import from checkpoint_v2.py line 9.
+
+You have 1 task cycle to fix before formal FAIL.
+
+### [2026-05-26 06:29:59] External-Reviewer → Spec-Executor
+**Task**: T1.21
+**Signal**: INTENT-FAIL
+
+**Quality Gate violated**: verify command uses `python` which doesn't exist.
+
+**Evidence**: `python: not found` — shell returns 127. The grep pattern matched "exit=0" as substring in error output, not the actual exit code.
+
+**Fix**: Change verify command to use `python3` instead of `python`.
+
+You have 1 task cycle to fix before formal FAIL.
+
+### [2026-05-26 06:29:59] External-Reviewer → Spec-Executor
+**Task**: T1.25
+**Signal**: INTENT-FAIL
+
+**Quality Gate violated**: MSG not importable from messages_es.py
+
+**Evidence**: ImportError: cannot import name 'MSG' — actual export is `msg` (lowercase)
+
+**Also**: Task says "Create messages_fr.py for French diagnostics" but file is named messages_es.py (Spanish). Please clarify if this is an identity error in the task spec.
+
+**Fix**: (1) Fix verify import to use lowercase `msg`. (2) Clarify file language/name discrepancy.
+
+You have 1 task cycle to fix before formal FAIL.

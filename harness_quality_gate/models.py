@@ -44,6 +44,11 @@ class Finding:
     # Optional security-specific fields (populated by vulnerability scanners)
     cve: str | None = None
     cwe: str = ""
+    # Tool/layer context for checkpoint v2 contract (US-3, US-4, FR-31)
+    tool: str | None = None
+    layer: str | None = None
+    language: str | None = None
+    rule_id: str | None = None
 
 
 @dataclass(frozen=True)
