@@ -256,7 +256,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - **Done when**: No errors
   - **Commit**: `chore(php-support): pass quality checkpoint V3` (if fixes needed)
 
-- [ ] 1.16 Implement `php_adapter.py` orchestrator (L3A wiring only)
+- [x] 1.16 Implement `php_adapter.py` orchestrator (L3A wiring only)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/php_adapter.py` with `PhpAdapter(BaseAdapter)`.
     2. Compose `PhpStanAdapter`, `PhpMdAdapter`, `PhpCsFixerAdapter` in `run_l3a(repo, ctx)` returning `LayerResult(layer="L3A", language="php", findings=[...])`.
