@@ -676,7 +676,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: dead_code_adapter_
 
-- [ ] 2.5c [P] Implement `dep_analyser_adapter.py` (shipmonk composer-dependency-analyser)
+- [x] 2.5c [P] Implement `dep_analyser_adapter.py` (shipmonk composer-dependency-analyser)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/dep_analyser_adapter.py` wrapping `vendor/bin/composer-dependency-analyser --format=json` (300s timeout).
     2. `parse(stdout)` → `Finding[]` for L4.
