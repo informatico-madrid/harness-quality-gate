@@ -1,0 +1,13 @@
+{
+    "name": "smoke/smoke",
+    "description": "POC fixture for PHP quality-gate smoke testing",
+    "type": "project",
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Smoke\\": "src/"
+        }
+    }
+}

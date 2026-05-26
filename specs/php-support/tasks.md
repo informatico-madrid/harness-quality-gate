@@ -491,7 +491,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-40, FR-34, US-16_
   - _Design: Configuration Schema section_
 
-- [ ] 1.32 Create POC fixture mini-repo `tests/fixtures/php-smoke/`
+- [x] 1.32 Create POC fixture mini-repo `tests/fixtures/php-smoke/`
   - **Do**:
     1. Create `tests/fixtures/php-smoke/composer.json` requiring nothing (just `{"name":"smoke/smoke"}`).
     2. Create `tests/fixtures/php-smoke/src/Foo.php` with a minimal `<?php class Foo {}`.
