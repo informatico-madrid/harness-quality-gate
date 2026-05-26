@@ -687,7 +687,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: dep_analyser_adapter_
 
-- [ ] 2.6 [P] Implement `visitor_runner_adapter.py` + 4 PoC visitors
+- [x] 2.6 [P] Implement `visitor_runner_adapter.py` + 4 PoC visitors
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/visitor_runner_adapter.py` with `VisitorRunnerAdapter` shelling out to `php visitors/<name>.php <src-glob>` and merging JSON output.
     2. Create 4 PoC nikic/PHP-Parser visitors as `<basePath>` repo files: `harness_quality_gate/adapters/php/visitors/god_class.php`, `feature_envy.php`, `data_clumps.php`, `long_parameter_list.php` per TD-12.
