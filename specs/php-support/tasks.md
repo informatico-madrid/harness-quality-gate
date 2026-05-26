@@ -108,11 +108,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Design: TD-5, TD-16_
 
 - [x] 1.6 Implement framework signal sniffer
-  <!-- reviewer-diagnosis
-    what: framework_sniffer not integrated in detect()
-    why: FAIL_FAST violated
-    fix: Add from .framework_sniffer import framework_signals to detector.py and call it in detect() to populate d.frameworks
-  -->
   - **Do**:
     1. Add `framework_signals(repo: Path) -> dict[str, list[str]]` in `detector.py`.
     2. Parse `composer.json` `require` keys for `symfony/framework-bundle` → `["symfony"]`, `laravel/framework` → `["laravel"]`, `drupal/core` → `["drupal"]`, `roots/wordpress` → `["wordpress"]`.
@@ -159,11 +154,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 - [x] 1.9 Implement `adapters/base.py` ABCs - feat(adapters): add BaseAdapter and ToolAdapter ABCs (TD-1)
 
 - [x] 1.10 Implement `dispatcher.py` routing skeleton
-  <!-- reviewer-diagnosis
-    what: wrong function names exported (route/run_layer vs dispatch/dispatch_full)
-    why: FAIL_FAST violated
-    fix: Rename route->dispatch and run_layer->dispatch_full with correct signature per task-1.10 spec
-  -->
   - **Do**:
     1. Create `harness_quality_gate/dispatcher.py` with `dispatch(detection, layer, concurrency_plan, ctx) -> LayerResult` and `dispatch_full(detection, ctx) -> CheckpointV2`.
     2. Wire `Detection.primary == "python"` → `PythonAdapter`, `"php"` → `PhpAdapter`, `"hybrid"` → both via `ThreadPoolExecutor` (parallel) or sequential per `ConcurrencyPlan`.
@@ -313,11 +303,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Design: bmad/diversity_metric_
 
 - [x] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
-  <!-- reviewer-diagnosis
-    what: verify still fails
-    why: wrong file content
-    fix: ruff/unimport error already fixed
-  -->
   - **Do**:
     1. `ruff check harness_quality_gate/`
     2. `mypy harness_quality_gate/ --ignore-missing-imports`
@@ -329,11 +314,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 ### Doctor + Installer (POC: composer-local path only)
 
 - [x] 1.21 Implement `doctor.py` runtime + tool checks
-  <!-- reviewer-diagnosis
-    what: ruff/unimport error in checkpoint_v2.py
-    why: spec quality gate violated
-    fix: Remove unused subprocess import; fix verify command
-  -->
   - **Do**:
     1. Create `harness_quality_gate/doctor.py` with `run(repo, json: bool=False) -> DoctorReport`.
     2. Check `python`, `php`, `composer` via `shutil.which`; capture versions.
@@ -384,11 +364,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Design: installer component_
 
 - [x] 1.25 Create `messages_fr.py` for French diagnostics
-  <!-- reviewer-diagnosis
-    what: ruff/unimport error in checkpoint_v2.py
-    why: spec quality gate violated
-    fix: Remove unused subprocess import; fix verify command
-  -->
   - **Do**:
     1. Create `harness_quality_gate/messages_es.py` with `MSG: dict[str, str]` and `t(key: str, **kwargs) -> str`.
     2. Seed keys for all 19 failure modes E1-E19 (Spanish strings from design.md `## Error Handling`).
@@ -566,7 +541,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-16, FR-17, FR-18, US-5_
   - _Design: TD-7, allow_list_auditor component (top-level, language-aware)_
 
-- [ ] 1.38 Wire `audit-ignores` subcommand in CLI
+- [x] 1.38 Wire `audit-ignores` subcommand in CLI
   - **Do**:
     1. In `cli.py` `audit-ignores <repo> [--diff-from <ref>]` calls `AllowListAuditor().audit(repo, diff_from)`.
     2. Map exit code from `AuditReport.exit_code`.
@@ -578,13 +553,13 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-16, US-5_
   - _Design: CLI Surface_
 
-- [ ] V7 [VERIFY] Quality checkpoint pre-POC-finale
+- [x] V7 [VERIFY] Quality checkpoint pre-POC-finale
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
   - **Commit**: `chore(php-support): pass quality checkpoint V7` (if fixes needed)
 
-- [ ] 1.39 Implement `cli.py` `all` subcommand + checkpoint emission
+- [x] 1.39 Implement `cli.py` `all` subcommand + checkpoint emission
   - **Do**:
     1. In `cli.py` `all <repo>` invokes `dispatcher.dispatch_full(detection, ctx)` which calls L3A → L1 → L2 → L3B → L4 in sequence (Phase 1 only L3A is real; others return `LayerResult(status='incomplete', PASS=True)` stubs).
     2. Aggregate all `LayerResult`s via `checkpoint.build(layer_results, runtime, detection)` and `checkpoint.write(repo/_quality-gate/quality-gate-<ts>.json)`.
@@ -596,7 +571,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-24, FR-43, NFR-15, US-10_
   - _Design: CLI Surface, checkpoint component_
 
-- [ ] 1.40 [P] Schema-validate POC checkpoint output
+- [x] 1.40 [P] Schema-validate POC checkpoint output
   - **Do**:
     1. Run `python -m harness_quality_gate all tests/fixtures/php-smoke`.
     2. Validate output against `references/verdict-schema.json` using `jsonschema`.
@@ -608,7 +583,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-24, NFR-16_
   - _Design: TD-8, Checkpoint v2_
 
-- [ ] 1.41 POC Checkpoint: clone real PHP repo and run L3A end-to-end
+- [x] 1.41 POC Checkpoint: clone real PHP repo and run L3A end-to-end
   - **Do**:
     1. Clone `sebastianbergmann/lines-of-code` to `/tmp/loc-poc` (timeout-safe: `git clone --depth 1 https://github.com/sebastianbergmann/lines-of-code.git /tmp/loc-poc || cp -r tests/fixtures/php-smoke /tmp/loc-poc` as fallback when offline).
     2. Run `python -m harness_quality_gate detect /tmp/loc-poc --json` and assert `primary="php"`.
@@ -655,7 +630,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-28, US-11_
   - _Design: pcov_adapter component, E11_
 
-- [ ] 2.3 [P] Implement `pest_adapter.py` (TD-6 fallback semantics)
+- [x] 2.3 [P] Implement `pest_adapter.py` (TD-6 fallback semantics)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/pest_adapter.py` with `PestAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/pest --coverage` with 300s timeout.
@@ -690,7 +665,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: security_checker_adapter_
 
-- [ ] 2.5b [P] Implement `dead_code_adapter.py` (shipmonk dead-code-detector)
+- [x] 2.5b [P] Implement `dead_code_adapter.py` (shipmonk dead-code-detector)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/dead_code_adapter.py` wrapping `phpstan analyse --configuration=dead-code.neon` (300s timeout).
     2. `parse(stdout)` → `Finding[]` for L4.
