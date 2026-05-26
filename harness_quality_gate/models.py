@@ -113,3 +113,13 @@ class ConcurrencyPlan:
     mode: str
     ci_detected: bool
     max_threads: int
+
+
+@dataclass(frozen=True)
+class DoctorReport:
+    verdict: str
+    python_version: str
+    php_version: str
+    composer_version: str
+    tools: list[ToolCheckReport]
+    warnings: list[str]
