@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
-from .models import Finding, LayerResult
+from .models import CheckpointV2, Finding, LayerResult, Runtime
 
 # Layer mapping: language slug -> adapter module name
 _ROUTE_TABLE: Mapping[str, str] = {
@@ -45,4 +45,46 @@ def run_layer(
         passed=True,
         findings=[],
         duration_sec=0.0,
+    )
+
+
+def dispatch(
+    detection: "Detection",  # type: ignore[name-defined]
+    layer: str,
+    concurrency_plan: "ConcurrencyPlan",  # type: ignore[name-defined]
+    ctx: Mapping,
+) -> LayerResult:
+    """Run one quality-gate layer for the detected language.
+
+    Stub: delegates to ``run_layer`` with the detected language.
+    """
+    return run_layer(
+        language=detection.language,  # type: ignore[attr-defined]
+        layer=layer,
+        repo=Path(detection.repo_path),  # type: ignore[attr-defined]
+        work_dir=Path(ctx.get("work_dir", "/tmp")),
+        env=ctx,
+    )
+
+
+def dispatch_full(detection: "Detection", ctx: Mapping) -> CheckpointV2:  # type: ignore[name-defined]
+    """Run all layers and emit a Checkpoint v2 summary.
+
+    Stub: returns a checkpoint with one passing L3A layer.
+    """
+    return CheckpointV2(
+        version="2.0.0",
+        timestamp="",
+        repository=detection.repo_path,  # type: ignore[attr-defined]
+        language=detection.language,  # type: ignore[attr-defined]
+        layers=[
+            run_layer(
+                language=detection.language,  # type: ignore[attr-defined]
+                layer="L3A",
+                repo=Path(detection.repo_path),  # type: ignore[attr-defined]
+                work_dir=Path(ctx.get("work_dir", "/tmp")),
+                env=ctx,
+            )
+        ],
+        mutation=None,
     )

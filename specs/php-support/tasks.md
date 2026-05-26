@@ -168,7 +168,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, FR-6, US-16_
   - _Design: TD-1, adapters/base_
 
-- [ ] 1.10 Implement `dispatcher.py` routing skeleton
+- [x] 1.10 Implement `dispatcher.py` routing skeleton
   <!-- reviewer-diagnosis
     what: wrong function names exported (route/run_layer vs dispatch/dispatch_full)
     why: FAIL_FAST violated
