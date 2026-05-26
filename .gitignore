@@ -12,6 +12,7 @@ __pycache__/
 *.so
 .mypy_cache/
 .pytest_cache/
+_quality-gate/
 .venv/
 venv/
 *.egg-info/
@@ -21,6 +22,7 @@ venv/
 coverage.xml
 .coverage
 htmlcov/
+_quality-gate/
 
 # mutmut
 .mutmut/
