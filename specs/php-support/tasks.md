@@ -214,7 +214,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-9, US-3_
   - _Design: phpmd_adapter component_
 
-- [ ] 1.13 [P] Implement `php_cs_fixer_adapter.py`
+- [x] 1.13 [P] Implement `php_cs_fixer_adapter.py`
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/php_cs_fixer_adapter.py` with `PhpCsFixerAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/php-cs-fixer fix --dry-run --diff --format=json` with `@PER-CS2.0` preset, 300s timeout.
@@ -226,7 +226,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-8, US-3_
   - _Design: php_cs_fixer_adapter component_
 
-- [ ] 1.14 [P] Implement `composer_audit_adapter.py`
+- [x] 1.14 [P] Implement `composer_audit_adapter.py`   - feat(adapters/php): composer-audit adapter preserving CVE/CWE
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/composer_audit_adapter.py` with `ComposerAuditAdapter(ToolAdapter)`.
     2. `invoke`: `composer audit --format=json --no-dev` with 300s timeout.

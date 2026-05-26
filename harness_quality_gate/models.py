@@ -41,6 +41,9 @@ class Finding:
     severity: str
     message: str
     fix_hint: str | None
+    # Optional security-specific fields (populated by vulnerability scanners)
+    cve: str | None = None
+    cwe: str = ""
 
 
 @dataclass(frozen=True)
