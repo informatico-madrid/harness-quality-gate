@@ -30,6 +30,8 @@ markers = [
     "needs-php",
     "needs-composer",
     "needs-network",
+    "needs_php",
+    "needs_composer",
 ]
 
 [tool.coverage.run]
