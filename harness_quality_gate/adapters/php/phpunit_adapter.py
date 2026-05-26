@@ -151,9 +151,6 @@ class PhpUnitAdapter(ToolAdapter):
         errors = int(root.get("errors", "0"))
         failures = int(root.get("failures", "0"))
         skipped = int(root.get("skipped", "0"))
-        incomplete = int(root.get("incomplete", "0"))
-        riskies = int(root.get("riskies", "0"))
-        time_attr = root.get("time", "0")
 
         # Suite-level summary finding
         if total == 0:
@@ -185,8 +182,6 @@ class PhpUnitAdapter(ToolAdapter):
             tc_name = tc.get("name", "<unknown>")
             tc_class = tc.get("classname", "")
             tc_file = tc.get("file", "")
-            tc_time = tc.get("time", "")
-            tc_line = tc.get("line", "")
 
             node = tc_class or tc_name
             if tc_file:
