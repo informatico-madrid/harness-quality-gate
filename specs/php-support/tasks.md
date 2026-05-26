@@ -434,7 +434,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Config + CLI wiring
 
-- [ ] 1.28 Implement `config.py` v2 loader + v1 hard-rejection
+- [x] 1.28 Implement `config.py` v2 loader + v1 hard-rejection
   - **Do**:
     1. Create `harness_quality_gate/config.py` with `load(repo) -> Config` and `validate(raw) -> Config`.
     2. Reject configs missing `schema_version: 2` with Spanish E9 (CONFIG_INVALID, exit 4).
