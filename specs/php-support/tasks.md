@@ -745,7 +745,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Python adapters polish
 
-- [ ] 2.10 [P] Implement remaining Python adapters (mutmut, pyright, bandit, vulture, deptry, pytest)
+- [x] 2.10 [P] Implement remaining Python adapters (mutmut, pyright, bandit, vulture, deptry, pytest)
   - **Do**:
     1. Create `harness_quality_gate/adapters/python/{ruff,pyright,pytest,mutmut,bandit,vulture,deptry}_adapter.py` per design Component table.
     2. Each wraps subprocess + parses JSON/junit output → `Finding[]`.
