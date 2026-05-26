@@ -1,60 +1,54 @@
 """CLI entry point for harness-quality-gate.
 
-Provides ``detect``, ``doctor``, ``layer``, and ``full`` subcommands
-via argparse.  All outputs are JSON on stdout.
+Provides subcommands via argparse with exit-code mapping per NFR-15:
 
-Design: ``harness_quality_gate/`` package (CREATE)
-Requirements: FR-43, US-16
+  0 = PASS
+  1 = FAIL
+  2 = UNSUPPORTED
+  3 = INFRA_INCOMPLETE
+  4 = CONFIG_INVALID
+  5 = INTERNAL_ERROR
+
+Design: ``harness_quality_gate/`` package
+Requirements: FR-43, US-1, US-11
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import logging
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .checkpoint import build as build_checkpoint
+from .checkpoint import write as write_checkpoint
+from .config import ConfigInvalid
 from .detector import detect
-from .dispatcher import run_layer
-from .framework_sniffer import sniff_framework
-from .models import CheckpointV2, LayerResult
+from .dispatcher import dispatch_full, run_layer
+from .doctor import run as doctor_run
+from .exit_codes import (
+    CONFIG_INVALID,
+    FAIL,
+    INFRA_INCOMPLETE,
+    INTERNAL_ERROR,
+    PASS,
+    UNSUPPORTED,
+)
+from .installer import install as install_tools
 
-
-# Valid layer names
-_VALID_LAYERS = ("L1", "L2", "L3A", "L3B", "L4")
-
-# Tools that ``doctor`` checks on PATH
-_DOCTOR_TOOLS = [
-    ("python3", "Python runtime"),
-    ("pip", "Python package manager"),
-    ("git", "Version control"),
-    ("composer", "PHP package manager"),
-    ("php", "PHP runtime"),
-    ("black", "Python formatter"),
-    ("isort", "Python import sorter"),
-    ("mypy", "Python type checker"),
-    ("ruff", "Python linter"),
-    ("flake8", "Python linter (legacy)"),
-    ("bandit", "Python security scanner"),
-    ("safety", "Python vulnerability checker"),
-    ("phpcs", "PHP coding standards"),
-    ("phpstan", "PHP static analysis"),
-    ("composer-require-checker", "Composer dependency checker"),
-    ("security-checker", "PHP vulnerability checker"),
-]
-
+logger = logging.getLogger("harness_quality_gate.cli")
 
 # ------------------------------------------------------------------
-# Sub-command helpers
+# Helpers
 # ------------------------------------------------------------------
 
 def _asdict(obj: Any) -> Any:
-    """Convert a frozen dataclass or simple object to a dict for JSON serialisation."""
+    """Convert a frozen dataclass or simple object to a JSON-serialisable dict."""
+    import dataclasses
+
     if hasattr(obj, "__dataclass_fields__"):
-        import dataclasses
         return dataclasses.asdict(obj)  # type: ignore[attr-defined]
     if isinstance(obj, dict):
         return {k: _asdict(v) for k, v in obj.items()}
@@ -65,134 +59,325 @@ def _asdict(obj: Any) -> Any:
     return str(obj)
 
 
+def _exit_with(code: int, data: Any, json_mode: bool = False, quiet: bool = False) -> int:
+    """Print data (optionally as JSON) and exit with *code*."""
+    if not quiet and json_mode:
+        print(json.dumps(_asdict(data) if not isinstance(data, str) else data, indent=2))
+    elif not quiet:
+        if isinstance(data, dict):
+            print(json.dumps(data, indent=2))
+        elif isinstance(data, str):
+            print(data)
+    return code
+
+
 # ------------------------------------------------------------------
 # Sub-command handlers
 # ------------------------------------------------------------------
 
-def _cmd_detect(args: argparse.Namespace) -> None:
+def _cmd_detect(args: argparse.Namespace) -> int:
     """Handle the ``detect`` sub-command."""
     repo = Path(args.repo).resolve()
-    result = detect(repo, force=args.force)
-    print(json.dumps(_asdict(result), indent=2))
+    if not repo.is_dir():
+        return _exit_with(
+            UNSUPPORTED,
+            {"error": f"repository not found: {repo}", "exit_code": UNSUPPORTED},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    try:
+        result = detect(repo, force=args.force)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    code = PASS if result.confidence > 0.5 else FAIL
+    return _exit_with(code, result, json_mode=args.json, quiet=args.quiet)
 
 
-def _cmd_doctor(args: argparse.Namespace) -> None:
-    """Handle the ``doctor`` sub-command.
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Handle the ``doctor`` sub-command."""
+    repo = Path(args.repo).resolve()
+    try:
+        report = doctor_run(repo, json_mode=args.json)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    if report.verdict == "PASS":
+        code = PASS
+    else:
+        code = INFRA_INCOMPLETE
+    return _exit_with(code, report, json_mode=args.json, quiet=args.quiet)
 
-    Checks that required tools exist on PATH and reports their status.
+
+def _cmd_install_tools(args: argparse.Namespace) -> int:
+    """Handle the ``install-tools`` sub-command."""
+    repo = Path(args.repo).resolve()
+    try:
+        result = install_tools(repo)
+    except FileNotFoundError:
+        return _exit_with(
+            UNSUPPORTED,
+            {"error": "tool version config not found", "exit_code": UNSUPPORTED},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    code = PASS if result.status == "success" else FAIL
+    return _exit_with(code, result, json_mode=args.json, quiet=args.quiet)
+
+
+def _cmd_audit_ignores(args: argparse.Namespace) -> int:
+    """Handle the ``audit-ignores`` sub-command (stub).
+
+    Audits the ``.quality-gate-ignores`` file and prints outdated entries.
     """
     repo = Path(args.repo).resolve()
-    reports: list[dict[str, Any]] = []
-
-    for cmd, _description in _DOCTOR_TOOLS:
-        version_output: str | None = None
-        error: str | None = None
-        exit_code = 0
-
-        try:
-            result = subprocess.run(
-                [cmd, "--version"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0:
-                exit_code = result.returncode
-                error = result.stderr.strip() or result.stdout.strip()
-            else:
-                version_output = result.stdout.strip().splitlines()[0]
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            exit_code = 127
-            error = str(exc)
-
-        reports.append({
-            "tool": cmd,
-            "exit_code": exit_code,
-            "output": version_output,
-            "error": error,
-        })
-
-    print(json.dumps({
+    data = {
         "repository": str(repo),
-        "tools": reports,
-    }, indent=2))
+        "ignores": [],
+        "message": "stub: not yet implemented",
+    }
+    return _exit_with(PASS, data, json_mode=args.json, quiet=args.quiet)
 
 
-def _cmd_layer(args: argparse.Namespace) -> None:
-    """Handle the ``layer`` sub-command."""
+def _cmd_configure(args: argparse.Namespace) -> int:
+    """Handle the ``configure`` sub-command (stub).
+
+    Writes a default ``.quality-gate.yaml`` config into *repo*.
+    """
     repo = Path(args.repo).resolve()
-    detection = detect(repo, force=args.force)
-    framework = sniff_framework(repo, detection.language)
+    data = {
+        "repository": str(repo),
+        "message": "stub: not yet implemented",
+    }
+    return _exit_with(PASS, data, json_mode=args.json, quiet=args.quiet)
 
-    layer_result = run_layer(
-        language=detection.language,
-        layer=args.layer,
-        repo=repo,
-        work_dir=repo / "_quality-gate" / "work",
-        env={},
+
+def _cmd_layer(args: argparse.Namespace) -> int:
+    """Handle a layer sub-command (layer1, layer2, layer3a, layer3b, layer4)."""
+    repo = Path(args.repo).resolve()
+    if not repo.is_dir():
+        return _exit_with(
+            UNSUPPORTED,
+            {"error": f"repository not found: {repo}", "exit_code": UNSUPPORTED},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    layer_id = getattr(args, "_layer_id", "3a")
+    layer_name = f"L{layer_id}".upper()
+    try:
+        detection = detect(repo, force=args.force)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    work_dir = repo / "_quality-gate" / "work"
+    try:
+        layer_result = run_layer(
+            language=detection.language,
+            layer=layer_name,
+            repo=repo,
+            work_dir=work_dir,
+            env={},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    code = PASS if layer_result.passed else FAIL
+    return _exit_with(code, layer_result, json_mode=args.json, quiet=args.quiet)
+
+
+def _cmd_all(args: argparse.Namespace) -> int:
+    """Handle the ``all`` sub-command (run every layer)."""
+    repo = Path(args.repo).resolve()
+    if not repo.is_dir():
+        return _exit_with(
+            UNSUPPORTED,
+            {"error": f"repository not found: {repo}", "exit_code": UNSUPPORTED},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    try:
+        detection = detect(repo, force=args.force)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    try:
+        result = dispatch_full(detection, {"work_dir": str(repo / "_quality-gate" / "work")})
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    # Determine overall pass: all layers passed
+    all_passed = all(lr.passed for lr in result.layers)
+    code = PASS if all_passed else FAIL
+    return _exit_with(code, result, json_mode=args.json, quiet=args.quiet)
+
+
+def _cmd_checkpoint(args: argparse.Namespace) -> int:
+    """Handle the ``checkpoint`` sub-command."""
+    repo = Path(args.repo).resolve()
+    output = Path(args.output) if args.output else repo / "_quality-gate" / "checkpoint.json"
+    try:
+        detection = detect(repo, force=args.force)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    runtime_info = _asdict(detection.runtime) if detection.runtime else {}
+    checkpoint_data = build_checkpoint(
+        layer_results=[],
+        runtime=runtime_info,
+        detection=_asdict(detection),
     )
-
-    if args.json:
-        checkpoint = CheckpointV2(
-            version="2.0.0",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            repository=str(repo),
-            language=detection.language,
-            layers=[layer_result],
-            mutation=None,
+    try:
+        write_checkpoint(output, checkpoint_data)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
         )
-        print(json.dumps(_asdict(checkpoint), indent=2))
-    else:
-        status = "PASS" if layer_result.passed else "FAIL"
-        print(json.dumps({
-            "layer": args.layer,
-            "language": detection.language,
-            "framework": framework,
-            "status": status,
-            "findings": len(layer_result.findings),
-        }, indent=2))
-
-
-def _cmd_full(args: argparse.Namespace) -> None:
-    """Handle the ``full`` sub-command."""
-    repo = Path(args.repo).resolve()
-    detection = detect(repo, force=args.force)
-    framework = sniff_framework(repo, detection.language)
-
-    # If --json is requested, run all layers and emit Checkpoint v2
-    if args.json:
-        layers: list[LayerResult] = []
-        for layer_name in _VALID_LAYERS:
-            lr = run_layer(
-                language=detection.language,
-                layer=layer_name,
-                repo=repo,
-                work_dir=repo / "_quality-gate" / "work",
-                env={},
-            )
-            layers.append(lr)
-
-        checkpoint = CheckpointV2(
-            version="2.0.0",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            repository=str(repo),
-            language=detection.language,
-            layers=layers,
-            mutation=None,
-        )
-        print(json.dumps(_asdict(checkpoint), indent=2))
-    else:
-        # Run each layer and print per-layer summary
-        print(json.dumps({
-            "repository": str(repo),
-            "language": detection.language,
-            "framework": framework,
-            "layers_run": list(_VALID_LAYERS),
-            "mode": "sequential",
-        }, indent=2))
+    return _exit_with(PASS, {"checkpoint": str(output), "timestamp": checkpoint_data.get("timestamp")}, json_mode=args.json, quiet=args.quiet)
 
 
 # ------------------------------------------------------------------
 # Parser builder
 # ------------------------------------------------------------------
+
+_UNIVERSAL_FLAGS: list[str] = [
+    "--config",
+    "--log-level",
+    "--quiet",
+    "--json",
+    "--concurrency",
+    "--only",
+    "--allow-ramp",
+]
+
+
+def _add_universal_flags(parser: argparse.ArgumentParser) -> None:
+    """Attach global/universal flags to an argument parser."""
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to quality-gate config file",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (default: INFO)",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        default=False,
+        help="Suppress non-JSON output",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output results as JSON",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Max concurrent workers (default: 1)",
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="Comma-separated list of tools to run",
+    )
+    parser.add_argument(
+        "--allow-ramp",
+        action="store_true",
+        default=False,
+        help="Allow MSI < 100 with override file",
+    )
+
+
+def _add_subparser_flags(parser: argparse.ArgumentParser) -> None:
+    """Attach JSON-relevant flags to a subparser.
+
+    These flags are needed on every subparser because argparse does not
+    support global flags that appear *after* the subcommand name.
+    """
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output results as JSON",
+    )
+    parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        default=False,
+        help="Bypass caches",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to quality-gate config file",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Max concurrent workers (default: 1)",
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        default=None,
+        help="Comma-separated list of tools to run",
+    )
+    parser.add_argument(
+        "--allow-ramp",
+        action="store_true",
+        default=False,
+        help="Allow MSI < 100 with override file",
+    )
+
 
 def build_parser(argv: list[str] | None = None) -> argparse.ArgumentParser:
     """Build and return the CLI argument parser.
@@ -206,85 +391,151 @@ def build_parser(argv: list[str] | None = None) -> argparse.ArgumentParser:
         prog="harness-quality-gate",
         description="Polyglot quality gate for code repositories",
     )
-    parser.add_argument(
-        "--repo", "-r",
-        default=".",
-        help="Path to the repository root (default: .)",
-    )
-    parser.add_argument(
-        "--force", "-f",
-        action="store_true",
-        default=False,
-        help="Bypass caches and re-run checks",
-    )
-    parser.add_argument(
-        "--concurrency", "-c",
-        type=int,
-        default=1,
-        help="Max threads for parallel layers (default: 1)",
-    )
+    _add_universal_flags(parser)
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # detect
+    # -- detect --
     detect_p = sub.add_parser("detect", help="Language detection for a repository")
     detect_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
-    detect_p.add_argument(
-        "--force", "-f",
-        action="store_true",
-        default=False,
-        help="Bypass caches and re-run detection",
-    )
+    _add_subparser_flags(detect_p)
 
-    # doctor
-    doctor_p = sub.add_parser("doctor", help="Tool diagnosis -- check required tools")
+    # -- doctor --
+    doctor_p = sub.add_parser("doctor", help="Tool diagnosis — check required tools")
     doctor_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    _add_subparser_flags(doctor_p)
 
-    # layer
-    layer_p = sub.add_parser("layer", help="Run a specific quality-gate layer")
-    layer_p.add_argument("layer", choices=_VALID_LAYERS, help="Layer to run")
-    layer_p.add_argument(
-        "--json",
-        action="store_true",
-        default=False,
-        help="Output Checkpoint v2 JSON",
-    )
+    # -- install-tools --
+    install_p = sub.add_parser("install-tools", help="Install PHP gate tools via composer")
+    install_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    _add_subparser_flags(install_p)
 
-    # full
-    full_p = sub.add_parser("full", help="Run all quality-gate layers")
-    full_p.add_argument(
-        "--json",
-        action="store_true",
-        default=False,
-        help="Output Checkpoint v2 JSON",
+    # -- audit-ignores --
+    audit_p = sub.add_parser("audit-ignores", help="Audit quality-gate ignore entries")
+    audit_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    _add_subparser_flags(audit_p)
+
+    # -- configure --
+    config_p = sub.add_parser("configure", help="Generate default quality-gate config")
+    config_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    _add_subparser_flags(config_p)
+
+    # -- layer sub-commands (layer1, layer2, layer3a, layer3b, layer4) --
+    _LAYER_MAP: dict[str, str] = {
+        "layer1": "1",
+        "layer2": "2",
+        "layer3a": "3a",
+        "layer3b": "3b",
+        "layer4": "4",
+    }
+    for subcmd, layer_id in _LAYER_MAP.items():
+        p = sub.add_parser(subcmd, help=f"Run Layer {layer_id} quality check")
+        p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+        _add_subparser_flags(p)
+        p.set_defaults(_layer_id=layer_id)
+
+    # -- all --
+    all_p = sub.add_parser("all", help="Run all quality-gate layers")
+    all_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    _add_subparser_flags(all_p)
+
+    # -- checkpoint --
+    ckpt_p = sub.add_parser("checkpoint", help="Write a Checkpoint v2 summary")
+    ckpt_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    ckpt_p.add_argument(
+        "--output", "-o",
+        type=str,
+        default=None,
+        help="Output path for checkpoint JSON (default: repo/_quality-gate/checkpoint.json)",
     )
+    _add_subparser_flags(ckpt_p)
 
     return parser
+
+
+# ------------------------------------------------------------------
+# Exception -> exit-code mapping (NFR-15)
+# ------------------------------------------------------------------
+
+_EXIT_MAP: dict[type[Exception], int] = {
+    ConfigInvalid: CONFIG_INVALID,
+    FileNotFoundError: UNSUPPORTED,
+}
+
+
+def _map_exit(exc: Exception) -> int:
+    """Map an exception class to the appropriate NFR-15 exit code."""
+    for exc_type, code in _EXIT_MAP.items():
+        if isinstance(exc, exc_type):
+            return code
+    return INTERNAL_ERROR
 
 
 # ------------------------------------------------------------------
 # Public entry point
 # ------------------------------------------------------------------
 
-def main(argv: list[str] | None = None) -> None:
-    """Entry point -- parse args and dispatch to sub-command handler."""
-    parser = build_parser(argv)
-    args = parser.parse_args(argv)
+def main(argv: list[str] | None = None) -> int:
+    """Entry point — parse args, dispatch sub-command, return exit code.
 
+    Parameters
+    ----------
+    argv:
+        If provided, parse from this list instead of ``sys.argv``.
+
+    Returns
+    -------
+    int
+        Exit code per NFR-15 (0=PASS … 5=INTERNAL_ERROR).
+    """
+    if argv is None:
+        argv = list(sys.argv[1:])
+
+    parser = build_parser(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as e:
+        # argparse calls sys.exit on error / --help; propagate the code.
+        return e.code if isinstance(e.code, int) else 1
+
+    # Configure logging from universal flags
+    log_level = getattr(args, "log_level", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    # Dispatch to sub-command handler
     dispatch_table: dict[str, Any] = {
         "detect": _cmd_detect,
         "doctor": _cmd_doctor,
-        "layer": _cmd_layer,
-        "full": _cmd_full,
+        "install-tools": _cmd_install_tools,
+        "audit-ignores": _cmd_audit_ignores,
+        "configure": _cmd_configure,
+        "layer1": _cmd_layer,
+        "layer2": _cmd_layer,
+        "layer3a": _cmd_layer,
+        "layer3b": _cmd_layer,
+        "layer4": _cmd_layer,
+        "all": _cmd_all,
+        "checkpoint": _cmd_checkpoint,
     }
 
     handler = dispatch_table.get(args.command)
     if handler is None:
         parser.print_help(sys.stderr)
-        sys.exit(1)
+        return UNSUPPORTED
 
-    handler(args)
+    try:
+        return handler(args)
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 1
+    except Exception as exc:  # noqa: BLE001
+        code = _map_exit(exc)
+        return _exit_with(
+            code,
+            {"error": str(exc), "exit_code": code},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
 
-
-if __name__ == "__main__":
-    main()
