@@ -238,7 +238,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: composer_audit_adapter component_
 
-- [ ] 1.15 [P] Implement `psalm_taint_adapter.py` (parser only for POC)
+- [x] 1.15 [P] Implement `psalm_taint_adapter.py` (parser only for POC)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/psalm_taint_adapter.py` with `PsalmTaintAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/psalm --taint-analysis --output-format=json` with 600s timeout (longer per NFR-13 layer rollup).
