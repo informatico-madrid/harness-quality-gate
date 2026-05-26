@@ -654,7 +654,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-19, US-8_
   - _Design: deptrac_adapter_
 
-- [ ] 2.5a [P] Implement `security_checker_adapter.py`
+- [x]  ] 2.5a [P] Implement `security_checker_adapter.py`
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/security_checker_adapter.py` wrapping `local-php-security-checker --format=json` (300s timeout).
     2. `parse(stdout)` → `Finding[]` for L4.
