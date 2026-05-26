@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Mapping
 
@@ -95,7 +94,7 @@ class DeadCodeAdapter(ToolAdapter):
                             Finding(
                                 node=ref.get("file", ""),
                                 severity="warning",
-                                message=ref.get("message", ref.get("tip", "Dead code reference")),
+                                message=ref.get("message") or ref.get("tip") or "Dead code reference",
                                 fix_hint=ref.get("tip"),
                                 tool=self._name,
                                 layer="L4",

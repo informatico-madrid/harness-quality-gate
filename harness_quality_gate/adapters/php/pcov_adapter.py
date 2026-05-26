@@ -11,14 +11,13 @@ Requirements: FR-28, US-11
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding, LayerResult
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
