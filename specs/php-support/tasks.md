@@ -618,7 +618,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-12, US-6_
   - _Design: phpunit_adapter component_
 
-- [ ] 2.2 [P] Implement `pcov_adapter.py` + `xdebug` fallback
+- [x] 2.2 [P] Implement `pcov_adapter.py` + `xdebug` fallback
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/pcov_adapter.py` with `PcovAdapter(ToolAdapter)`.
     2. `probe()`: check `php -m` for `pcov`; if absent check `xdebug`; return driver name.
@@ -654,7 +654,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-19, US-8_
   - _Design: deptrac_adapter_
 
-- [x]  ] 2.5a [P] Implement `security_checker_adapter.py`
+- [x] 2.5a [P] Implement `security_checker_adapter.py`
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/security_checker_adapter.py` wrapping `local-php-security-checker --format=json` (300s timeout).
     2. `parse(stdout)` → `Finding[]` for L4.
