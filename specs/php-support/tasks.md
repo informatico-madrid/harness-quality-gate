@@ -81,7 +81,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Detection (FR-1..FR-4)
 
-- [ ] 1.4 [P] Implement `detector.py` Tier 1+2+3 detection
+- [x] 1.4 [P] Implement `detector.py` Tier 1+2+3 detection
   - **Do**:
     1. Create `harness_quality_gate/detector.py` with `detect(repo: Path, force: bool=False) -> Detection`.
     2. Implement Tier 1 override file `.quality-gate-lang`, Tier 2 manifest scan (`pyproject.toml`/`setup.py`/`requirements*.txt`/`Pipfile`/`poetry.lock`/`uv.lock` vs `composer.json`/`composer.lock`), Tier 3 source-file count tie-breaker per research §2.3.

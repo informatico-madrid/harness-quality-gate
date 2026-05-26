@@ -24,6 +24,15 @@ class Detection:
     framework: str | None
     confidence: float
     runtime: Runtime
+    # Fields added by 3-tier detector (1.4+)
+    languages_detected: list[str] = field(default_factory=list)
+    frameworks: dict[str, list[str]] = field(default_factory=dict)
+    file_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def primary(self) -> str:
+        """Alias for language — the primary detected language."""
+        return self.language
 
 
 @dataclass(frozen=True)
