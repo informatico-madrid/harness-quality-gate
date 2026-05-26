@@ -295,7 +295,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37, US-15_
   - _Design: bmad/llm_solid_judge component_
 
-- [ ] 1.19 [P] Relocate `scripts/antipattern_judge.py` → `bmad/antipattern_judge.py`
+- [x] 1.19 [P] Relocate `scripts/antipattern_judge.py` → `bmad/antipattern_judge.py`
   - **Do**:
     1. Move into `harness_quality_gate/bmad/antipattern_judge.py`.
     2. Add `language: str` param; pass into prompt.
