@@ -400,7 +400,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-38, US-18_
   - _Design: TD-9, messages_es component_
 
-- [ ] V5 [VERIFY] Quality checkpoint after doctor + installer
+- [x] V5 [VERIFY] Quality checkpoint after doctor + installer
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
@@ -408,7 +408,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Checkpoint v2 writer + JSON Schema
 
-- [ ] 1.26 Create `references/verdict-schema.json` (JSON Schema draft 2020-12)
+- [x] 1.26 Create `references/verdict-schema.json` (JSON Schema draft 2020-12)
   - **Do**:
     1. Create `references/verdict-schema.json` per design.md `## Checkpoint JSON v2 Contract` JSON Schema fragment.
     2. Include `$defs.layerBlock` for layer + per_language sub-blocks.
@@ -419,7 +419,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-5, NFR-16, US-10_
   - _Design: TD-8, Checkpoint JSON v2 Contract_
 
-- [ ] 1.27 Implement `checkpoint.py` builder + writer
+- [x] 1.27 Implement `checkpoint.py` builder + writer
   - **Do**:
     1. Create `harness_quality_gate/checkpoint.py` with `build(layer_results, runtime, detection) -> dict` and `write(path, data) -> None`.
     2. Validate output against `references/verdict-schema.json` BEFORE write; raise on validation failure.
