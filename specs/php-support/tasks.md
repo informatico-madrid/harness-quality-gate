@@ -328,7 +328,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Doctor + Installer (POC: composer-local path only)
 
-- [ ] 1.21 Implement `doctor.py` runtime + tool checks
+- [x] 1.21 Implement `doctor.py` runtime + tool checks
   - **Do**:
     1. Create `harness_quality_gate/doctor.py` with `run(repo, json: bool=False) -> DoctorReport`.
     2. Check `python`, `php`, `composer` via `shutil.which`; capture versions.
