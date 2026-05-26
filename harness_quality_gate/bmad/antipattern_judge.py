@@ -378,3 +378,29 @@ if __name__ == "__main__":
         print("Usage: antipattern_judge.py <src_dir> <tests_dir>", file=sys.stderr)
         sys.exit(1)
     main(sys.argv[1], sys.argv[2])
+
+
+# ---------------------------------------------------------------------------
+# Importable wrapper (for spec task verify commands)
+# ---------------------------------------------------------------------------
+
+def judge_antipattern(language: str, **kw: dict[str, Any]) -> dict[str, Any]:
+    """Generate Tier-B antipattern review context for *language*.
+
+    This is the importable entry-point expected by the spec.
+    It returns a dict with pattern definitions and a review prompt
+    templated for the given language.
+
+    Args:
+        language: Programming language, e.g. ``"python"`` or ``"php"``.
+        **kw: Extra keyword arguments (reserved for future use).
+
+    Returns:
+        Dict with ``tier_b_patterns``, ``language``, and ``review_prompt``.
+    """
+    review_prompt = generate_review_context([], [])
+    return {
+        "tier_b_patterns": TIER_B_PATTERNS,
+        "language": language,
+        "review_prompt": review_prompt,
+    }

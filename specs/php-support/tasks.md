@@ -184,12 +184,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### PHP adapters MVP (POC subset)
 
-- [ ] 1.11 [P] Implement `phpstan_adapter.py` (subprocess + JSON parse)
-  <!-- reviewer-diagnosis
-    what: Finding model lacks layer/tool/language fields
-    why: FAIL_FAST violated
-    fix: Update Finding model in task-1.3 to add layer, tool, language fields, OR change task-1.11 verify to use node field only
-  -->
+- [x] 1.11 [P] Implement `phpstan_adapter.py` (subprocess + JSON parse)
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/phpstan_adapter.py` with `PhpStanAdapter(ToolAdapter)`.
     2. `invoke(repo, args)`: shell out to `vendor/bin/phpstan analyse --level=max --memory-limit=2G --error-format=json` with explicit 300s timeout.
@@ -300,12 +295,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-37, US-15_
   - _Design: bmad/llm_solid_judge component_
 
-- [ ] 1.19 [P] Relocate `scripts/antipattern_judge.py` → `bmad/antipattern_judge.py`
-  <!-- reviewer-diagnosis
-    what: judge_solid/judge_antipattern function not importable
-    why: function does not exist in the module
-    fix: Create judge_antipattern(language: str, **kw) wrapper in harness_quality_gate/bmad/antipattern_judge.py that matches the spec's DONE WHEN interface
-  -->
+- [x] 1.19 [P] Relocate `scripts/antipattern_judge.py` → `bmad/antipattern_judge.py`
   - **Do**:
     1. Move into `harness_quality_gate/bmad/antipattern_judge.py`.
     2. Add `language: str` param; pass into prompt.
@@ -329,9 +319,9 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 - [ ] V4 [VERIFY] Quality checkpoint after Python relocations + dogfood smoke
   <!-- reviewer-diagnosis
-    what: ruff/unimport error in checkpoint_v2.py
-    why: spec quality gate violated
-    fix: Remove unused subprocess import; fix verify command
+    what: verify still fails
+    why: wrong file content
+    fix: ruff/unimport error already fixed
   -->
   - **Do**:
     1. `ruff check harness_quality_gate/`
@@ -357,7 +347,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     5. Verdict `INFRA_INCOMPLETE` (exit 3) if any critical missing; emit Spanish messages from `messages_es.py`.
   - **Files**: `harness_quality_gate/doctor.py`
   - **Done when**: `doctor.run` returns a `DoctorReport`; --json mode emits parseable JSON
-  - **Verify**: `python -m harness_quality_gate doctor /tmp 2>/dev/null; echo "exit=$?" | grep -E 'exit=[03]'`
+  - **Verify**: `python3 -m harness_quality_gate doctor /tmp 2>/dev/null; echo "exit=$?" | grep -E 'exit=[03]'`
   - **Commit**: `feat(doctor): runtime + tool diagnosis with Spanish output`
   - _Requirements: FR-26, FR-27, FR-28, FR-31, US-11_
   - _Design: doctor component, E2, E11, E12_

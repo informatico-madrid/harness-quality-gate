@@ -6,7 +6,6 @@ Writes to `<repo>/_quality-gate/checkpoint.json` when `output` is None.
 from __future__ import annotations
 
 import json
-import subprocess
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any

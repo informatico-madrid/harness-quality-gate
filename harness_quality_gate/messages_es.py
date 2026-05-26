@@ -1,7 +1,11 @@
-"""Spanish diagnostic messages for the quality gate system."""
+"""Spanish diagnostic messages for the quality gate system.
 
+Provides ``MSG`` dict and ``t(key, **kwargs) -> str`` formatter.
+"""
 
-MESSAGES = {
+from __future__ import annotations
+
+MSG: dict[str, str] = {
     "TOOL_MISSING": "Herramienta requerida no encontrada: {tool}",
     "INFRA_OK": "Todas las herramientas están instaladas",
     "DETECT_SUCCESS": "Lenguaje detectado: {language} (confianza: {confidence:.1%})",
@@ -12,15 +16,15 @@ MESSAGES = {
 }
 
 
-def msg(key: str, **kwargs) -> str:
+def t(key: str, **kwargs: str) -> str:
     """Format a Spanish message string by key.
 
     Args:
-        key: Message key from MESSAGES dict.
+        key: Message key from ``MSG`` dict.
         **kwargs: Values for string interpolation.
 
     Returns:
         The formatted message string.
     """
-    template = MESSAGES.get(key, key)
+    template = MSG.get(key, key)
     return template.format(**kwargs)

@@ -233,4 +233,8 @@ class PsalmTaintAdapter(ToolAdapter):
             severity=severity,
             message=desc,
             fix_hint=taint_type,
+            tool="psalm-taint",
+            layer="L4",
+            language="php",
+            rule_id=taint_type,
         )
