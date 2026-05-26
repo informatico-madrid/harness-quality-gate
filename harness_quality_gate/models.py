@@ -40,7 +40,7 @@ class Finding:
     node: str
     severity: str
     message: str
-    fix_hint: str | None
+    fix_hint: str | None = None
     # Optional security-specific fields (populated by vulnerability scanners)
     cve: str | None = None
     cwe: str = ""

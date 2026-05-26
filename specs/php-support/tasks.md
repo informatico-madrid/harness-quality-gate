@@ -552,7 +552,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-13, FR-14, FR-18, US-4_
   - _Design: infection_adapter, MutationStats_
 
-- [ ] 1.37 [P] Implement `allow_list_auditor.py` PoC (PHP regex selector only)
+- [x] 1.37 [P] Implement `allow_list_auditor.py` PoC (PHP regex selector only)
   - **Do**:
     1. Create `harness_quality_gate/allow_list_auditor.py` (TOP-LEVEL, language-neutral module per design polish) with `AllowListAuditor` + `audit(repo, diff_from=None) -> AuditReport`.
     2. Scan `*.php` for `@infection-ignore-all`; require adjacent (within 5 lines preceding) `reason:` AND `audited:` metadata.
