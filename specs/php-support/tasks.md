@@ -502,7 +502,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: US-1_
   - _Design: tests/fixtures/php-pure-pass_
 
-- [ ] 1.33 Wire L3A end-to-end in dispatcher (PHP path)
+- [x] 1.33 Wire L3A end-to-end in dispatcher (PHP path)
   - **Do**:
     1. In `dispatcher.py` complete `dispatch(detection, "L3A", ...)` to instantiate `PhpAdapter` and call `run_l3a(repo, ctx)`.
     2. Hybrid `dispatch(detection, "L3A", parallel)` runs both `PhpAdapter` and `PythonAdapter` via ThreadPoolExecutor and aggregates `per_language`.

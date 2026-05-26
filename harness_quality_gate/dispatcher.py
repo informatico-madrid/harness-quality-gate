@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
+from .adapters.php.php_adapter import PhpAdapter
 from .models import CheckpointV2, ConcurrencyPlan, Detection, LayerResult
 
 # Layer mapping: language slug -> adapter module name
@@ -39,6 +40,9 @@ def run_layer(
 
     Returns a ``LayerResult`` summarising pass/fail and any findings.
     """
+    if language == "php" and layer == "L3A":
+        return PhpAdapter().run_l3a(repo, env)
+
     return LayerResult(
         layer=layer,
         language=language,
@@ -56,13 +60,24 @@ def dispatch(
 ) -> LayerResult:
     """Run one quality-gate layer for the detected language.
 
-    Stub: delegates to ``run_layer`` with the detected language.
+    For the L3A layer, runs PHP L3A first when the repo contains PHP
+    (either as primary language or in a hybrid multi-language detection).
     """
+    repo = Path(detection.repo_path)
+    work_dir = Path(ctx.get("work_dir", "/tmp"))
+
+    # Hybrid repos: run PHP L3A first if PHP is present
+    if layer == "L3A" and detection.primary == "php":
+        return PhpAdapter().run_l3a(repo, ctx)
+
+    if layer == "L3A" and "php" in detection.languages_detected:
+        return PhpAdapter().run_l3a(repo, ctx)
+
     return run_layer(
         language=detection.language,
         layer=layer,
-        repo=Path(detection.repo_path),
-        work_dir=Path(ctx.get("work_dir", "/tmp")),
+        repo=repo,
+        work_dir=work_dir,
         env=ctx,
     )
 
