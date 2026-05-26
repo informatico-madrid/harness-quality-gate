@@ -176,7 +176,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, FR-6, FR-25, NFR-6_
   - _Design: dispatcher component, TD-2, TD-15_
 
-- [ ] V2 [VERIFY] Quality checkpoint: ruff + mypy on dispatcher + adapters/base
+- [x] V2 [VERIFY] Quality checkpoint: ruff + mypy on dispatcher + adapters/base
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
@@ -245,7 +245,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-21, US-9_
   - _Design: psalm_taint_adapter component_
 
-- [ ] V3 [VERIFY] Quality checkpoint after MVP adapters
+- [x] V3 [VERIFY] Quality checkpoint after MVP adapters
   - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ --ignore-missing-imports`
   - **Verify**: Both exit 0
   - **Done when**: No errors
@@ -266,7 +266,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Python adapters MVP (relocate scripts/)
 
-- [ ] 1.17 [P] Stub `python_adapter.py` orchestrator
+- [x] 1.17 [P] Stub `python_adapter.py` orchestrator
   - **Do**:
     1. Create `harness_quality_gate/adapters/python/python_adapter.py` with `PythonAdapter(BaseAdapter)`.
     2. For POC, `run_l3a` invokes `ruff check` + `pyright` via subprocess (300s timeout) and returns LayerResult.
