@@ -1,0 +1,58 @@
+{
+  "source": "spec",
+  "name": "php-support",
+  "basePath": "specs/php-support",
+  "phase": "execution",
+  "taskIndex": 0,
+  "totalTasks": 120,
+  "taskIteration": 1,
+  "maxTaskIterations": 5,
+  "globalIteration": 1,
+  "maxGlobalIterations": 100,
+  "awaitingApproval": false,
+  "researchApproved": true,
+  "researchReviewedAt": "2026-05-25",
+  "requirementsApproved": true,
+  "requirementsReviewedAt": "2026-05-25",
+  "requirementsReviewVerdict": "REVIEW_PASS",
+  "designApproved": true,
+  "designReviewedAt": "2026-05-25",
+  "designReviewVerdict": "REVIEW_PASS",
+  "designReviewPolishApplied": true,
+  "granularity": "fine",
+  "relatedSpecs": [],
+  "tasksGeneratedAt": "2026-05-25",
+  "tasksApproved": true,
+  "tasksReviewedAt": "2026-05-26",
+  "tasksReviewIterations": 2,
+  "tasksReviewVerdict": "REVIEW_PASS",
+  "tasksReviewPolishApplied": true,
+  "repairIteration": 0,
+  "failedStory": null,
+  "originTaskIndex": null,
+  "recoveryMode": false,
+  "maxFixTasksPerOriginal": 3,
+  "maxFixTaskDepth": 3,
+  "fixTaskMap": {},
+  "modificationMap": {},
+  "maxModificationsPerTask": 3,
+  "maxModificationDepth": 2,
+  "nativeTaskMap": {},
+  "nativeSyncEnabled": true,
+  "nativeSyncFailureCount": 0,
+  "taskMarkSnapshot": null,
+  "circuitBreaker": {
+    "state": "closed",
+    "consecutiveFailures": 0,
+    "maxConsecutiveFailures": 5,
+    "maxSessionSeconds": 172800
+  },
+  "chat": {
+    "executor": {
+      "lastReadLine": 142
+    }
+  },
+  "external_unmarks": {
+    "1.6": 1
+  }
+}

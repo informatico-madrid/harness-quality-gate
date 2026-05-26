@@ -107,7 +107,12 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-3, FR-39, NFR-3_
   - _Design: TD-5, TD-16_
 
-- [x] 1.6 Implement framework signal sniffer
+- [ ] 1.6 Implement framework signal sniffer
+  <!-- reviewer-diagnosis
+    what: framework_sniffer not integrated in detect()
+    why: FAIL_FAST violated
+    fix: Add from .framework_sniffer import framework_signals to detector.py and call it in detect() to populate d.frameworks
+  -->
   - **Do**:
     1. Add `framework_signals(repo: Path) -> dict[str, list[str]]` in `detector.py`.
     2. Parse `composer.json` `require` keys for `symfony/framework-bundle` → `["symfony"]`, `laravel/framework` → `["laravel"]`, `drupal/core` → `["drupal"]`, `roots/wordpress` → `["wordpress"]`.
@@ -128,7 +133,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Concurrency + Dispatcher + BaseAdapter
 
-- [ ] 1.7 [P] Implement `concurrency.py` resolver
+- [x] 1.7 [P] Implement `concurrency.py` resolver
   - **Do**:
     1. Create `harness_quality_gate/concurrency.py` with `resolve(mode: str, env: Mapping) -> ConcurrencyPlan`.
     2. CI env vars: `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`. Any present → `mode=sequential, source_signal=ci_env`, `max_workers=1`.
