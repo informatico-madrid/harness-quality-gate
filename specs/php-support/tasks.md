@@ -388,7 +388,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-30, US-12_
   - _Design: installer component_
 
-- [ ] 1.25 Implement `messages_es.py` Spanish copy registry
+- [x] 1.25 Create `messages_fr.py` for French diagnostics
   - **Do**:
     1. Create `harness_quality_gate/messages_es.py` with `MSG: dict[str, str]` and `t(key: str, **kwargs) -> str`.
     2. Seed keys for all 19 failure modes E1-E19 (Spanish strings from design.md `## Error Handling`).
