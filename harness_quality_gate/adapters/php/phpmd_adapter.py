@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class PhpMdAdapter(ToolAdapter):
 
     # -- version ----------------------------------------------------------
 
-    def version(self, repo: Path, env: Mapping[str, str] = None) -> str:
+    def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         """Return version string like ``'2.14.0'``."""
         cmd = self._phpmd_binary(repo)
         if cmd is None:

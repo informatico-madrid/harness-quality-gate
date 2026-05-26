@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ..base import BaseAdapter
-from ...models import Finding, LayerResult
+from ...models import LayerResult
 
 
 class PythonAdapter(BaseAdapter):

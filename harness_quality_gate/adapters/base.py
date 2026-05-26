@@ -18,7 +18,7 @@ import logging
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
@@ -244,8 +244,8 @@ class ToolAdapter(ABC):
         except subprocess.TimeoutExpired as exc:
             duration = (datetime.now(timezone.utc) - start).total_seconds()
             return ToolInvocation(
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "TIMEOUT",
+                stdout=(exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode()) if exc.stdout else "",
+                stderr=(exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode()) if exc.stderr else "TIMEOUT",
                 exitcode=-1,
                 duration_seconds=round(duration, 3),
             )

@@ -12,13 +12,11 @@ import json
 import logging
 import shutil
 import subprocess
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +39,7 @@ class PhpStanAdapter(ToolAdapter):
 
     # -- version ----------------------------------------------------------
 
-    def version(self, repo: Path, env: Mapping[str, str] = None) -> str:
+    def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         """Return version string like ``'2.1.34'``."""
         cmd = self._phpstan_binary(repo)
         if cmd is None:

@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from dataclasses import dataclass, field
+import subprocess
 from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class PsalmTaintAdapter(ToolAdapter):
     def version(
         self,
         repo: Path,
-        env: Mapping[str, str] = None,
+        env: Mapping[str, str] | None = None,
     ) -> str:
         """Return version string like ``'5.26.0'``.
 
@@ -81,7 +81,7 @@ class PsalmTaintAdapter(ToolAdapter):
         cmd = self._psalm_binary(repo)
         if cmd is None:
             raise RuntimeError("psalm not found on PATH or in vendor/bin")
-        result = subprocess.run(  # type: ignore[name-defined]
+        result = subprocess.run(
             [*cmd, "--version"],
             cwd=str(repo),
             env={**__import__("os").environ, **(env or {})},
@@ -117,7 +117,7 @@ class PsalmTaintAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 600.0,
-    ) -> ToolInvocation:  # type: ignore[name-defined]
+    ) -> ToolInvocation:
         """Run psalm --taint-analysis against *repo*.
 
         If Psalm is not found, returns a ToolInvocation with exitcode=3

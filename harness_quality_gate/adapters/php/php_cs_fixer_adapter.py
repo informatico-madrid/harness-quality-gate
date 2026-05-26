@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class PhpCsFixerAdapter(ToolAdapter):
     def version(
         self,
         repo: Path,
-        env: Mapping[str, str] = None,
+        env: Mapping[str, str] | None = None,
     ) -> str:
         """Return version string like ``'3.65.0'``."""
         cmd = self._cs_fixer_binary(repo)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
-from .models import CheckpointV2, Finding, LayerResult, Runtime
+from .models import CheckpointV2, ConcurrencyPlan, Detection, LayerResult
 
 # Layer mapping: language slug -> adapter module name
 _ROUTE_TABLE: Mapping[str, str] = {
@@ -49,9 +49,9 @@ def run_layer(
 
 
 def dispatch(
-    detection: "Detection",  # type: ignore[name-defined]
+    detection: Detection,
     layer: str,
-    concurrency_plan: "ConcurrencyPlan",  # type: ignore[name-defined]
+    concurrency_plan: ConcurrencyPlan,
     ctx: Mapping,
 ) -> LayerResult:
     """Run one quality-gate layer for the detected language.
@@ -59,15 +59,15 @@ def dispatch(
     Stub: delegates to ``run_layer`` with the detected language.
     """
     return run_layer(
-        language=detection.language,  # type: ignore[attr-defined]
+        language=detection.language,
         layer=layer,
-        repo=Path(detection.repo_path),  # type: ignore[attr-defined]
+        repo=Path(detection.repo_path),
         work_dir=Path(ctx.get("work_dir", "/tmp")),
         env=ctx,
     )
 
 
-def dispatch_full(detection: "Detection", ctx: Mapping) -> CheckpointV2:  # type: ignore[name-defined]
+def dispatch_full(detection: Detection, ctx: Mapping) -> CheckpointV2:
     """Run all layers and emit a Checkpoint v2 summary.
 
     Stub: returns a checkpoint with one passing L3A layer.

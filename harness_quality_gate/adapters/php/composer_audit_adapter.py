@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter
+from ..base import ToolAdapter, ToolInvocation
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class ComposerAuditAdapter(ToolAdapter):
 
     # -- version ----------------------------------------------------------
 
-    def version(self, repo: Path, env: Mapping[str, str] = None) -> str:
+    def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         """Return version string like ``'2.8.3'``."""
         cmd = self._composer_binary(repo)
         if cmd is None:
@@ -59,7 +59,8 @@ class ComposerAuditAdapter(ToolAdapter):
 
     def _composer_binary(self, repo: Path) -> list[str] | None:
         """Resolve the composer binary from PATH."""
-        return shutil.which("composer")
+        path = shutil.which("composer")
+        return [path] if path else None
 
     # -- invoke -----------------------------------------------------------
 
