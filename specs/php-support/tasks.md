@@ -202,7 +202,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-7, US-3_
   - _Design: phpstan_adapter component_
 
-- [ ] 1.12 [P] Implement `phpmd_adapter.py`
+- [x] 1.12 [P] Implement `phpmd_adapter.py`
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/phpmd_adapter.py` with `PhpMdAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/phpmd <src> json cleancode,codesize,controversial,design,naming,unusedcode` with 300s timeout.
