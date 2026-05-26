@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Mapping
@@ -104,8 +103,7 @@ class VisitorRunnerAdapter(ToolAdapter):
             logger.warning("No PHP files found in %s", repo)
             return ToolInvocation(stdout="[]", stderr="no PHP files found", exitcode=0)
 
-        php = shutil.which("php") or "php"
-
+# 
         for visitor_name in visitors:
             visitor_script = VISITORS_DIR / f"{visitor_name}.php"
             if not visitor_script.is_file():

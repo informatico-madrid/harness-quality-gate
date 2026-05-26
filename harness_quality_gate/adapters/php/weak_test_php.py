@@ -14,14 +14,13 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding, LayerResult
-from ..base import BaseAdapter, ToolAdapter, ToolInvocation
+from ..base import ToolAdapter, ToolInvocation
 from .visitor_runner_adapter import VisitorRunnerAdapter
 
 logger = logging.getLogger(__name__)
@@ -114,8 +113,7 @@ class PhpWeakTestAdapter(ToolAdapter):
             logger.warning("No PHP test files found in %s", repo)
             return ToolInvocation(stdout="[]", stderr="no PHP test files found", exitcode=0)
 
-        php = shutil.which("php") or "php"
-
+# 
         for visitor_name in _WEAK_TEST_VISITORS:
             visitor_script = visitors_dir / f"{visitor_name}.php"
             if not visitor_script.is_file():

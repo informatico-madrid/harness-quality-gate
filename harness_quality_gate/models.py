@@ -76,6 +76,8 @@ class IgnoreEntry:
 class AuditReport:
     findings: list[Finding]
     summary: str
+    exit_code: int = 0
+    ignored_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ class LayerResult:
     passed: bool
     findings: list[Finding]
     duration_sec: float
+    tool_specific: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

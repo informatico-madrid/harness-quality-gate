@@ -180,6 +180,13 @@ class PhpAdapter(BaseAdapter):
                 packages.extend(pkgs)
         return packages
 
+    def _antipattern_invoke_and_parse(
+        self, repo: Path, env: Mapping[str, str] | None = None
+    ) -> list[Finding]:
+        """Invoke antipattern tier-A tool and return parsed findings."""
+        invocation = self._antipattern.invoke(repo, args=["analyse"], env=env)
+        return self._antipattern.parse(invocation.stdout)
+
     @staticmethod
     def _build_phpstan_extra_config(
         injection_packages: list[str],
@@ -329,7 +336,6 @@ class PhpAdapter(BaseAdapter):
         # --- Detect frameworks & build PHPStan injection list (FR-22) -------
         frameworks = self.detect_frameworks(repo)
         injection_packages = self._injection_packages(frameworks)
-        extra_config = self._build_phpstan_extra_config(injection_packages)
         if injection_packages:
             logger.info(
                 "L3A PHPStan framework packs: %s",
@@ -374,7 +380,7 @@ class PhpAdapter(BaseAdapter):
 
         # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
         try:
-            tier_a_findings = self._antipattern.run_l3a(repo, env)
+            tier_a_findings = self._antipattern_invoke_and_parse(repo, env)
             all_findings.extend(tier_a_findings)
             logger.info("L3A tier-A visitors: %d findings", len(tier_a_findings))
         except RuntimeError as exc:
@@ -660,9 +666,7 @@ class PhpAdapter(BaseAdapter):
             invocation = self._antipattern.invoke(
                 repo, [], env=env, timeout=300.0
             )
-            findings = self._antipattern.parse(
-                invocation.stdout, invocation.stderr, invocation.exitcode
-            )
+            findings = self._antipattern.parse(invocation.stdout)
             all_findings.extend(findings)
             logger.info("L2 antipattern-tier-A: %d findings", len(findings))
         except RuntimeError as exc:

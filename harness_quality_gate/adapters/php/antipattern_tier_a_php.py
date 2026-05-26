@@ -212,8 +212,8 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
     def parse(
         self,
         stdout: str,
-        stderr: str,
-        exitcode: int,
+        stderr: str = "",
+        exitcode: int = 0,
     ) -> list[Finding]:
         """Parse merged antipattern JSON output into :class:`Finding` objects.
 
