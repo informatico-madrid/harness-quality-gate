@@ -718,7 +718,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-35, US-17_
   - _Design: TD-13, weak_test_php component_
 
-- [ ] 2.8 [P] Implement `antipattern_tier_a_php.py` orchestrator
+- [x] 2.8 [P] Implement `antipattern_tier_a_php.py` orchestrator
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/antipattern_tier_a_php.py` with `PhpAntipatternTierAAdapter`.
     2. Combines PHPMD findings (13 patterns covered) + visitor runner findings (4 PoC patterns).
