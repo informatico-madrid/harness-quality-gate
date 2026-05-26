@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harness-quality-gate"
+version = "2.0.0"
+requires-python = ">=3.10"
+description = "Polyglot quality gate for code repositories"
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "mutmut",
+    "ruff",
+    "mypy",
+    "responses",
+    "jsonschema",
+    "PyYAML",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration",
+    "e2e",
+    "needs-php",
+    "needs-composer",
+    "needs-network",
+]
+
+[tool.coverage.run]
+source = ["harness_quality_gate"]
+
+[tool.coverage.report]
+fail_under = 100
+
+[tool.setuptools.packages.find]
+include = ["harness_quality_gate*"]

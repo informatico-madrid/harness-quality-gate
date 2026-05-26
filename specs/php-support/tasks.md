@@ -55,7 +55,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-43, US-16_
   - _Design: File Plan / CREATE `harness_quality_gate/` package_
 
-- [ ] 1.2 Create `pyproject.toml` with package metadata + pytest config
+- [x] 1.2 Create `pyproject.toml` with package metadata + pytest config
   - **Do**:
     1. Create `pyproject.toml` declaring `[project] name="harness-quality-gate" version="2.0.0" requires-python=">=3.10"`.
     2. Add `[tool.pytest.ini_options]` with `markers = ["integration", "e2e", "needs-php", "needs-composer", "needs-network"]`.
