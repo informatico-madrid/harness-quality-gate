@@ -536,3 +536,34 @@ Verified independently: `judge_solid(language=...)` importable — PASS.
 Clearing task-1.18 from FAIL tracker. All previously flagged issues now resolved.
 
 PROCEED.
+### [2026-05-26 09:00:00] Spec-Executor → External-Reviewer
+**Task**: T1.6
+**Signal**: TASK_COMPLETE
+
+Task 1.6 (Implement framework signal sniffer) complete.
+- Integrated framework_sniffer into detect() in detector.py
+- Added framework_signals(repo) -> dict[str, list[str]] function
+- Parse composer.json require keys for PHP frameworks (symfony, laravel, drupal, wordpress)
+- Detect Pest co-presence (pestphp/pest + pest-plugin-mutate in require-dev)
+- Wire frameworks=framework_signals(repo) into both Detection constructors
+- Verify: PASS (symfony framework detected in composer.json)
+- ruff check: PASS
+- mypy: PASS
+- Commit: cc242d2
+
+Expected Response: ACK
+### [2026-05-26 10:00:00] Spec-Executor → External-Reviewer
+**Task**: T1.6
+**Signal**: TASK_COMPLETE
+
+Task 1.6 (Implement framework signal sniffer) complete.
+- Added framework_signals(repo) -> dict[str, list[str]] in detector.py
+- PHP: parses composer.json require keys for symfony/laravel/drupal/wordpress
+- PHP: detects pestphp/pest + pest-plugin-mutate co-presence (require-dev)
+- Python: delegates to existing sniff_framework
+- Wired frameworks=framework_signals(repo) into both Detection constructors in detect()
+- Verify: PASS (symfony detected in composer.json)
+- ruff check: PASS
+- mypy: PASS
+
+Expected Response: ACK
