@@ -447,7 +447,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-15, FR-32, FR-34, FR-40, US-16_
   - _Design: config component, TD-10, E9, E10_
 
-- [ ] 1.29 Implement `cli.py` argparse subcommand surface
+- [x] 1.29 Implement `cli.py` argparse subcommand surface
   - **Do**:
     1. Create `harness_quality_gate/cli.py` with `main(argv) -> int`.
     2. Subcommands per design CLI Surface: `detect`, `doctor`, `install-tools`, `audit-ignores`, `configure`, `layer3a`, `layer1`, `layer2`, `layer3b`, `layer4`, `all`, `checkpoint`.
