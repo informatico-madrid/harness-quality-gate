@@ -169,6 +169,11 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Design: TD-1, adapters/base_
 
 - [ ] 1.10 Implement `dispatcher.py` routing skeleton
+  <!-- reviewer-diagnosis
+    what: wrong function names exported (route/run_layer vs dispatch/dispatch_full)
+    why: FAIL_FAST violated
+    fix: Rename route->dispatch and run_layer->dispatch_full with correct signature per task-1.10 spec
+  -->
   - **Do**:
     1. Create `harness_quality_gate/dispatcher.py` with `dispatch(detection, layer, concurrency_plan, ctx) -> LayerResult` and `dispatch_full(detection, ctx) -> CheckpointV2`.
     2. Wire `Detection.primary == "python"` → `PythonAdapter`, `"php"` → `PhpAdapter`, `"hybrid"` → both via `ThreadPoolExecutor` (parallel) or sequential per `ConcurrencyPlan`.
