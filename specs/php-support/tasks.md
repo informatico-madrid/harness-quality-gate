@@ -758,7 +758,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-5, FR-41, US-3_
   - _Design: python adapter components_
 
-- [ ] 2.11 [P] Migrate `scripts/antipattern_checker.py` → `adapters/python/antipattern_tier_a.py` + `solid_metrics.py` + `principles.py` + `weak_test.py`
+- [x] 2.11 [P] Migrate `scripts/antipattern_checker.py` → `adapters/python/antipattern_tier_a.py` + `solid_metrics.py` + `principles.py` + `weak_test.py`
   - **Do**:
     1. Split `scripts/antipattern_checker.py` (1195 lines) AST visitors into `adapters/python/antipattern_tier_a.py`.
     2. Move `scripts/solid_metrics.py` → `adapters/python/solid_metrics.py`.
