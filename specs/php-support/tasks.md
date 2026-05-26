@@ -706,7 +706,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - **Done when**: No errors
   - **Commit**: `chore(php-support): pass quality checkpoint V8` (if fixes needed)
 
-- [ ] 2.7 [P] Implement 8 weak-test PHP visitors (A1, A2-PHP, A3, A4, A5, A6, A7, A8)
+- [x] 2.7 [P] Implement 8 weak-test PHP visitors (A1, A2-PHP, A3, A4, A5, A6, A7, A8)
   - **Do**:
     1. Create 8 PHP visitor files under `harness_quality_gate/adapters/php/visitors/weak_test_a{1..8}.php`.
     2. Each emits `Finding` JSON for its respective rule per FR-35 + TD-13 A2-PHP definition.
