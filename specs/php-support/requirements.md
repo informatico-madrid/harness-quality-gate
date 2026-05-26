@@ -506,7 +506,7 @@ prompt-drift between language forks.
 
 **As a** skill maintainer
 **I want** to rename `{skill-root}` → `${CLAUDE_SKILL_DIR}` everywhere with
-NO alias, restructure `scripts/*.py` into `runner.py` subcommands, replace
+NO alias, restructure `legacy scripts/ (migrated to harness_quality_gate/)*.py` into `runner.py` subcommands, replace
 the v1 flat YAML config with v2 dual-profile schema with NO migration
 shim, and drop legacy CLI re-exports
 **So that** the skill ships as a clean v2.0.0 first release without
@@ -517,7 +517,7 @@ inherited tech debt.
   **When** `grep -r "{skill-root}" .` is run across the skill directory,
   **Then** ZERO matches MUST be returned (no aliases, no shims).
 - **Given** the v2 codebase,
-  **When** the `scripts/` directory is listed,
+  **When** the `legacy scripts/ (migrated to harness_quality_gate/)` directory is listed,
   **Then** `runner.py`, `detector.py`, `dispatcher.py`, `doctor.py`,
   `configurator.py`, `install_php_tools.sh`, `audit_ignores.py`, and
   the `shared/`, `adapters/python/`, `adapters/php/` subdirs MUST exist AND
@@ -596,7 +596,7 @@ messages to be in Spanish
 
 | ID | Requirement | Priority | Maps to US |
 |----|-------------|----------|-----------|
-| FR-1 | The system MUST auto-detect project language via `scripts/detector.py` using Tier 1 (`.quality-gate-lang` override) → Tier 2 (manifest presence) → Tier 3 (source-file count tie-breaker), per research §2.3. | MUST | US-1 |
+| FR-1 | The system MUST auto-detect project language via `legacy scripts/ (migrated to harness_quality_gate/)detector.py` using Tier 1 (`.quality-gate-lang` override) → Tier 2 (manifest presence) → Tier 3 (source-file count tie-breaker), per research §2.3. | MUST | US-1 |
 | FR-2 | Detection MUST exclude `.git`, `node_modules`, `vendor`, `.venv`, `venv`, `__pycache__`, `dist`, `build`, `.tox`, `_quality-gate`, `_bmad-output` when counting source files. | MUST | US-1 |
 | FR-3 | Detection result MUST be cached to `_quality-gate/detection.json` AND auto-invalidated when any manifest file mtime exceeds the cache mtime. | MUST | US-2 |
 | FR-4 | A `runner.py detect <repo> [--force] [--json]` CLI subcommand MUST exist returning the detection result. | MUST | US-1, US-2 |

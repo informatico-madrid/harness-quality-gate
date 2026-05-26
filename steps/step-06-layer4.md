@@ -110,7 +110,7 @@ which trivy 2>/dev/null && echo "trivy=OK" || echo "trivy=MISSING"
 Execute the unified security scanner script:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root} \
+python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate/shared security scanner {project-root} \
   --severity-threshold {threshold_from_config} \
   --config ${CLAUDE_SKILL_DIR}/config/quality-gate.yaml \
   --output {project-root}/_bmad-output/quality-gate/security-scan-results.json \
@@ -445,7 +445,7 @@ Apply the fix to the source code. If the fix requires changes to multiple files,
 ### Step 5.3: Re-run Phase 1 (Deterministic Scan Only)
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root} \
+python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate/shared security scanner {project-root} \
   --severity-threshold {threshold_from_config} \
   --config ${CLAUDE_SKILL_DIR}/config/quality-gate.yaml \
   --output {project-root}/_bmad-output/quality-gate/security-scan-results-rerun.json \

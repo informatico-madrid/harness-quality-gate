@@ -245,24 +245,24 @@ This skill implements a **two-tier system** for code quality analysis:
 | `steps/step-06-layer4.md` | Layer L4: Security |
 | `steps/step-05-checkpoint.md` | Checkpoint generation |
 
-### Analysis Scripts
-| File | Purpose |
-|------|---------|
-| `scripts/solid_metrics.py` | SOLID Tier A (AST) |
-| `scripts/llm_solid_judge.py` | SOLID Tier B context (BMAD) |
-| `scripts/antipattern_checker.py` | Antipatterns Tier A (50 AST patterns) |
-| `scripts/antipattern_judge.py` | Antipatterns Tier B context (BMAD) |
-| `scripts/principles_checker.py` | DRY, KISS, YAGNI, LoD, CoI |
-| `scripts/weak_test_detector.py` | Weak test detection (A1-A8) |
-| `scripts/mutation_analyzer.py` | Mutation kill-map analysis |
-| `scripts/diversity_metric.py` | Test diversity scoring |
-| `scripts/security_scanner.py` | Unified security scanner (Layer L4) |
+### Analysis Modules
+| Module | Purpose |
+|--------|---------|
+| `harness_quality_gate.adapters.python.solid_metrics` | SOLID Tier A (AST) |
+| N/A | SOLID Tier B context (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.antipattern_tier_a` | 22 deterministic Tier A antipatterns (AST) |
+| N/A | Antipatterns Tier B (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.principles` | DRY, KISS, YAGNI, LoD, CoI |
+| `harness_quality_gate.adapters.python.weak_test` | Weak test detection (A1-A8) |
+| `harness_quality_gate.bmad.mutation_analyzer` | Mutation kill-map analysis |
+| N/A | Test diversity scoring — deferred |
+| `harness_quality_gate.adapters.shared` | Security scanners (gitleaks, checkov, trivy, semgrep) |
 
 ### Configuration
 | File | Purpose |
 |------|---------|
 | `config/quality-gate.yaml` | All threshold configurations |
-| `scripts/configurator.py` | Interactive configuration setup |
+| `harness_quality_gate/configurator.py` | Interactive configuration setup |
 
 ### References
 | File | Purpose |
@@ -337,7 +337,7 @@ kill_threshold = 0.65
 For new projects, run the interactive configurator:
 
 ```bash
-python3 scripts/configurator.py
+python3 -m harness_quality_gate.configurator
 ```
 
 This auto-detects project structure and asks for confirmation on each setting.
@@ -516,7 +516,7 @@ cp -r /path/to/quality-gate ~/.roo/skills/
 ```bash
 # Run the full quality gate
 cd /path/to/project
-python3 /path/to/quality-gate/scripts/security_scanner.py .
+python3 -m harness_quality_gate full .
 
 # Or follow the workflow manually
 # 1. Read step-01-init.md
@@ -527,7 +527,7 @@ python3 /path/to/quality-gate/scripts/security_scanner.py .
 
 ```bash
 # Auto-detect project structure and configure
-python3 scripts/configurator.py
+python3 -m harness_quality_gate.configurator
 ```
 
 ### Configure Thresholds
@@ -552,7 +552,7 @@ Contributions are welcome! If this skill proves useful to you, please consider g
 
 1. **Fork** the repository
 2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
-3. **Ensure all checks pass** (run L3A smoke test first: `python3 scripts/security_scanner.py .`)
+3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate full .`)
 4. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
 5. **Push to the branch** (`git push origin feature/amazing-feature`)
 6. **Open a Pull Request**

@@ -17,7 +17,6 @@ Output:
 import ast
 import json
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,7 @@ class PrinciplesVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.functions: list[dict[str, Any]] = []
         self.classes: list[dict[str, Any]] = []
-        self.imports: list[dict[str, str]] = []
+        self.imports: list[dict[str, str | int]] = []
         self.used_names: set[str] = set()
         self.current_function: dict[str, Any] | None = None
         self.current_class: dict[str, Any] | None = None
@@ -154,7 +153,7 @@ def check_dry(src_dir: Path) -> dict[str, Any]:
             content = py_file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        lines = [l.rstrip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+        lines = [line.rstrip() for line in content.split("\n") if line.strip() and not line.strip().startswith("#")]  # noqa: E741
         blocks = []
         for i in range(len(lines) - block_size + 1):
             block = "\n".join(lines[i:i + block_size])

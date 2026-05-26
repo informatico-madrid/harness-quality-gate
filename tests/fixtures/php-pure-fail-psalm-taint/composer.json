@@ -1,0 +1,9 @@
+{
+  "name": "test/php-pure-fail-psalm-taint",
+  "autoload": {
+    "psr-4": {"App\\": "src/"}
+  },
+  "require-dev": {
+    "vimeo/psalm": "^6.0"
+  }
+}

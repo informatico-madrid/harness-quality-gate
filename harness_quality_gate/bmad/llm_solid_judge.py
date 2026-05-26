@@ -190,6 +190,10 @@ def judge_solid(language: str, **kw: dict[str, Any]) -> dict[str, Any]:
     It returns a dict with principles and a review prompt
     templated for the given language.
 
+    The BMAD prompt reference is loaded separately at runtime by the
+    dispatcher (references/llm_solid_judge.md). This function provides
+    the structured code context that gets injected alongside the prompt.
+
     Args:
         language: Programming language, e.g. ``"python"`` or ``"php"``.
         **kw: Extra keyword arguments (reserved for future use).

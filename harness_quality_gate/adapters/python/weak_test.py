@@ -21,11 +21,8 @@ Strategy-pattern design:
 import ast
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-from harness_quality_gate.bmad.weak_test_engine import WeakTestEngine, DetectionResult
 
 
 class WeakTestVisitor(ast.NodeVisitor):
@@ -90,8 +87,8 @@ class WeakTestVisitor(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.visit_FunctionDef(node)
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # type: ignore[override]
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def _evaluate_weak_rules(self) -> list[dict[str, Any]]:
         """Evaluate all A1-A9 rules against current test."""
@@ -274,7 +271,7 @@ def run_weak_test_analysis(tests_dir: str, src_dir: str) -> dict[str, Any]:
     Returns a dict with weak_tests array and summary statistics.
     """
     tests_path = Path(tests_dir)
-    src_path = Path(src_dir)
+    _src_path = Path(src_dir)  # noqa: F841
 
     all_weak_tests: list[dict[str, Any]] = []
     estimated_tests = 0

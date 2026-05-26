@@ -1,0 +1,6 @@
+{
+  "name": "test/hybrid-py-php",
+  "require": {
+    "php": ">=8.2"
+  }
+}

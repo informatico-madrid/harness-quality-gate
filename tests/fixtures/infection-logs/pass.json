@@ -1,0 +1,14 @@
+{
+  "tool_name": "Infection",
+  "tool_version": "0.27.0",
+  "metrics": {
+    "total_mutants": 10,
+    "killed": 10,
+    "survived": 0,
+    "timed_out": 0,
+    "escaped": 0,
+    "untested": 0,
+    "msi": 100.0,
+    "covered_msi": 100.0
+  }
+}

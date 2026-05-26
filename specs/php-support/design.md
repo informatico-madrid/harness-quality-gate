@@ -20,7 +20,7 @@ composer audit, security-checker, shipmonk dead-code, shipmonk dep-analyser);
 the only `.php` sources shipped are `nikic/PHP-Parser` AST visitors for the
 ~12 Tier A antipatterns PHPMD does not cover.
 
-Key shifts vs the current Python-only skill: (1) the legacy `scripts/*.py`
+Key shifts vs the current Python-only skill: (1) the legacy `legacy scripts/ (migrated to harness_quality_gate/)*.py`
 flat layout, the `{skill-root}` placeholder, and the v1 flat YAML config are
 removed wholesale (no BC — FR-32/33/34) and replaced by an installable Python
 package `harness_quality_gate/` with `adapters/base.py` ABC + per-language
@@ -773,7 +773,7 @@ layer4:
 
 | ID | Decision | Alternatives Considered | Why Chosen | Maps to |
 |----|----------|-------------------------|------------|---------|
-| TD-1 | Adapter pattern with `BaseAdapter(ABC)` + composed `ToolAdapter(ABC)` per tool | A) `entry_points` plugin discovery; B) flat scripts/ dir; C) one mega-adapter per language | Right abstraction for 2-3 languages; ABC enforces method contract at import time; composition lets one PhpAdapter swap PHPUnit↔Pest without touching `run_l1` shape; cleanly extensible to TS/Go later | US-16, FR-5, FR-6 |
+| TD-1 | Adapter pattern with `BaseAdapter(ABC)` + composed `ToolAdapter(ABC)` per tool | A) `entry_points` plugin discovery; B) flat legacy scripts/ (migrated to harness_quality_gate/) dir; C) one mega-adapter per language | Right abstraction for 2-3 languages; ABC enforces method contract at import time; composition lets one PhpAdapter swap PHPUnit↔Pest without touching `run_l1` shape; cleanly extensible to TS/Go later | US-16, FR-5, FR-6 |
 | TD-2 | `ThreadPoolExecutor` with `--concurrency [parallel|sequential|auto]` flag; `auto` parallel locally, sequential in CI (env-detected) | A) `asyncio`; B) sequential only; C) `multiprocessing`; D) parallel always | `subprocess.run` releases GIL → threads scale linearly with cores; flag gives CI determinism; asyncio invasive across all adapters; multiprocessing pickling overhead unnecessary for IO-bound subprocess waits | NFR-1, NFR-6, design interview |
 | TD-3 | PHAR cache at `~/.cache/harness-quality-gate/bin/<tool>-<version>-<sha>/<tool>.phar` | A) `${CLAUDE_SKILL_DIR}/bin/` (skill dir); B) per-repo `<repo>/.harness-bin/`; C) `${COMPOSER_HOME}/vendor/bin/` | XDG-compliant, guaranteed writable, persists across invocations + projects, doesn't contaminate repo or skill dir; skill dir may be mounted read-only by plugin installer; per-repo would force re-download per project | FR-31, design interview |
 | TD-4 | Hybrid tool taxonomy (critical hard-fail / optional skip-with-warning) declared in `config/php-tool-taxonomy.json` | A) all critical; B) all optional; C) per-layer policy | Hard-fail on critical (Infection, PHPUnit, PHPStan, Psalm-taint, PHPMD, Deptrac, composer audit, PHP-CS-Fixer, nikic/PHP-Parser) preserves the gate contract; optional skip (secondary rule packs) allows progressive adoption + reduces install friction; per-layer over-complicates the taxonomy | FR-26, FR-27, design interview |
@@ -889,11 +889,11 @@ layer4:
 #### `harness_quality_gate/bmad/`
 
 - `bmad/__init__.py`
-- `bmad/llm_solid_judge.py` (re-homed from `scripts/llm_solid_judge.py`)
-- `bmad/antipattern_judge.py` (re-homed from `scripts/antipattern_judge.py`)
-- `bmad/diversity_metric.py` (re-homed from `scripts/diversity_metric.py`)
-- `bmad/weak_test_engine.py` (extracted from `scripts/weak_test_detector.py`)
-- `bmad/mutation_analyzer.py` (re-homed + generalized from `scripts/mutation_analyzer.py`)
+- `bmad/llm_solid_judge.py` (re-homed from `legacy scripts/ (migrated to harness_quality_gate/)llm_solid_judge.py`)
+- `bmad/antipattern_judge.py` (re-homed from `legacy scripts/ (migrated to harness_quality_gate/)antipattern_judge.py`)
+- `bmad/diversity_metric.py` (re-homed from `legacy scripts/ (migrated to harness_quality_gate/)diversity_metric.py`)
+- `bmad/weak_test_engine.py` (extracted from `legacy scripts/ (migrated to harness_quality_gate/)weak_test_detector.py`)
+- `bmad/mutation_analyzer.py` (re-homed + generalized from `legacy scripts/ (migrated to harness_quality_gate/)mutation_analyzer.py`)
 
 #### `config/`
 
@@ -980,23 +980,23 @@ layer4:
 
 ### DELETE
 
-- `scripts/antipattern_checker.py` (content migrated to `adapters/python/antipattern_tier_a.py` + `adapters/php/antipattern_tier_a_php.py`)
-- `scripts/antipattern_judge.py` (re-homed to `bmad/antipattern_judge.py`)
-- `scripts/configurator.py` (re-homed + rewritten in `harness_quality_gate/configurator.py`)
-- `scripts/diversity_metric.py` (re-homed to `bmad/diversity_metric.py`)
-- `scripts/llm_solid_judge.py` (re-homed to `bmad/llm_solid_judge.py`)
-- `scripts/mutation_analyzer.py` (re-homed + generalized to `bmad/mutation_analyzer.py`)
-- `scripts/principles_checker.py` (content migrated to `adapters/python/principles.py`)
-- `scripts/security_scanner.py` (decomposed into per-adapter classes under `adapters/python/{bandit,vulture,deptry}_adapter.py` + `adapters/shared/*`)
-- `scripts/solid_metrics.py` (re-homed to `adapters/python/solid_metrics.py`)
-- `scripts/weak_test_detector.py` (split: engine → `bmad/weak_test_engine.py`, Python visitor → `adapters/python/weak_test.py`)
-- `scripts/__pycache__/` (build artifact)
-- `scripts/` directory itself once empty
+- `legacy scripts/ (migrated to harness_quality_gate/)antipattern_checker.py` (content migrated to `adapters/python/antipattern_tier_a.py` + `adapters/php/antipattern_tier_a_php.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)antipattern_judge.py` (re-homed to `bmad/antipattern_judge.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)configurator.py` (re-homed + rewritten in `harness_quality_gate/configurator.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)diversity_metric.py` (re-homed to `bmad/diversity_metric.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)llm_solid_judge.py` (re-homed to `bmad/llm_solid_judge.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)mutation_analyzer.py` (re-homed + generalized to `bmad/mutation_analyzer.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)principles_checker.py` (content migrated to `adapters/python/principles.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)security_scanner.py` (decomposed into per-adapter classes under `adapters/python/{bandit,vulture,deptry}_adapter.py` + `adapters/shared/*`)
+- `legacy scripts/ (migrated to harness_quality_gate/)solid_metrics.py` (re-homed to `adapters/python/solid_metrics.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)weak_test_detector.py` (split: engine → `bmad/weak_test_engine.py`, Python visitor → `adapters/python/weak_test.py`)
+- `legacy scripts/ (migrated to harness_quality_gate/)__pycache__/` (build artifact)
+- `legacy scripts/ (migrated to harness_quality_gate/)` directory itself once empty
 - All occurrences of the literal `{skill-root}` token across the repo (audited via `grep -r "{skill-root}" .` per FR-32; replacement = `${CLAUDE_SKILL_DIR}` everywhere)
 
 ### RENAME
 
-(No file-level renames beyond the relocations covered by DELETE+CREATE pairs. The package layout shift `scripts/*.py → harness_quality_gate/.../*.py` is intentionally tracked as DELETE+CREATE because content is also restructured.)
+(No file-level renames beyond the relocations covered by DELETE+CREATE pairs. The package layout shift `legacy scripts/ (migrated to harness_quality_gate/)*.py → harness_quality_gate/.../*.py` is intentionally tracked as DELETE+CREATE because content is also restructured.)
 
 ---
 
@@ -1304,7 +1304,7 @@ Based on the audit of the current Python-only skill:
 19. **Configurator**: implement `configurator.py` with stub generators for `infection.json5` (FR-13), `phpunit.xml` (FR-12), `phpstan.neon`, `deptrac.yaml` (FR-20), conditional framework includes (FR-22).
 20. **Workflow + steps**: update `SKILL.md`, `workflow.md`, `steps/step-*.md`, `README.md` to invoke dispatcher; remove `{skill-root}` everywhere; update `references/llm_solid_judge.md` + `references/antipattern_judge.md` with `## Python examples` + `## PHP examples` sections.
 21. **Reference docs**: write `references/infection-allow-list-policy.md`, `references/php-antipattern-rules.md` (with TD-12 gap table), `references/php-weak-test-rules.md` (with TD-13 A2-PHP), `references/php-tooling-cheatsheet.md`, `references/security-tools-guide-php.md`, `references/semgrep-php-rules.yaml`.
-22. **Delete legacy**: remove `scripts/*.py` files + the empty `scripts/` dir (after content migration is verified by passing tests).
+22. **Delete legacy**: remove `legacy scripts/ (migrated to harness_quality_gate/)*.py` files + the empty `legacy scripts/ (migrated to harness_quality_gate/)` dir (after content migration is verified by passing tests).
 23. **CI matrix**: create `.github/workflows/ci.yml` covering NFR-7 (Ubuntu/macOS/Windows × Py 3.10/3.12 × PHP 8.2/8.3/8.4 × composer/no-composer × with-runtime/no-runtime). Add jobs for unit, integration, e2e, schema-validation, coverage-100%.
 24. **E2E gate**: write `tests/e2e/test_full_gate_python.py` + `tests/e2e/test_full_gate_php.py` against in-tree canonical fixture repos. Assert green checkpoint v2 from both.
 25. **Final acceptance**: run full pytest suite with `--cov-fail-under=100`; verify all checkpoint JSON examples validate against `verdict-schema.json`; run `grep -r "{skill-root}" .` and assert zero matches (FR-32).

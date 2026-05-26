@@ -1,0 +1,22 @@
+{
+  "phpunit": {
+    "version": "11.5.0",
+    "phar_url": "https://phar.phpunit.de/phpunit-11.5.0.phar",
+    "sha256": "placeholder-phase-2"
+  },
+  "phpstan": {
+    "version": "2.1.0",
+    "phar_url": "https://phpstan.org/release/latest-2.1.0.phar",
+    "sha256": "placeholder-phase-2"
+  },
+  "infection": {
+    "version": "0.29.0",
+    "phar_url": "https://github.com/infection/infection/releases/download/0.29.0/infection.phar",
+    "sha256": "placeholder-phase-2"
+  },
+  "deptrac": {
+    "version": "2.0.0",
+    "phar_url": "https://github.com/qossmic/deptrac/releases/download/2.0.0/deptrac.phar",
+    "sha256": "placeholder-phase-2"
+  }
+}

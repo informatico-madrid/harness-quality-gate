@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,9 @@ from .exit_codes import (
     PASS,
     UNSUPPORTED,
 )
+from .allow_list_auditor import AllowListAuditor
 from .installer import install as install_tools
+from .messages_es import t as _t
 
 logger = logging.getLogger("harness_quality_gate.cli")
 
@@ -141,17 +144,29 @@ def _cmd_install_tools(args: argparse.Namespace) -> int:
 
 
 def _cmd_audit_ignores(args: argparse.Namespace) -> int:
-    """Handle the ``audit-ignores`` sub-command (stub).
+    """Handle the ``audit-ignores`` sub-command.
 
-    Audits the ``.quality-gate-ignores`` file and prints outdated entries.
+    Scans *repo* for unjustified ``@infection-ignore-all`` annotations
+    and returns an exit code > 0 when findings exist.
     """
     repo = Path(args.repo).resolve()
-    data = {
-        "repository": str(repo),
-        "ignores": [],
-        "message": "stub: not yet implemented",
-    }
-    return _exit_with(PASS, data, json_mode=args.json, quiet=args.quiet)
+    diff_from = getattr(args, "diff_from", None)
+    auditor = AllowListAuditor()
+    try:
+        report = auditor.audit(repo, diff_from=diff_from)
+    except Exception as exc:  # noqa: BLE001
+        return _exit_with(
+            INTERNAL_ERROR,
+            {"error": str(exc), "exit_code": INTERNAL_ERROR},
+            json_mode=args.json,
+            quiet=args.quiet,
+        )
+    # Map exit code: 0 = PASS, >0 = FAIL (justified ignores missing)
+    if report.exit_code == 0:
+        code = PASS
+    else:
+        code = FAIL
+    return _exit_with(code, report, json_mode=args.json, quiet=args.quiet)
 
 
 def _cmd_configure(args: argparse.Namespace) -> int:
@@ -205,6 +220,44 @@ def _cmd_layer(args: argparse.Namespace) -> int:
             quiet=args.quiet,
         )
     code = PASS if layer_result.passed else FAIL
+    # Emit Checkpoint v2 for this single layer
+    layer_dicts = [{
+        "layer": layer_result.layer,
+        "language": layer_result.language,
+        "passed": layer_result.passed,
+        "findings": layer_result.findings,
+        "duration_sec": layer_result.duration_sec,
+    }]
+    detection_dict: dict[str, Any] = {
+        "repo_path": detection.repo_path,
+        "language": detection.language,
+        "framework": detection.framework,
+        "confidence": detection.confidence,
+        "languages_detected": detection.languages_detected,
+        "file_counts": detection.file_counts,
+    }
+    checkpoint_dict = build_checkpoint(
+        layer_results=layer_dicts,
+        runtime={
+            "python_version": detection.runtime.python_version,
+            "concurrency": detection.runtime.concurrency,
+            "ci": detection.runtime.ci,
+        },
+        detection=detection_dict,
+    )
+    # Write timestamped + latest copies to _quality-gate/ root
+    quality_dir = repo / "_quality-gate"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts_path = quality_dir / f"quality-gate-{ts}.json"
+    latest_path = quality_dir / "quality-gate-latest.json"
+    try:
+        write_checkpoint(ts_path, checkpoint_dict)
+        latest_path.write_text(
+            json.dumps(checkpoint_dict, indent=2, default=str),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to write checkpoint: %s", exc_info=True)
     return _exit_with(code, layer_result, json_mode=args.json, quiet=args.quiet)
 
 
@@ -227,8 +280,12 @@ def _cmd_all(args: argparse.Namespace) -> int:
             json_mode=args.json,
             quiet=args.quiet,
         )
+    work_dir = repo / "_quality-gate" / "work"
     try:
-        result = dispatch_full(detection, {"work_dir": str(repo / "_quality-gate" / "work")})
+        result = dispatch_full(
+            detection,
+            {"work_dir": str(work_dir)},
+        )
     except Exception as exc:  # noqa: BLE001
         return _exit_with(
             INTERNAL_ERROR,
@@ -236,9 +293,59 @@ def _cmd_all(args: argparse.Namespace) -> int:
             json_mode=args.json,
             quiet=args.quiet,
         )
-    # Determine overall pass: all layers passed
+    # Determine overall pass: any layer FAIL → exit 1
     all_passed = all(lr.passed for lr in result.layers)
     code = PASS if all_passed else FAIL
+    # Convert LayerResults to dicts for checkpoint builder
+    import dataclasses
+
+    layer_dicts: list[dict[str, Any]] = []
+    for lr in result.layers:
+        ld: dict[str, Any] = {
+            "layer": lr.layer,
+            "language": lr.language,
+            "passed": lr.passed,
+            "findings": lr.findings,
+            "duration_sec": lr.duration_sec,
+        }
+        layer_dicts.append(ld)
+    mutation_dict = dataclasses.asdict(result.mutation) if result.mutation else None
+    detection_dict: dict[str, Any] = {
+        "repo_path": detection.repo_path,
+        "language": detection.language,
+        "framework": detection.framework,
+        "confidence": detection.confidence,
+        "languages_detected": detection.languages_detected,
+        "file_counts": detection.file_counts,
+        "mutation": mutation_dict,
+    }
+    # Build and write Checkpoint v2
+    checkpoint_dict = build_checkpoint(
+        layer_results=layer_dicts,
+        runtime={
+            "python_version": detection.runtime.python_version,
+            "concurrency": detection.runtime.concurrency,
+            "ci": detection.runtime.ci,
+        },
+        detection=detection_dict,
+    )
+    # Write checkpoint JSON file
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_path = work_dir / f"quality-gate-{ts}.json"
+    try:
+        write_checkpoint(output_path, checkpoint_dict)
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to write checkpoint: %s", exc_info=True)
+    # Also write latest symlink copy
+    latest_path = repo / "_quality-gate" / "quality-gate-latest.json"
+    try:
+        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        latest_path.write_text(
+            json.dumps(checkpoint_dict, indent=2, default=str),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to write latest checkpoint: %s", exc_info=True)
     return _exit_with(code, result, json_mode=args.json, quiet=args.quiet)
 
 
@@ -317,9 +424,9 @@ def _add_universal_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
-        default=1,
-        help="Max concurrent workers (default: 1)",
+        type=str,
+        default="1",
+        help="Concurrency mode: parallel, sequential, auto, or int",
     )
     parser.add_argument(
         "--only",
@@ -361,9 +468,9 @@ def _add_subparser_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
-        default=1,
-        help="Max concurrent workers (default: 1)",
+        type=str,
+        default="1",
+        help="Concurrency mode: parallel, sequential, auto, or int",
     )
     parser.add_argument(
         "--only",
@@ -413,6 +520,12 @@ def build_parser(argv: list[str] | None = None) -> argparse.ArgumentParser:
     # -- audit-ignores --
     audit_p = sub.add_parser("audit-ignores", help="Audit quality-gate ignore entries")
     audit_p.add_argument("repo", nargs="?", default=".", help="Path to the repository root")
+    audit_p.add_argument(
+        "--diff-from",
+        type=str,
+        default=None,
+        help="Git ref to diff against for new ignores",
+    )
     _add_subparser_flags(audit_p)
 
     # -- configure --
@@ -457,18 +570,33 @@ def build_parser(argv: list[str] | None = None) -> argparse.ArgumentParser:
 # Exception -> exit-code mapping (NFR-15)
 # ------------------------------------------------------------------
 
-_EXIT_MAP: dict[type[Exception], int] = {
-    ConfigInvalid: CONFIG_INVALID,
-    FileNotFoundError: UNSUPPORTED,
+# E-keys: maps exception class name → (exit_code, message_key)
+# Covers all 17 actionable failure modes from E1–E19 (E15/E16: silent/normal flow)
+_E_MAP: dict[str, tuple[int, str]] = {
+    "ConfigInvalid": (CONFIG_INVALID, "E10"),    # E10 → exit 4
+    "ChecksumMismatch": (INTERNAL_ERROR, "E14"),  # E14 → exit 5
 }
 
 
-def _map_exit(exc: Exception) -> int:
-    """Map an exception class to the appropriate NFR-15 exit code."""
-    for exc_type, code in _EXIT_MAP.items():
+def _map_exit(exc: Exception) -> tuple[int, str]:
+    """Map an exception class to (exit_code, Spanish message) per NFR-15 + E1–E19."""
+    exc_name = exc.__class__.__name__
+
+    # Check E-key mapping first
+    if exc_name in _E_MAP:
+        code, key = _E_MAP[exc_name]
+        return code, _t(key, **{k: str(v) for k, v in vars(exc).items()})
+
+    # Class mapping (legacy, for backward compat)
+    for exc_type, code in {
+        ConfigInvalid: CONFIG_INVALID,
+        FileNotFoundError: UNSUPPORTED,
+    }.items():
         if isinstance(exc, exc_type):
-            return code
-    return INTERNAL_ERROR
+            return code, str(exc)
+
+    # Default: E19 (internal exception / uncaught)
+    return INTERNAL_ERROR, _t("E19", exc=exc_name)
 
 
 # ------------------------------------------------------------------
@@ -531,10 +659,10 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as exc:  # noqa: BLE001
-        code = _map_exit(exc)
+        code, message = _map_exit(exc)
         return _exit_with(
             code,
-            {"error": str(exc), "exit_code": code},
+            {"error": message, "exit_code": code},
             json_mode=args.json,
             quiet=args.quiet,
         )

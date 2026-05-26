@@ -1,0 +1,12 @@
+paths:
+  - ./src
+
+layers:
+  - name: Domain
+    path: "./src/Domain"
+  - name: Infrastructure
+    path: "./src/Infrastructure"
+
+rules:
+  - from: Infrastructure
+    to: Domain

@@ -238,7 +238,7 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 ### L4 Execution
 
-Run via unified scanner: `python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root}`
+Run via unified scanner: `python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate/adapters.shared (security) scanner {project-root}`
 
 Or follow step file: `./steps/step-06-layer4.md`
 
@@ -280,15 +280,15 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 | `steps/step-06-layer4.md` | Layer 4: Security & Defense |
 | `steps/step-05-checkpoint.md` | Final checkpoint generation |
 | `config/quality-gate.yaml` | All configurable thresholds (including L4) |
-| `scripts/solid_metrics.py` | Fast AST-based SOLID check (Tier A) |
-| `scripts/llm_solid_judge.py` | SOLID context generator for BMAD agents (Tier B) |
-| `scripts/weak_test_detector.py` | Weak test detection (A1-A8 rules) |
-| `scripts/antipattern_checker.py` | 50 antipatterns: 25 Tier A (AST) + 25 Tier B (BMAD) |
-| `scripts/antipattern_judge.py` | Tier B antipattern context generator for BMAD agents |
-| `scripts/principles_checker.py` | DRY, KISS, YAGNI, LoD, CoI |
-| `scripts/mutation_analyzer.py` | Mutation kill-map analysis |
-| `scripts/diversity_metric.py` | Test diversity scoring |
-| `scripts/security_scanner.py` | Unified security scanner (Layer 4) |
+| `adapters/python/solid_metrics` | Fast AST-based SOLID check (Tier A) |
+| `BMAD Tier B (deferred)` | SOLID context generator for BMAD agents (Tier B) |
+| `adapters/python/weak_test` | Weak test detection (A1-A8 rules) |
+| `adapters/python/antipattern_tier_a` | 50 antipatterns: 25 Tier A (AST) + 25 Tier B (BMAD) |
+| `BMAD Tier B (deferred)` | Tier B antipattern context generator for BMAD agents |
+| `adapters/python/principles` | DRY, KISS, YAGNI, LoD, CoI |
+| `bmad/mutation_analyzer` | Mutation kill-map analysis |
+| `Deferred` | Test diversity scoring |
+| `harness_quality_gate/adapters.shared (security) scanner` | Unified security scanner (Layer 4) |
 | `references/security-tools-guide.md` | Tool installation, config & remediation guide |
 | `references/semgrep-js-rules.yaml` | Custom semgrep rules for JavaScript/TypeScript |
 | `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant (opt-in, enable via configurator) |

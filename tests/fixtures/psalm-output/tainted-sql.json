@@ -1,0 +1,10 @@
+[
+  {
+    "severity": "error",
+    "type": "TaintedSql",
+    "message": "Possible SQL injection",
+    "file": "src/Query.php",
+    "line": 15,
+    "from": {"file": "src/Controller.php", "line": 5}
+  }
+]

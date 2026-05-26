@@ -88,7 +88,7 @@ def dispatch_full(detection: Detection, ctx: Mapping) -> CheckpointV2:
     Stub: returns a checkpoint with one passing L3A layer.
     """
     return CheckpointV2(
-        version="2.0.0",
+        version="v2",
         timestamp="",
         repository=detection.repo_path,  # type: ignore[attr-defined]
         language=detection.language,  # type: ignore[attr-defined]

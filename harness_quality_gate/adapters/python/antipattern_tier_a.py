@@ -1,4 +1,5 @@
 """
+
 Tier A Antipattern Detection — AST-based deterministic detection of 22 antipatterns.
 
 Tier A patterns (AP01-AP25, AP30-AP31, AP39):
@@ -35,6 +36,7 @@ Based on:
   - Brian Foote and William Opdyke (1992)
 """
 
+import sys
 import ast
 import subprocess
 from collections import defaultdict
@@ -777,7 +779,7 @@ def detect_ap23(violations: list[dict[str, Any]], src_dir: Path) -> None:
             content = py_file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+        lines = [line.strip() for line in content.split("\n") if line.strip() and not line.strip().startswith("#")]
         blocks = []
         for i in range(len(lines) - block_size + 1):
             block = "\n".join(lines[i:i + block_size])
@@ -927,7 +929,7 @@ def run_tier_a(src_dir: str) -> dict[str, Any]:
     """
     src_path = Path(src_dir)
 
-    all_violations: list[dict[str, Any]] = []
+    all_violations: list[dict[str, Any]] = []  # noqa: F841
 
     # Per-file detections (run on each file individually)
     for py_file in src_path.rglob("*.py"):
@@ -996,11 +998,11 @@ def run_tier_a(src_dir: str) -> dict[str, Any]:
     detect_ap39(all_violations, global_visitor)
 
     # Organize by AP ID
-    by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)  # noqa: F841
     for v in all_violations:
         by_id[v["id"]].append(v)
 
-    result: dict[str, Any] = {}
+    result: dict[str, Any] = {}  # noqa: F841
     for ap_id in sorted(by_id.keys()):
         violations = by_id[ap_id]
         result[ap_id] = {
@@ -1010,101 +1012,6 @@ def run_tier_a(src_dir: str) -> dict[str, Any]:
         }
 
     # Add APs with no violations
-    for ap_id in THRESHOLDS:
-        if ap_id not in result:
-            result[ap_id] = {"status": "PASS", "violations": [], "count": 0}
-
-    return result
-
-
-def run_tier_a(src_dir: str) -> dict[str, Any]:
-    """Run all Tier A antipattern detections against the given source directory.
-
-    This is the public API — collects AST data from all source files and
-    runs all 22 deterministic Tier A detections.
-
-    Returns:
-        Dict with AP01-AP39 keys, each containing status, violations, count.
-    """
-    src_path = Path(src_dir)
-    all_violations: list[dict[str, Any]] = []
-
-    # Per-file detections (AP04, AP05, AP06, AP09, AP17)
-    for py_file in src_path.rglob("*.py"):
-        if "__pycache__" in str(py_file):
-            continue
-        try:
-            content = py_file.read_text(encoding="utf-8")
-            tree = ast.parse(content, str(py_file))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-
-        source_lines = content.split("\n")
-        visitor = AntipatternVisitor(source_lines)
-        visitor.visit(tree)
-
-        detect_ap04(all_violations, visitor)
-        detect_ap05(all_violations, src_path)
-        detect_ap06(all_violations, visitor)
-        detect_ap09(all_violations, visitor)
-        detect_ap17(all_violations, visitor)
-
-    # Global visitor data
-    global_visitor = AntipatternVisitor()
-    for py_file in src_path.rglob("*.py"):
-        if "__pycache__" in str(py_file):
-            continue
-        try:
-            content = py_file.read_text(encoding="utf-8")
-            tree = ast.parse(content, str(py_file))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        source_lines = content.split("\n")
-        gv = AntipatternVisitor(source_lines)
-        gv.visit(tree)
-        global_visitor.classes.extend(gv.classes)
-        global_visitor.functions.extend(gv.functions)
-        global_visitor.imports.extend(gv.imports)
-        global_visitor.global_vars.extend(gv.global_vars)
-
-    detect_ap01(all_violations, global_visitor)
-    detect_ap02(all_violations, global_visitor)
-    detect_ap03(all_violations, global_visitor)
-    detect_ap07(all_violations, global_visitor)
-    detect_ap08(all_violations, global_visitor)
-    detect_ap10(all_violations, global_visitor)
-    detect_ap11(all_violations, global_visitor)
-    detect_ap12(all_violations, global_visitor)
-    detect_ap13(all_violations, global_visitor)
-    detect_ap20(all_violations, global_visitor)
-    detect_ap24(all_violations, global_visitor)
-
-    detect_ap18(all_violations, src_path)
-    detect_ap21(all_violations, src_path)
-    detect_ap22(all_violations, src_path)
-    detect_ap23(all_violations, src_path)
-    detect_ap25(all_violations, src_path)
-    detect_ap26(all_violations, src_path)
-
-    graph_builder = ImportGraphBuilder(src_path)
-    graph_builder.build()
-    detect_ap30(all_violations, graph_builder)
-    detect_ap31(all_violations, graph_builder)
-    detect_ap39(all_violations, global_visitor)
-
-    by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for v in all_violations:
-        by_id[v["id"]].append(v)
-
-    result: dict[str, Any] = {}
-    for ap_id in sorted(by_id.keys()):
-        violations = by_id[ap_id]
-        result[ap_id] = {
-            "status": "FAIL" if violations else "PASS",
-            "violations": violations,
-            "count": len(violations),
-        }
-
     for ap_id in THRESHOLDS:
         if ap_id not in result:
             result[ap_id] = {"status": "PASS", "violations": [], "count": 0}

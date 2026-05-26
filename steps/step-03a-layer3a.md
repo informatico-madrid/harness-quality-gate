@@ -86,7 +86,7 @@ cd {project-root} && python3 -m pyright src/ 2>&1
 ## 3A.4 Check Headers (Constitution)
 
 ```bash
-cd {project-root} && python3 scripts/check_headers.py --check 2>&1
+cd {project-root} && python3 scripts/check_headers.py (legacy — use ruff) --check 2>&1
 ```
 
 **Update state:**
@@ -107,7 +107,7 @@ cd {project-root} && python3 scripts/check_headers.py --check 2>&1
 Run SOLID metrics script:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/solid_metrics.py {project-root}/src/ 2>&1
+python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate.adapters.python.solid_metrics {project-root}/src/ 2>&1
 ```
 
 ### SOLID Rules (Tier A)
@@ -142,7 +142,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/solid_metrics.py {project-root}/src/ 2>&1
 Run principles checker:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/principles_checker.py {project-root}/src/ 2>&1
+python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate.adapters.python.principles {project-root}/src/ 2>&1
 ```
 
 ### Principles Rules
@@ -177,7 +177,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/principles_checker.py {project-root}/src/ 2>
 Run AST-based antipattern checker:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/antipattern_checker.py {project-root}/src/ {project-root}/tests/ --tier-a-only 2>&1
+python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate.adapters.python.antipattern_tier_a {project-root}/src/ {project-root}/tests/ --tier-a-only 2>&1
 ```
 
 ### Tier A Antipatterns (25 patterns)

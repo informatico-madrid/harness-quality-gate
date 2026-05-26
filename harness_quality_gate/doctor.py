@@ -7,7 +7,6 @@ FR-31 (tool path resolution order), US-11 (Spanish output).
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -189,7 +188,7 @@ def _detect_php_extensions() -> list[str]:
 
 def run(
     repo: str | Path,
-    json_mode: bool = False,
+    json_mode: bool = False,  # noqa: FBT001, unused - kept for API compatibility
 ) -> DoctorReport:
     """Run runtime + tool diagnosis.
 
@@ -249,13 +248,10 @@ def run(
         warnings=all_warnings,
     )
 
-    # -- Output --
-    if json_mode:
-        print(json.dumps(asdict(report), indent=2))
-        return report
-
-    # Human-readable
-    _print_human(report, critical_missing)
+    # -- Output: delegate JSON printing to _exit_with in cli.py --
+    if not json_mode:
+        # Human-readable
+        _print_human(report, critical_missing)
     return report
 
 

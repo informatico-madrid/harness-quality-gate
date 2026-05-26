@@ -14,7 +14,46 @@ MSG: dict[str, str] = {
     "LAYER_COMPLETE": "Capa {layer} completada: {result}",
     "LAYER_FAILED": "La capa {layer} no pasó: {count} hallazgos",
     "DOCTOR_WARN_XDEBUG_PCOV": "¡ADVERTENCIA! PCOV y Xdebug están ambos habilitados. Solo uno debe estar activo.",
-    # --- Failure modes E1–E19 ---
+    # --- Failure modes E1–E19 (design.md §Error Handling) ---
+    # E1: No language detected (exit 2 UNSUPPORTED)
+    "E1": "No se detectó Python ni PHP — añada `.quality-gate-lang`",
+    # E2: PHP runtime missing (exit 3 INFRA_INCOMPLETE)
+    "E2": "PHP 8.2+ requerido — instale via gestor de paquetes",
+    # E3: Composer missing AND PHAR download fails (exit 5 INTERNAL_ERROR)
+    "E3": "Composer no encontrado y descarga de PHAR falló: {tool}",
+    # E4: Critical tool missing (exit 3 INFRA_INCOMPLETE)
+    "E4": "Herramienta crítica faltante: {tool} — ejecute `install-tools`",
+    # E5: Optional tool missing (continue + WARNING)
+    "E5": "Paquete opcional ausente: {tool} (continuando)",
+    # E6: Infection MSI < 100 (exit 1 FAIL)
+    "E6": "MSI = {msi} (< 100) — {escaped} mutantes escapados",
+    # E7: Infection covered MSI < 100 (exit 1 FAIL)
+    "E7": "Covered MSI = {covered_msi} (< 100)",
+    # E8: Allow-list violation (exit 1 FAIL)
+    "E8": "Ignore sin justificación añadida en {file}:{line}",
+    # E9: Config v1 schema (exit 4 CONFIG_INVALID)
+    "E9": "Esquema v1 ya no soportado. v2.0.0 es la primera versión pública",
+    # E10: Threshold lowered without --allow-ramp (exit 4 CONFIG_INVALID)
+    "E10": "Umbral de MSI no puede bajar de 100 — revise política",
+    # E11: PCOV unavailable, Xdebug present (continue + WARNING)
+    "E11": "PCOV ausente — usando Xdebug (2.8× más lento)",
+    # E12: PCOV + Xdebug both enabled (continue + WARNING)
+    "E12": "PCOV y Xdebug ambos activos — desactive Xdebug para Infection",
+    # E13: Pest without pest-plugin-mutate (continue + mutation_skipped)
+    "E13": "Pest sin plugin de mutación — saltando Infection",
+    # E14: PHAR SHA-256 mismatch (exit 5 INTERNAL_ERROR)
+    "E14": "PHAR corrupto: {tool} — checksum no coincide",
+    # E15: Detection cache stale — silent re-compute, no message emitted
+    "E15": "",
+    # E16: Hybrid run with --only — normal flow, no message emitted
+    "E16": "",
+    # E17: Subprocess timeout (exit 1 FAIL)
+    "E17": "Herramienta {tool} excedió timeout {seconds}s",
+    # E18: Schema validation fails on checkpoint write (exit 5 INTERNAL_ERROR)
+    "E18": "Checkpoint v2 no valida — error interno",
+    # E19: Internal exception / uncaught (exit 5 INTERNAL_ERROR)
+    "E19": "Error interno: {exc}",
+    # --- Legacy keys (used by existing code, preserved for backward compat) ---
     "err.lang.unsupported": "No se detectó un lenguaje soportado en {repo}",
     "err.tool.missing": "Herramienta requerida no encontrada: {tool}",
     "err.tool.timeout": "Tiempo de espera agotado para {tool} (>{timeout}s)",

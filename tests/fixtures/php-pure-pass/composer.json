@@ -1,0 +1,25 @@
+{
+    "name": "quality-gate/php-pure-pass",
+    "description": "Infection HARD-gate positive fixture: kills all mutants",
+    "type": "project",
+    "require": {
+        "php": ">=8.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "infection/infection": "^0.29"
+    },
+    "autoload": {
+        "psr-4": {
+            "Calculator\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CalculatorTest\\": "tests/"
+        }
+    },
+    "config": {
+        "bin-dir": "bin"
+    }
+}

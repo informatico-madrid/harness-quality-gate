@@ -12,7 +12,7 @@ updated: 2026-05-25 (round 2)
 The `harness-quality-gate` skill must work **from a single installation** against both Python and PHP projects, auto-detecting at invocation time. This is **highly feasible** with three structural changes and one hard policy decision:
 
 1. **Single Python orchestrator + per-language adapters** (no separate skills). One `runner.py` calls a deterministic detector, then dispatches to either `adapters/python/*` or `adapters/php/*`. All PHP tools (PHPStan, Psalm, PHPUnit, Infection, Deptrac, composer audit) expose JSON CLIs — Python drives them via subprocess; the only `.php` files in the skill are `nikic/PHP-Parser` visitors for the 8–10 antipatterns PHPMD doesn't cover.
-2. **Detection seam lives in `configurator.py` + a new `scripts/detector.py`**, persisted to `_quality-gate/detection.json` and the v2 `quality-gate.yaml`. Heuristics: composer.json/composer.lock/phpunit.xml → PHP; pyproject.toml/setup.py/requirements*.txt → Python; tie-break by source-file count; `.quality-gate-lang` is the user override.
+2. **Detection seam lives in `configurator.py` + a new `legacy scripts/ (migrated to harness_quality_gate/)detector.py`**, persisted to `_quality-gate/detection.json` and the v2 `quality-gate.yaml`. Heuristics: composer.json/composer.lock/phpunit.xml → PHP; pyproject.toml/setup.py/requirements*.txt → Python; tie-break by source-file count; `.quality-gate-lang` is the user override.
 3. **Config schema v2** with `gates:` (shared thresholds), `language_profiles.{python,php}:` (tool-specific), `shared_tools:` (gitleaks/checkov/trivy/semgrep). Backward-compat via dual-read: legacy flat v1 configs auto-wrap into `language_profiles.python`.
 4. **Infection 100/100 hard gate** (the user's non-negotiable). Achievable but bounded — empirical prior art shows 100/100 only at <~3–5k LoC of mutable code. Ship 100/100 as default, paired with a **Justified-Ignore Allow-List policy**: every `@infection-ignore-all`, `mutators.*.ignore`, and `source.excludes` entry must carry `reason:`/`proven-by:`/`audited:` metadata; the reviewer-agent diff-gates un-justified additions.
 
@@ -29,23 +29,23 @@ Three critical corrections required *regardless of PHP*:
 
 ## 1. Source-Code Coupling Audit (Per-File Matrix)
 
-Read of every `scripts/*.py`, `steps/*.md`, `references/*`, `config/quality-gate.yaml`, `SKILL.md`, `workflow.md`. Classification: **LANG_AGNOSTIC** | **LIGHT_COUPLING** (parameterizable dispatcher) | **MODERATE_COUPLING** (split + dispatcher) | **HEAVY_COUPLING** (full per-language fork).
+Read of every `legacy scripts/ (migrated to harness_quality_gate/)*.py`, `steps/*.md`, `references/*`, `config/quality-gate.yaml`, `SKILL.md`, `workflow.md`. Classification: **LANG_AGNOSTIC** | **LIGHT_COUPLING** (parameterizable dispatcher) | **MODERATE_COUPLING** (split + dispatcher) | **HEAVY_COUPLING** (full per-language fork).
 
 | File | Lines | Coupling | Python-only constructs | Required change |
 |------|------:|----------|------------------------|-----------------|
 | `SKILL.md` | 416 | LANG_AGNOSTIC | none | Update to mention both langs; replace `{skill-root}` → `${CLAUDE_SKILL_DIR}` |
 | `workflow.md` | 297 | LANG_AGNOSTIC | none | None — sequence is generic; commands come from dispatcher |
 | `config/quality-gate.yaml` | 258 | LIGHT_COUPLING | tool names + `paths.src=src/` | Migrate to v2 dual-profile schema (§3) |
-| `scripts/configurator.py` | 569 | LIGHT_COUPLING | L20-28, L74-82 hardcode Python signals; L98-100 only infers pyproject.toml | Add `detect_language()` (40 lines), `--language` flag, branch `write_config()` |
-| `scripts/antipattern_checker.py` | 1195 | **HEAVY** | `import ast`; L215-453 AST visitors for all 25 Tier A patterns | Fork: `adapters/python/antipattern_tier_a.py` + `adapters/php/antipattern_tier_a.py` (nikic/PHP-Parser) |
-| `scripts/antipattern_judge.py` | 380 | HEAVY (data) | L21,186,193-194 AST parsing for Tier B context | Fork; BMAD prompt parameterized by `language` |
-| `scripts/solid_metrics.py` | 341 | **HEAVY** | `import ast`; ClassMetricsCollector visitor | Fork; PHP twin with PHP-Parser + PHPMD `codesize` |
-| `scripts/principles_checker.py` | 366 | **HEAVY** | L18,26-145 AST for DRY/KISS/YAGNI/LoD/CoI | Fork; PHP twin with PHPCPD + PHPMD + custom visitor |
-| `scripts/weak_test_detector.py` | 313 | **HEAVY** | L22,29-144 AST + `test_*.py` convention + pytest.raises | Refactor to strategy pattern: shared rule engine + per-lang AST visitor adapter |
-| `scripts/diversity_metric.py` | 152 | LIGHT_COUPLING | L15,22,54 AST + `test_*.py` glob | Parameterize file glob; algorithm (Levenshtein) is generic |
-| `scripts/llm_solid_judge.py` | 179 | LIGHT_COUPLING (prompt) | L22,36-37 AST class extraction | Strategy pattern; BMAD prompt template per lang |
-| `scripts/mutation_analyzer.py` | 372 | MODERATE | L31-44 shells out to `mutmut`; pyproject.toml parser | Refactor to parser strategy: mutmut JSON | Infection JSON; same kill-map output schema |
-| `scripts/security_scanner.py` | 1317 | MODERATE | L30-42 dataclass; L111-150 bandit CWE map; L150-191 tool runners (bandit/safety/deptry/vulture) | Refactor as orchestrator → `adapters/python/security.py` + `adapters/php/security.py` |
+| `legacy scripts/ (migrated to harness_quality_gate/)configurator.py` | 569 | LIGHT_COUPLING | L20-28, L74-82 hardcode Python signals; L98-100 only infers pyproject.toml | Add `detect_language()` (40 lines), `--language` flag, branch `write_config()` |
+| `legacy scripts/ (migrated to harness_quality_gate/)antipattern_checker.py` | 1195 | **HEAVY** | `import ast`; L215-453 AST visitors for all 25 Tier A patterns | Fork: `adapters/python/antipattern_tier_a.py` + `adapters/php/antipattern_tier_a.py` (nikic/PHP-Parser) |
+| `legacy scripts/ (migrated to harness_quality_gate/)antipattern_judge.py` | 380 | HEAVY (data) | L21,186,193-194 AST parsing for Tier B context | Fork; BMAD prompt parameterized by `language` |
+| `legacy scripts/ (migrated to harness_quality_gate/)solid_metrics.py` | 341 | **HEAVY** | `import ast`; ClassMetricsCollector visitor | Fork; PHP twin with PHP-Parser + PHPMD `codesize` |
+| `legacy scripts/ (migrated to harness_quality_gate/)principles_checker.py` | 366 | **HEAVY** | L18,26-145 AST for DRY/KISS/YAGNI/LoD/CoI | Fork; PHP twin with PHPCPD + PHPMD + custom visitor |
+| `legacy scripts/ (migrated to harness_quality_gate/)weak_test_detector.py` | 313 | **HEAVY** | L22,29-144 AST + `test_*.py` convention + pytest.raises | Refactor to strategy pattern: shared rule engine + per-lang AST visitor adapter |
+| `legacy scripts/ (migrated to harness_quality_gate/)diversity_metric.py` | 152 | LIGHT_COUPLING | L15,22,54 AST + `test_*.py` glob | Parameterize file glob; algorithm (Levenshtein) is generic |
+| `legacy scripts/ (migrated to harness_quality_gate/)llm_solid_judge.py` | 179 | LIGHT_COUPLING (prompt) | L22,36-37 AST class extraction | Strategy pattern; BMAD prompt template per lang |
+| `legacy scripts/ (migrated to harness_quality_gate/)mutation_analyzer.py` | 372 | MODERATE | L31-44 shells out to `mutmut`; pyproject.toml parser | Refactor to parser strategy: mutmut JSON | Infection JSON; same kill-map output schema |
+| `legacy scripts/ (migrated to harness_quality_gate/)security_scanner.py` | 1317 | MODERATE | L30-42 dataclass; L111-150 bandit CWE map; L150-191 tool runners (bandit/safety/deptry/vulture) | Refactor as orchestrator → `adapters/python/security.py` + `adapters/php/security.py` |
 | `references/semgrep-python-rules.yaml` | 220 | MODERATE | Python-only rules | Keep; add `semgrep-php-rules.yaml` (~180 lines) |
 | `references/semgrep-js-rules.yaml` | 286 | LANG_AGNOSTIC | JS/TS rules | Keep as-is |
 | `references/security-tools-guide.md` | 11KB | LIGHT_COUPLING | Documents bandit/safety/vulture/deptry | Split into `…-python.md` + `…-php.md` |
@@ -96,7 +96,7 @@ Read of every `scripts/*.py`, `steps/*.md`, `references/*`, `config/quality-gate
 INSTALL skill → CLAUDE_SKILL_DIR populated
        ▼
 FIRST INVOCATION in target repo
-  python3 ${CLAUDE_SKILL_DIR}/scripts/configurator.py {project-root}
+  python3 ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)configurator.py {project-root}
        ▼
 AUTO-DISCOVERY (configurator.py:85-122)
   find_source_dirs() → [src, lib, app, packages]   (Python-flavored)
@@ -123,9 +123,9 @@ CHECKPOINT (_quality-gate/quality-gate-{ts}.json)
 INSTALL skill (one-time, marketplace)
        ▼
 FIRST INVOCATION
-  python3 ${CLAUDE_SKILL_DIR}/scripts/runner.py {project-root}
+  python3 ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)runner.py {project-root}
        ▼
-DETECT (scripts/detector.py — deterministic, no network, no LLM)
+DETECT (legacy scripts/ (migrated to harness_quality_gate/)detector.py — deterministic, no network, no LLM)
   Tier 1: .quality-gate-lang override file
   Tier 2: manifest presence (composer.json/composer.lock vs pyproject.toml/setup.py)
   Tier 3: source-file count tie-breaker (5+ files threshold)
@@ -209,7 +209,7 @@ Three alternatives evaluated (configurator.py, workflow.md, new runner.py); conf
 - minimal disruption to workflow orchestration
 - straightforward to extend to `--generate-stubs` for `infection.json5`/`phpstan.neon`/`deptrac.yaml`
 
-Detection logic itself lives in `scripts/detector.py` (importable + invocable standalone) so other components (doctor, dispatcher) reuse it.
+Detection logic itself lives in `legacy scripts/ (migrated to harness_quality_gate/)detector.py` (importable + invocable standalone) so other components (doctor, dispatcher) reuse it.
 
 ---
 
@@ -307,7 +307,7 @@ language_profiles:
         phpmd:
           rulesets: [cleancode, codesize, controversial, design, naming, unusedcode]
         visitors:
-          path: "${CLAUDE_SKILL_DIR}/scripts/adapters/php/visitors"
+          path: "${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)adapters/php/visitors"
         thresholds: { ... }      # mirror Python AP01–AP31 numeric thresholds
       architecture:              # NEW for PHP — hexagonal validation
         primary: deptrac
@@ -354,7 +354,7 @@ layer4:
 
 - v1 flat config (no `schema_version` or `=1`) → loader wraps it into `language_profiles.python`, prints one-time `migrating config schema 1 → 2` and writes back.
 - Existing `{skill-root}` aliased to `${CLAUDE_SKILL_DIR}` until v3; both forms work.
-- `python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py /repo` (legacy CLI) routed via shim to `runner.py security /repo`.
+- `python3 ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)security_scanner.py /repo` (legacy CLI) routed via shim to `runner.py security /repo`.
 - Pure-Python projects: detector → python, no PHP runtime required, ever.
 
 ---
@@ -440,7 +440,7 @@ Ship 100/100 as the default hard gate, paired with:
 1. `minMsi: 100`, `minCoveredMsi: 100` non-negotiable in `infection.json5`.
 2. Every `@infection-ignore-all` annotation MUST carry an adjacent doc-comment with `reason:`, optional `proven-by:` (pointing to the test covering the conceptual contract), and `audited:` (date + reviewer).
 3. Every entry in `mutators.*.ignore`, `global-ignore`, `global-ignoreSourceCodeByRegex`, `source.excludes` MUST have a JSON5 comment above it with same fields.
-4. The Ralph **reviewer-agent** runs `scripts/audit-ignores.php` (NEW) that fails the gate if any ignore lacks justification metadata.
+4. The Ralph **reviewer-agent** runs `legacy scripts/ (migrated to harness_quality_gate/)audit-ignores.php` (NEW) that fails the gate if any ignore lacks justification metadata.
 5. The Ralph **checkpoint** metric tracks `ignored_count` and `ignored_delta` separately from MSI — human reviewer sees "100/100, +3 ignores this PR" and can challenge each.
 6. Per-project override: `infection.json5.local` may relax to `minMsi: 95` for legacy modules during a ramp; spec template generates this opt-in with a TODO.
 
@@ -715,7 +715,7 @@ harness-quality-gate/
     │   ├── semgrep-python-rules.yaml           # unchanged
     │   ├── semgrep-php-rules.yaml              # NEW (~180 lines)
     │   └── semgrep-js-rules.yaml               # unchanged
-    ├── scripts/
+    ├── legacy scripts/ (migrated to harness_quality_gate/)
     │   ├── runner.py                           # NEW entrypoint
     │   ├── detector.py                         # NEW language detection
     │   ├── dispatcher.py                       # NEW routing
@@ -757,7 +757,7 @@ harness-quality-gate/
 ### 6.3 Doctor workflow (PHP runtime missing)
 
 ```
-$ python3 ${CLAUDE_SKILL_DIR}/scripts/runner.py doctor /path/to/repo
+$ python3 ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)runner.py doctor /path/to/repo
 
 harness-quality-gate doctor — PHP toolchain check
 Language detected: php (confidence 0.95)
@@ -777,7 +777,7 @@ Required tools:
   ⚠ xdebug    3.3.2        conflicts with pcov — recommend disabling for Infection runs
 
 Verdict: INFRA_INCOMPLETE — 2 required tools missing
-Run: bash ${CLAUDE_SKILL_DIR}/scripts/install_php_tools.sh
+Run: bash ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)install_php_tools.sh
 ```
 
 **PHAR policy:** do NOT bundle PHARs inside the skill (5–30 MB each, version drift, marketplace updates lag tool releases). DO ship `install_php_tools.sh` that downloads pinned versions from `config/php-tool-versions.json` to `~/.local/bin/`. Discovery order: `vendor/bin/<tool>` → `${COMPOSER_HOME:-~/.composer}/vendor/bin/<tool>` → `which <tool>` → `~/.local/bin/<tool>.phar` → NOT FOUND.
@@ -859,7 +859,7 @@ Run: bash ${CLAUDE_SKILL_DIR}/scripts/install_php_tools.sh
 5. No new required runtimes; Python users never need PHP/Composer installed.
 6. `{skill-root}` aliased to `${CLAUDE_SKILL_DIR}` until v3.
 7. No removed scripts; legacy paths shimmed to re-export with deprecation warning until v3.
-8. Same CLI surface — `python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py /repo` keeps working via shim.
+8. Same CLI surface — `python3 ${CLAUDE_SKILL_DIR}/legacy scripts/ (migrated to harness_quality_gate/)security_scanner.py /repo` keeps working via shim.
 
 ### 6.6 Test strategy
 
@@ -989,4 +989,4 @@ Test categories: detector unit tests, dispatcher routing tests (with mocked tool
 - [pre-commit framework](https://pre-commit.com/)
 
 **Internal**
-- `/mnt/bunker_data/harness-quality-gate/SKILL.md`, `workflow.md`, `config/quality-gate.yaml`, `scripts/*.py`, `steps/*.md`, `references/*`
+- `/mnt/bunker_data/harness-quality-gate/SKILL.md`, `workflow.md`, `config/quality-gate.yaml`, `legacy scripts/ (migrated to harness_quality_gate/)*.py`, `steps/*.md`, `references/*`

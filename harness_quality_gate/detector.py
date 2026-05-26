@@ -154,9 +154,13 @@ def _load_cache(repo: Path) -> Detection | None:
         return None
 
     # The cache stores all fields except the read-only `primary` alias.
+    # Reconstruct nested Runtime dataclass from its dict representation.
     try:
+        raw_runtime = raw.get("runtime")
+        if isinstance(raw_runtime, dict):
+            raw["runtime"] = Runtime(**raw_runtime)
         return Detection(**raw)
-    except TypeError:
+    except (TypeError, KeyError):
         return None
 
 

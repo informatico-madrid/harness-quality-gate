@@ -1,0 +1,9 @@
+{
+  "name": "test/php-pest-no-mutate",
+  "autoload": {
+    "psr-4": {"App\\": "src/"}
+  },
+  "require-dev": {
+    "pestphp/pest": "^3.0"
+  }
+}

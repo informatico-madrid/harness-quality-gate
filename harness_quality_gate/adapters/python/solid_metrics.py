@@ -29,7 +29,7 @@ from typing import Any
 
 # Optional: radon for cyclomatic complexity metrics
 try:
-    from radon.complexity import cc_visit
+    from radon.complexity import cc_visit  # noqa: F401
     HAS_RADON = True
 except ImportError:
     HAS_RADON = False
@@ -104,8 +104,8 @@ class ClassMetricsCollector(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.visit_FunctionDef(node)
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # type: ignore[override]
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         pass

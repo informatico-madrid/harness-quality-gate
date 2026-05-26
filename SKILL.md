@@ -1,6 +1,6 @@
 ---
 name: harness-quality-gate
-description: A quality harness for autonomous coding agents (Ralph Loop pattern). Validates Python code produced by AI agents running in autonomous loops through a 5-layer quality gate (L3A→L1→L2→L3B→L4). Uses Two-Tier approach: Tier A (AST deterministic, <1 min) + Tier B (BMAD Party Mode consensus, ~15 min). Layer 4 covers 8 security tools. Generates checkpoint JSON for agent self-verification before commit. Use when agents need to validate code quality and security standards autonomously within Ralph Loop workflows.
+description: A polyglot quality harness for autonomous coding agents (Ralph Loop pattern). Detects and validates Python or PHP code produced by AI agents through a 5-layer quality gate (L3A→L1→L2→L3B→L4). Uses Two-Tier approach: Tier A (AST deterministic, <1 min) + Tier B (BMAD Party Mode consensus, ~15 min). Layer 4 covers 8 security tools. Generates checkpoint JSON for agent self-verification before commit. Use when agents need to validate code quality and security standards autonomously within Ralph Loop workflows.
 ---
 
 ## When to Use This Skill
@@ -18,13 +18,14 @@ Activate this skill when:
 Do NOT activate this skill when:
 - Writing new code (use dev story skill instead)
 - Just exploring the codebase
-- Running single unit tests (pytest alone is sufficient)
+- Running single unit tests (pytest / PHPUnit alone is sufficient)
 - Only need one security tool (run it directly instead)
 - Not using Ralph Loop or similar autonomous coding patterns
 
 ## Inputs Required
 
 - `{project-root}`: The repository working directory (must contain `src/` and `tests/`)
+- Language is auto-detected: Python (via `pyproject.toml` / `setup.py`) or PHP (via `composer.json`)
 
 ## Conventions
 
@@ -36,13 +37,18 @@ Do NOT activate this skill when:
 
 ## Workflow Architecture
 
-The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L4):
+The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L4) with **language-aware tool dispatch**:
+
+- **Python**: ruff, pyright, pytest, mutmut, bandit, gitleaks, semgrep
+- **PHP**: PHP-CS-Fixer, phpstan, phpunit, infection, phpmd, gitleaks, semgrep
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Layer 3A: SMOKE TEST (Tier A AST, <1 min)                         │
-│  ├── ruff check + format check                                      │
-│  ├── pyright type check                                             │
+│  ├── <python> ruff check + format check                             │
+│  ├── <python> pyright type check                                    │
+│  ├── <php> PHP-CS-Fixer check                                       │
+│  ├── <php> phpstan --version                                        │
 │  ├── check_headers                                                  │
 │  ├── SOLID Tier A (fast AST)                                        │
 │  ├── Principles (DRY/KISS/YAGNI/LoD/CoI)                           │
@@ -58,8 +64,10 @@ The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L
                                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Layer 1: TEST EXECUTION (~15 min)                                 │
-│  ├── pytest                                                         │
-│  ├── coverage check                                                │
+│  ├── <python> pytest                                                │
+│  ├── <python> coverage check                                        │
+│  ├── <php> phpunit                                                  │
+│  ├── <php> infection (MSI 100/100 gate)                            │
 │  ├── mutation testing (per-module gate)                             │
 │  └── E2E tests (make e2e) [OPTIONAL]                              │
 │                              │                                      │
@@ -101,14 +109,16 @@ The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Layer 4: SECURITY & DEFENSE (~2-5 min)                             │
 │  REQUIRED (blocks gate if missing/failing):                         │
-│  ├── 4.1 bandit          → Python vulnerability scanning            │
-│  ├── 4.2 safety/pip-audit → Dependency CVE scanning                │
-│  └── 4.3 gitleaks        → Secret/API key detection                │
+│  ├── <python> 4.1 bandit       → Python vulnerability scanning      │
+│  ├── <python> 4.2 safety       → Python dependency CVE scanning     │
+│  ├── <php> 4.1 composer-audit  → PHP dependency CVE scanning        │
+│  └── 4.3 gitleaks              → Secret/API key detection           │
 │  RECOMMENDED (blocks gate if findings ≥ threshold):                 │
-│  ├── 4.4 semgrep         → Semantic security rules (OWASP + HA)    │
-│  ├── 4.5 checkov         → YAML/HA config validation               │
-│  ├── 4.6 deptry          → Import consistency vs requirements       │
-│  └── 4.7 vulture         → Dead code detection                     │
+│  ├── 4.4 semgrep → Semantic security rules (language-agnostic)     │
+│  ├── 4.5 checkov → YAML/HA config validation                       │
+│  ├── <python> 4.6 deptry  → Import consistency vs requirements      │
+│  ├── <python> 4.7 vulture → Dead code detection                    │
+│  └── <php> composer-security-checker → PHP security advisory scan  │
 │  OPTIONAL (never blocks gate):                                      │
 │  └── 4.8 trivy           → Docker image CVE scanning               │
 │                              │                                      │
@@ -152,7 +162,7 @@ E2E tests are **OPTIONAL** in Layer 1. If `make e2e` is not available or fails, 
 Before running the quality gate for the first time, run the configurator to auto-discover your project structure and confirm settings:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/configurator.py {project-root}
+python3 -m harness_quality_gate.configurator {project-root}
 ```
 
 This will:
@@ -198,7 +208,7 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 **Unified scanner (recommended):**
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/security_scanner.py {project-root} --severity-threshold high --verbose
+python3 -m harness_quality_gate.full {project-root} --layer l4 --severity-threshold high --verbose
 ```
 
 **Individual tools** (if unified scanner unavailable):
@@ -242,15 +252,15 @@ trivy config --format json .
 | `steps/step-06-layer4.md` | Layer 4: Security & Defense |
 | `steps/step-05-checkpoint.md` | Final checkpoint generation |
 | `config/quality-gate.yaml` | All configurable thresholds (including L4) |
-| `scripts/solid_metrics.py` | Fast AST-based SOLID check (Tier A) |
-| `scripts/llm_solid_judge.py` | SOLID context generator for BMAD agents (Tier B) |
-| `scripts/weak_test_detector.py` | Weak test detection (A1-A8 rules) |
-| `scripts/antipattern_checker.py` | 50 antipatterns: 25 Tier A (AST) + 25 Tier B (BMAD) |
-| `scripts/antipattern_judge.py` | Tier B antipattern context generator for BMAD agents |
-| `scripts/principles_checker.py` | DRY, KISS, YAGNI, LoD, CoI |
-| `scripts/mutation_analyzer.py` | Mutation kill-map analysis + per-module gate (OK/NOK) |
-| `scripts/diversity_metric.py` | Test diversity scoring (Levenshtein edit distance) |
-| `scripts/security_scanner.py` | Unified security scanner (Layer 4, 8 tools) |
+| `harness_quality_gate.adapters.python.solid_metrics` | Fast AST-based SOLID check (Tier A) |
+| `harness_quality_gate/bmad/` | SOLID context generator for BMAD agents (Tier B) — deferred |
+| `harness_quality_gate.adapters.python.weak_test` | Weak test detection (A1-A8 rules) |
+| `harness_quality_gate.adapters.python.antipattern_tier_a` | 22 deterministic Tier A antipatterns (AST) |
+| `harness_quality_gate/bmad/` | Tier B antipattern context (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.principles` | DRY, KISS, YAGNI, LoD, CoI |
+| `harness_quality_gate.bmad.mutation_analyzer` | Mutation kill-map analysis + per-module gate (OK/NOK) |
+| N/A | Test diversity scoring — deferred to future iteration |
+| `harness_quality_gate.adapters.shared` | Security scanners (gitleaks, checkov, trivy, semgrep) |
 | `references/security-tools-guide.md` | Tool installation, config & remediation guide |
 | `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant (opt-in) |
 
@@ -371,6 +381,7 @@ The checkpoint JSON follows this structure:
 {
   "checkpoint": "quality-gate",
   "timestamp": "2026-04-30T12:00:00Z",
+  "language": "python|php",
   "PASS": true,
   "layers": {
     "layer3a_smoke_test": {
@@ -382,7 +393,11 @@ The checkpoint JSON follows this structure:
       "principles": {"DRY": "PASS", "KISS": "PASS", "YAGNI": "PASS", "LoD": "PASS", "CoI": "PASS"},
       "antipatterns_tier_a": {"passed": 23, "failed": 2}
     },
-    "layer1_test_execution": { "PASS": true, ... },
+    "layer1_test_execution": {
+      "PASS": true,
+      "python": {"pytest": {"total": 150, "passed": 150}, "coverage": {"rate": 0.98}, "infection": {"msi": 1.0}},
+      "php": {"phpunit": {"total": 100, "passed": 100}, "infection": {"msi": 1.0, "covered_msi": 1.0}}
+    },
     "layer2_test_quality": { "PASS": true, ... },
     "layer3b_deep_quality": {
       "PASS": true,

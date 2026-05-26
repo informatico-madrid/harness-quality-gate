@@ -43,7 +43,7 @@ def test_hybrid_dispatch_completes() -> None:
     }
     checkpoint = dispatch_full(detection, ctx)
 
-    assert checkpoint.version == "2.0.0"
+    assert checkpoint.version == "v2"
     assert checkpoint.language == "python"
     assert len(checkpoint.layers) >= 1
 

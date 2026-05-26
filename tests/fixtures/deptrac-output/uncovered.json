@@ -1,0 +1,8 @@
+{
+  "files_analyzed": 3,
+  "violations": [],
+  "uncovered": [
+    {"file": "src/Domain/Event.php", "reason": "not included in deptrac.yaml"}
+  ],
+  "status": "ok"
+}
