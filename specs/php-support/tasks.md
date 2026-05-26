@@ -156,17 +156,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: NFR-6_
   - _Design: TD-15, state component_
 
-- [ ] 1.9 Implement `adapters/base.py` ABCs
-  - **Do**:
-    1. Create `harness_quality_gate/adapters/base.py` with `BaseAdapter(ABC)` defining `tool_versions()`, `check_tools()`, `run_l3a()`, `run_l1()`, `run_l2()`, `run_l3b()`, `run_l4()`.
-    2. Add `ToolAdapter(ABC)` with `name`, `version()`, `invoke(repo, args) -> ToolInvocation`, `parse(stdout, stderr, exitcode) -> List[Finding]`.
-    3. Define `ToolInvocation` dataclass (stdout/stderr/exitcode/duration_seconds).
-  - **Files**: `harness_quality_gate/adapters/base.py`
-  - **Done when**: `from harness_quality_gate.adapters.base import BaseAdapter, ToolAdapter` works; instantiating ABC raises TypeError
-  - **Verify**: `python -c "from harness_quality_gate.adapters.base import BaseAdapter, ToolAdapter; import abc; assert isinstance(BaseAdapter, abc.ABCMeta); print('PASS')"`
-  - **Commit**: `feat(adapters): add BaseAdapter and ToolAdapter ABCs (TD-1)`
-  - _Requirements: FR-5, FR-6, US-16_
-  - _Design: TD-1, adapters/base_
+- [x] 1.9 Implement `adapters/base.py` ABCs - feat(adapters): add BaseAdapter and ToolAdapter ABCs (TD-1)
 
 - [x] 1.10 Implement `dispatcher.py` routing skeleton
   <!-- reviewer-diagnosis
