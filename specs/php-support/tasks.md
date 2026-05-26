@@ -605,7 +605,6 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Remaining PHP adapters
 
-- [ ] 2.1 [P] Implement `phpunit_adapter.py` with strict-mode XML generator
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/phpunit_adapter.py` with `PhpUnitAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/phpunit --log-junit junit.xml --coverage-php var/coverage` with 300s timeout.
@@ -642,7 +641,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-11, US-7_
   - _Design: TD-6, pest_adapter_
 
-- [ ] 2.4 [P] Implement `deptrac_adapter.py`
+- [x] 2.4 [P] Implement `deptrac_adapter.py`
   - **Do**:
     1. Create `harness_quality_gate/adapters/php/deptrac_adapter.py` with `DeptracAdapter(ToolAdapter)`.
     2. `invoke`: `vendor/bin/deptrac analyse --formatter=json --output=...` with 300s.
