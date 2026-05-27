@@ -1151,7 +1151,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 > Goal: full local CI (lint + types + tests 100% cov + mutmut 100/100 + dogfood) + CI workflow + 5 fixture-repo VE chain + final V4/V5/V6 verification.
 
-- [ ] 4.1 Write `.github/workflows/ci.yml`
+- [x] 4.1 Write `.github/workflows/ci.yml`
   - **Do**:
     1. Create `.github/workflows/ci.yml` with matrix: `python: [3.10, 3.11, 3.12, 3.13]` × `php: [8.2, 8.3, 8.4]`.
     2. Steps: checkout, setup-python, setup-php (shivammathur/setup-php@v2), composer install, `pip install -e .[dev]`, `ruff check`, `mypy`, `pytest --cov --cov-fail-under=100`, `mutmut run` + `audit-ignores`, `python -m harness_quality_gate full --repo .` (self-application).
