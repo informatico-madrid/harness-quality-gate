@@ -1,0 +1,81 @@
+{
+  "version": "v2",
+  "timestamp": "2026-05-25T10:00:00Z",
+  "repository": "my-symfony-app",
+  "language": "php",
+  "layers": [
+    {
+      "layer": "L3A",
+      "language": "php",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 45.2,
+      "findings": [],
+      "tool_specific": {
+        "phpstan": { "level": "max", "PASS": true },
+        "php-cs-fixer": { "PASS": true },
+        "phpmd": { "PASS": true }
+      }
+    },
+    {
+      "layer": "L1",
+      "language": "php",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 142.3,
+      "findings": [],
+      "tool_specific": {
+        "phpunit": { "tests": 412, "assertions": 1083, "coverage_pct": 100.0 },
+        "infection": {
+          "killed": 412, "escaped": 0, "errored": 0,
+          "timed_out": 0, "not_covered": 0,
+          "msi": 100.0, "covered_msi": 100.0,
+          "ignored_count": 5, "ignored_delta": 0,
+          "mutation_skipped": null
+        }
+      }
+    },
+    {
+      "layer": "L2",
+      "language": "php",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 12.5,
+      "findings": [],
+      "tool_specific": { "diversity": 0.91, "weak_tests": [] }
+    },
+    {
+      "layer": "L3B",
+      "language": "php",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 8.1,
+      "findings": [],
+      "tool_specific": {}
+    },
+    {
+      "layer": "L4",
+      "language": "php",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 67.4,
+      "findings": [],
+      "tool_specific": {
+        "tools_run": ["psalm", "composer_audit", "security_checker",
+                       "semgrep", "gitleaks", "shipmonk_dead_code",
+                       "shipmonk_dep_analyser"],
+        "tools_skipped": ["bandit", "safety", "vulture", "deptry"]
+      }
+    }
+  ],
+  "mutation": {
+    "total": 412,
+    "killed": 412,
+    "survived": 0,
+    "timed_out": 0,
+    "escaped": 0,
+    "untested": 0,
+    "msi": 100.0,
+    "covered_msi": 100.0
+  }
+}

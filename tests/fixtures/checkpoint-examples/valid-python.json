@@ -1,0 +1,75 @@
+{
+  "version": "v2",
+  "timestamp": "2026-05-25T11:00:00Z",
+  "repository": "my-flask-api",
+  "language": "python",
+  "layers": [
+    {
+      "layer": "L3A",
+      "language": "python",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 30.1,
+      "findings": [],
+      "tool_specific": {
+        "ruff": { "PASS": true },
+        "pyright": { "PASS": true }
+      }
+    },
+    {
+      "layer": "L1",
+      "language": "python",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 25.6,
+      "findings": [],
+      "tool_specific": {
+        "pytest": { "tests": 250, "coverage_pct": 100.0 },
+        "mutmut": {
+          "msi": 100.0, "covered_msi": 100.0,
+          "killed": 180, "survived": 0, "timed_out": 0
+        }
+      }
+    },
+    {
+      "layer": "L2",
+      "language": "python",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 5.2,
+      "findings": [],
+      "tool_specific": { "diversity": 0.87 }
+    },
+    {
+      "layer": "L3B",
+      "language": "python",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 3.8,
+      "findings": [],
+      "tool_specific": {}
+    },
+    {
+      "layer": "L4",
+      "language": "python",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 40.0,
+      "findings": [],
+      "tool_specific": {
+        "tools_run": ["bandit", "vulture", "deptry", "gitleaks", "semgrep"],
+        "tools_skipped": ["psalm", "composer_audit"]
+      }
+    }
+  ],
+  "mutation": {
+    "total": 180,
+    "killed": 180,
+    "survived": 0,
+    "timed_out": 0,
+    "escaped": 0,
+    "untested": 0,
+    "msi": 100.0,
+    "covered_msi": 100.0
+  }
+}
