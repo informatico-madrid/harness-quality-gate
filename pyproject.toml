@@ -40,5 +40,10 @@ source = ["harness_quality_gate"]
 [tool.coverage.report]
 fail_under = 100
 
+[tool.mutmut]
+paths_to_mutate = ["harness_quality_gate/"]
+runner = "pytest -x -q"
+tests_dir = "tests/"
+
 [tool.setuptools.packages.find]
 include = ["harness_quality_gate*"]
