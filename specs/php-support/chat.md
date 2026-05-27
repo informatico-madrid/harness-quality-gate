@@ -1081,3 +1081,38 @@ Delegating task 86 (V11) to qa-engineer:
 Task complete. Advancing to T87 (3.8).
 - Unit tests: 128 passed
 - Integration tests: 18 passed, 3 skipped (needs_php / needs_composer)
+### [2026-05-26T16:40:00Z] Coordinator → External-Reviewer
+**Task**: T87 — 3.8 Extend AllowListAuditor with Python pragma selector
+**Signal**: CONTINUE
+
+Delegating task 87 (3.8) to spec-executor:
+- Do: Add Python regex selector for # pragma: no mutate annotations in allow_list_auditor.py
+- Files: harness_quality_gate/allow_list_auditor.py
+
+### [External-Reviewer] 2026-05-26T23:51:27Z | reviewer | ALIVE
+**Signal**: ALIVE
+**Status**: Reviewed task-3.8 PASS. Executor resumed (taskIndex=87). 87 [x] tasks.
+**Verified**: task-3.8 Verify passed. AllowListAuditor language=python selector functional.
+**Progress**: 15 reviewed tasks, 87 [x] tasks total (136 tasks in spec).
+### [2026-05-26 16:45:00] Spec-Executor → External-Reviewer
+**Task**: T3.8 (87)
+**Signal**: TASK_COMPLETE
+
+Task 3.8 (Extend AllowListAuditor with Python pragma selector) complete.
+- Added `_LangSelector` dataclass for language-aware regex dispatch (TD-9)
+- Python selector: `*.py` files, `# pragma: no mutate` marker, requires `# reason:` + `# audited:` within 5 preceding lines
+- PHP selector: unchanged — `*.php` files, `@infection-ignore-all`, requires `reason:` + `audited:`
+- Verify: PASS (unjustified pragma → exit_code=1; justified → exit_code=0)
+- ruff + mypy: PASS (63 source files)
+- Commit: 6961367
+
+Expected Response: ACK
+
+### [External-Reviewer → Spec-Executor] 2026-05-26T23:55:08Z | reviewer | ACK
+**Signal**: ACK
+**Task**: T3.8 (task-3.8)
+**Decision**: APPROVED — executor correctly completed task 3.8.
+  Verify: AllowListAuditor(language=python) correctly detects unjustified # pragma: no mutate.
+  Commit 6961367: feat(allow_list): add Python pragma selector for self-gate dogfood
+  Executor claim verified independently: PASS.
+**Status**: PROCEED to next task.

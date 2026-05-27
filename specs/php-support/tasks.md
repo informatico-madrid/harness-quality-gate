@@ -89,7 +89,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     4. Compute hybrid via score = `(10 if manifest_hits else 0) + min(file_count, 100)`.
   - **Files**: `harness_quality_gate/detector.py`
   - **Done when**: `from harness_quality_gate.detector import detect` works; detection returns correct primary on a tmp dir with `composer.json`
-  - **Verify**: `mkdir -p /tmp/det-php && touch /tmp/det-php/composer.json && python -c "from pathlib import Path; from harness_quality_gate.detector import detect; d=detect(Path('/tmp/det-php')); assert d.primary=='php', d; print('PASS')"`
+  - **Verify**: `mkdir -p /tmp/det-php && touch /tmp/det-php/composer.json  && python3 -c "from pathlib import Path; from harness_quality_gate.detector import detect; d=detect(Path('/tmp/det-php')); assert d.primary=='php', d; print('PASS')"`
   - **Commit**: `feat(detector): implement 3-tier language detection`
   - _Requirements: FR-1, FR-2, US-1_
   - _Design: Component Responsibilities / detector_
@@ -115,7 +115,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     4. Attach `frameworks` field to `Detection` dataclass.
   - **Files**: `harness_quality_gate/detector.py`
   - **Done when**: A repo with `composer.json` requiring `symfony/framework-bundle` returns `frameworks={"php":["symfony"]}`
-  - **Verify**: `mkdir -p /tmp/sym && echo '{"require":{"symfony/framework-bundle":"^6.0"}}' > /tmp/sym/composer.json && python -c "from pathlib import Path; from harness_quality_gate.detector import detect; d=detect(Path('/tmp/sym'), force=True); assert 'symfony' in d.frameworks.get('php', []), d.frameworks; print('PASS')"`
+  - **Verify**: `mkdir -p /tmp/sym && echo '{"require":{"symfony/framework-bundle":"^6.0"}}' > /tmp/sym/composer.json  && python3 -c "from pathlib import Path; from harness_quality_gate.detector import detect; d=detect(Path('/tmp/sym'), force=True); assert 'symfony' in d.frameworks.get('php', []), d.frameworks; print('PASS')"`
   - **Commit**: `feat(detector): sniff Symfony/Laravel/Drupal/WordPress/Pest framework signals`
   - _Requirements: FR-22, US-14, US-7_
   - _Design: Component Responsibilities / detector framework_signals_
@@ -536,7 +536,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     5. Constructor accepts `language: str = 'php'` to keep API extensible; Python `# pragma: no mutate` selector lands in 3.8.
   - **Files**: `harness_quality_gate/allow_list_auditor.py`
   - **Done when**: A PHP file with un-justified `@infection-ignore-all` produces `exit_code != 0`
-  - **Verify**: `mkdir -p /tmp/aa && printf '<?php\n/** @infection-ignore-all */\nclass X {}\n' > /tmp/aa/X.php && python -c "from pathlib import Path; from harness_quality_gate.allow_list_auditor import AllowListAuditor; r=AllowListAuditor().audit(Path('/tmp/aa')); assert r.exit_code != 0; print('PASS')"`
+  - **Verify**: `mkdir -p /tmp/aa && printf '<?php\n/** @infection-ignore-all */\nclass X {}\n' > /tmp/aa/X.php  && python3 -c "from pathlib import Path; from harness_quality_gate.allow_list_auditor import AllowListAuditor; r=AllowListAuditor().audit(Path('/tmp/aa')); assert r.exit_code != 0; print('PASS')"`
   - **Commit**: `feat(allow_list): top-level language-aware auditor (PHP regex selectors)`
   - _Requirements: FR-16, FR-17, FR-18, US-5_
   - _Design: TD-7, allow_list_auditor component (top-level, language-aware)_
@@ -713,7 +713,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     3. Create `harness_quality_gate/adapters/php/weak_test_php.py` orchestrator calling `visitor_runner_adapter` per rule.
   - **Files**: `harness_quality_gate/adapters/php/visitors/weak_test_a1.php` through `weak_test_a8.php`, `harness_quality_gate/adapters/php/weak_test_php.py`, `harness_quality_gate/adapters/php/visitors/_common.php`
   - **Done when**: All 8 visitors syntactically valid; weak_test_php module imports
-  - **Verify**: `for i in 1 2 3 4 5 6 7 8; do php -l harness_quality_gate/adapters/php/visitors/weak_test_a${i}.php || exit 1; done && python -c "from harness_quality_gate.adapters.php.weak_test_php import PhpWeakTestAdapter" && echo PASS`
+  - **Verify**: `for i in 1 2 3 4 5 6 7 8; do php -l harness_quality_gate/adapters/php/visitors/weak_test_a${i}.php || exit 1; done  && python3 -c "from harness_quality_gate.adapters.php.weak_test_php import PhpWeakTestAdapter" && echo PASS`
   - **Commit**: `feat(adapters/php): 8 weak-test visitors A1-A8 (TD-13 A2-PHP)`
   - _Requirements: FR-35, US-17_
   - _Design: TD-13, weak_test_php component_
@@ -1060,14 +1060,14 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 ### Self-mutation dogfood (mutmut 100/100)
 
-- [ ] 3.8 Extend `AllowListAuditor` with Python `# pragma: no mutate` selector
+- [x] 3.8 Extend `AllowListAuditor` with Python `# pragma: no mutate` selector
   - **Do**:
     1. In `harness_quality_gate/allow_list_auditor.py` add Python regex selector for `# pragma: no mutate` annotations.
     2. Require adjacent `# reason:`, `# proven-by:` (optional), `# audited:` within 5 lines preceding.
     3. Same metadata schema as PHP path (TD-9 language-aware regex).
   - **Files**: `harness_quality_gate/allow_list_auditor.py`
   - **Done when**: Python file with un-justified pragma → exit non-zero from auditor
-  - **Verify**: `mkdir -p /tmp/py-aa && printf 'def f():\n    return 1  # pragma: no mutate\n' > /tmp/py-aa/f.py && python -c "from pathlib import Path; from harness_quality_gate.allow_list_auditor import AllowListAuditor; r=AllowListAuditor(language='python').audit(Path('/tmp/py-aa')); assert r.exit_code != 0; print('PASS')"`
+  - **Verify**: `mkdir -p /tmp/py-aa && printf 'def f():\n    return 1  # pragma: no mutate\n' > /tmp/py-aa/f.py  && python3 -c "from pathlib import Path; from harness_quality_gate.allow_list_auditor import AllowListAuditor; r=AllowListAuditor(language='python').audit(Path('/tmp/py-aa')); assert r.exit_code != 0; print('PASS')"`
   - **Commit**: `feat(allow_list): add Python pragma selector for self-gate dogfood`
   - _Requirements: FR-16, FR-17_
   - _Design: TD-9 polish, allow_list_auditor language-aware_
@@ -1079,7 +1079,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
     3. Document policy: 100% killed-or-justified; every `# pragma: no mutate` must have adjacent metadata audited by `allow_list_auditor`.
   - **Files**: `pyproject.toml` (MODIFY), `references/self-gate-mutmut-policy.md` (CREATE)
   - **Done when**: `mutmut --version` works; `pyproject.toml` has `[tool.mutmut]` section
-  - **Verify**: `mutmut --version > /dev/null && python -c "import tomllib; assert 'mutmut' in tomllib.loads(open('pyproject.toml','rb').read().decode())['tool']" && echo PASS`
+  - **Verify**: `mutmut --version > /dev/null  && python3 -c "import tomllib; assert 'mutmut' in tomllib.loads(open('pyproject.toml','rb').read().decode())['tool']" && echo PASS`
   - **Commit**: `feat(self-gate): configure mutmut + document 100/100 + allow-list policy`
   - _Requirements: NFR-7 (extended to self), Test Strategy / self-gate_
   - _Design: Test Strategy self-gate, TD-2 polish_
@@ -1406,19 +1406,19 @@ EOF
 
 - [ ] V-P1 [VERIFY] Phase 1 exit gate
   - **Do**: Confirm POC milestone (task 1.41) passed and tag `phase-1-complete` exists: `git tag phase-1-complete 2>/dev/null || true` (lightweight tag at current HEAD if not yet tagged).
-  - **Verify**: `git tag --list 'phase-1-complete' | grep -q phase-1-complete && python -c "import json, glob, jsonschema; cp=json.load(open(sorted(glob.glob('/tmp/loc-poc/_quality-gate/quality-gate-*.json'))[-1])); jsonschema.validate(cp, json.load(open('references/verdict-schema.json'))); print('PHASE1_EXIT_PASS')" 2>/dev/null || echo "Re-run task 1.41"`
+  - **Verify**: `git tag --list 'phase-1-complete' | grep -q phase-1-complete  && python3 -c "import json, glob, jsonschema; cp=json.load(open(sorted(glob.glob('/tmp/loc-poc/_quality-gate/quality-gate-*.json'))[-1])); jsonschema.validate(cp, json.load(open('references/verdict-schema.json'))); print('PHASE1_EXIT_PASS')" 2>/dev/null || echo "Re-run task 1.41"`
   - **Done when**: POC checkpoint valid + phase-1-complete tag exists
   - **Commit**: None
 
 - [ ] V-P2 [VERIFY] Phase 2 exit gate
   - **Do**: Tag `phase-2-complete`; verify all 5 layers wired in PhpAdapter + scripts/ deleted + v2 config + BMAD prompts updated.
-  - **Verify**: `[ ! -d scripts ] && grep -q 'schema_version: 2' config/quality-gate.yaml && grep -q '## PHP examples' references/llm_solid_judge.md && python -c "from harness_quality_gate.adapters.php.php_adapter import PhpAdapter; a=PhpAdapter(); [getattr(a,f'run_{l}') for l in ('l3a','l1','l2','l3b','l4')]" && git tag phase-2-complete 2>/dev/null || true && echo PHASE2_EXIT_PASS`
+  - **Verify**: `[ ! -d scripts ] && grep -q 'schema_version: 2' config/quality-gate.yaml && grep -q '## PHP examples' references/llm_solid_judge.md  && python3 -c "from harness_quality_gate.adapters.php.php_adapter import PhpAdapter; a=PhpAdapter(); [getattr(a,f'run_{l}') for l in ('l3a','l1','l2','l3b','l4')]" && git tag phase-2-complete 2>/dev/null || true && echo PHASE2_EXIT_PASS`
   - **Done when**: All Phase 2 deliverables present
   - **Commit**: None
 
 - [ ] V-P3 [VERIFY] Phase 3 exit gate
   - **Do**: Tag `phase-3-complete`; verify tests pass at ≥90% cov; mutmut configured.
-  - **Verify**: `pytest tests/ -q -m "not needs-php and not needs-composer" --cov=harness_quality_gate --cov-fail-under=90 && python -c "import tomllib; assert 'mutmut' in tomllib.loads(open('pyproject.toml','rb').read().decode())['tool']" && git tag phase-3-complete 2>/dev/null || true && echo PHASE3_EXIT_PASS`
+  - **Verify**: `pytest tests/ -q -m "not needs-php and not needs-composer" --cov=harness_quality_gate --cov-fail-under=90  && python3 -c "import tomllib; assert 'mutmut' in tomllib.loads(open('pyproject.toml','rb').read().decode())['tool']" && git tag phase-3-complete 2>/dev/null || true && echo PHASE3_EXIT_PASS`
   - **Done when**: Tests pass + coverage ≥90% + mutmut configured
   - **Commit**: None
 
