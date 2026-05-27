@@ -1116,3 +1116,17 @@ Expected Response: ACK
   Commit 6961367: feat(allow_list): add Python pragma selector for self-gate dogfood
   Executor claim verified independently: PASS.
 **Status**: PROCEED to next task.
+### [2026-05-27T00:00:00Z] Coordinator → External-Reviewer
+**Task**: T88 — 3.9 Configure mutmut for `harness_quality_gate/` self-mutation
+**Signal**: CONTINUE
+
+Delegating task 88 (3.9) to spec-executor:
+- Do: Add [tool.mutmut] to pyproject.toml, create run-mutmut.sh, document policy
+- Files: pyproject.toml (MODIFY), references/self-gate-mutmut-policy.md (CREATE)
+### [2026-05-27T00:01:00Z] Coordinator → External-Reviewer
+**Task**: T89 — 3.9a [VERIFY] Infection HARD 100/100 gate on PHP fixture
+**Signal**: CONTINUE
+
+Delegating task 89 (3.9a) to qa-engineer:
+- Do: Run Infection HARD gate on PHP fixtures (positive + negative)
+- Verify: Both pass

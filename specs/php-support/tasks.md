@@ -1072,7 +1072,11 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
   - _Requirements: FR-16, FR-17_
   - _Design: TD-9 polish, allow_list_auditor language-aware_
 
-- [ ] 3.9 Configure mutmut for `harness_quality_gate/` self-mutation
+- [x] 3.9 Configure mutmut for `harness_quality_gate/` self-mutation
+  - Add `[tool.mutmut]` to `pyproject.toml` (paths_to_mutate, runner, tests_dir).
+  - Policy doc in `references/self-gate-mutmut-policy.md`: 100% killed-or-justified; every pragma audited by AllowListAuditor.
+  - `scripts-dev/run-mutmut.sh` wrapper already existed.
+  - Verify: PASS
   - **Do**:
     1. Add `[tool.mutmut]` to `pyproject.toml`: `paths_to_mutate = ["harness_quality_gate/"]`, `runner = "pytest -x -q"`, `tests_dir = "tests/"`.
     2. Add make-target or script `scripts-dev/run-mutmut.sh` (or document command in README) wrapping `mutmut run`.
