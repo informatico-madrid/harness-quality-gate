@@ -43,10 +43,17 @@ jobs:
       - name: Tests + coverage
         run: pytest --cov=harness_quality_gate --cov-fail-under=100 -q
 
-      - name: Mutation testing
+      - name: Mutation testing (100% — no survivors allowed)
         run: |
-          mutmut run --paths-to-mutate=harness_quality_gate/ || true
-          python -m harness_quality_gate audit-ignores . --concurrency=sequential
+          # Coverage scope MUST match the mutmut runner (tests/unit) so that
+          # mutate_only_covered_lines mutates exactly what the runner can kill.
+          pytest tests/unit/ -q -p no:randomly --cov=harness_quality_gate --cov-report=
+          mutmut run
+          mutmut export-cicd-stats
+          python -c "import json,sys; s=json.load(open('mutants/mutmut-cicd-stats.json')); print(s); sys.exit(1 if (s['survived'] or s['no_tests'] or s['suspicious'] or s['timeout']) else 0)"
 
-      - name: Self-application (full gate)
-        run: python -m harness_quality_gate full --repo . --concurrency=sequential
+      - name: Audit suppressions (PHP @infection-ignore-all + Python pragmas)
+        run: python -m harness_quality_gate audit-ignores .
+
+      - name: Self-application (full gate, dogfood)
+        run: python -m harness_quality_gate all --repo . --concurrency=sequential

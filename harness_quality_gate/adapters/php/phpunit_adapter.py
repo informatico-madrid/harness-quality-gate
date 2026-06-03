@@ -9,6 +9,7 @@ Requirements: FR-12, US-6.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -18,7 +19,7 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # US-6 AC-1: the 11 strict-mode flags PHPUnit recognises.
 STRICT_MODE_FLAGS = (
@@ -53,6 +54,18 @@ class PhpUnitAdapter(ToolAdapter):
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         raise NotImplementedError("phpunit version detection not implemented (POC)")
 
+    def _bin_path(self, repo: Path) -> str:
+        """Return the phpunit binary path, respecting composer.json bin-dir."""
+        composer_json = repo / "composer.json"
+        if composer_json.exists():
+            try:
+                data = json.loads(composer_json.read_text(encoding="utf-8"))
+                bin_dir = data.get("config", {}).get("bin-dir", "vendor/bin")
+                return f"{bin_dir}/phpunit"
+            except (json.JSONDecodeError, OSError):
+                pass
+        return "vendor/bin/phpunit"
+
     def invoke(
         self,
         repo: Path,
@@ -61,18 +74,14 @@ class PhpUnitAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        """Run PHPUnit: ``vendor/bin/phpunit --log-junit junit.xml --coverage-php var/coverage``.
+        """Run PHPUnit: ``<bin-dir>/phpunit --log-junit junit.xml --coverage-php var/coverage``.
 
         Returns a :class:`ToolInvocation` capturing stdout, stderr,
         exit code, and wall-clock duration.
         """
-        cmd = [
-            "vendor/bin/phpunit",
-            "--log-junit",
-            "junit.xml",
-            "--coverage-php",
-            "var/coverage",
-        ]
+        # Base: run tests and write JUnit XML for parsing.
+        # Coverage flags are caller-supplied via args (coverage requires PCOV/Xdebug).
+        cmd = [self._bin_path(repo), "--log-junit", "junit.xml"]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, timeout=timeout)

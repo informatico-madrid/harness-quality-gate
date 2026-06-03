@@ -2,17 +2,18 @@
 <phpunit
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-    strictMode="true"
     stopOnFailure="true"
-    beStrictAboutCoverageMetrics="true"
-    beStrictAboutTodoAnnotatedTests="true"
-    bootstrap="vendor/autoload.php"
-    verbose="true"
-    testdox="true"
-    stopOnRisky="true"
-    stopOnSkipped="true"
-    beStrictAboutResourceUsageDuringSmallTests="true"
     colors="true"
+    bootstrap="vendor/autoload.php"
 >
-  <coverage pathCoverage="false"/>
+  <testsuites>
+    <testsuite name="Calculator">
+      <directory>tests</directory>
+    </testsuite>
+  </testsuites>
+  <source>
+    <include>
+      <directory>src</directory>
+    </include>
+  </source>
 </phpunit>

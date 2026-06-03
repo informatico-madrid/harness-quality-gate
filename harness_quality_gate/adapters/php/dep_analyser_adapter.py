@@ -18,7 +18,7 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Violation types reported by composer-dependency-analyser.
 VIOLATION_TYPES = {

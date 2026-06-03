@@ -5,7 +5,10 @@ Sole writer of checkpoint JSON per TD-15.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,17 +39,29 @@ def build(
     dict
         CheckpointV2-shaped dict ready for schema validation + serialization.
     """
+    def _to_dict(obj: Any) -> Any:
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            # Strip None-valued fields so the JSON schema's string-typed
+            # optional fields (fix_hint, cve, cwe, rule_id) don't fail
+            # validation with "null is not of type 'string'".
+            return {k: v for k, v in dataclasses.asdict(obj).items() if v is not None}
+        return obj
+
     layers = []
     for lr in layer_results:
+        raw_findings = lr.get("findings", [])
+        findings = [_to_dict(f) for f in raw_findings]
         entry: dict[str, Any] = {
             "layer": lr.get("layer", ""),
             "language": lr.get("language", ""),
             "passed": lr.get("passed", False),
-            "findings": lr.get("findings", []),
+            "findings": findings,
             "duration_sec": lr.get("duration_sec", 0.0),
         }
         if "per_language" in lr:
             entry["per_language"] = lr["per_language"]
+        if lr.get("tool_specific") is not None:
+            entry["tool_specific"] = lr["tool_specific"]
         layers.append(entry)
 
     mutation: dict[str, Any] | None = detection.get("mutation")
@@ -81,6 +96,9 @@ def validate(data: dict[str, Any]) -> None:
 def write(path: str | Path, data: dict[str, Any]) -> None:
     """Write checkpoint data to *path*, validating first.
 
+    Uses atomic writes (temp file + rename) to prevent partial writes
+    from concurrent writers.
+
     Parameters
     ----------
     path:
@@ -100,7 +118,20 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = json.dumps(data, indent=2, default=str, ensure_ascii=False)
-    output_path.write_text(payload, encoding="utf-8")
+
+    # Atomic write: write to temp file in same directory, then rename
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(output_path.parent),
+        prefix=".quality-gate-",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp_path, str(output_path))
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
 
     if output_path.name == "quality-gate-latest.json":
         ts = data.get("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))

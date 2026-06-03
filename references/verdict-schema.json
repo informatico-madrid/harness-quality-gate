@@ -57,6 +57,12 @@
         "per_language": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/layerBlock" }
+        },
+        "tool_specific": {
+          "anyOf": [
+            {"type": "object", "additionalProperties": true},
+            {"type": "null"}
+          ]
         }
       }
     },

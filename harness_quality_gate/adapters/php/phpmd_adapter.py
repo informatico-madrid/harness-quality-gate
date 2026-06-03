@@ -18,7 +18,7 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Standard PHPMD rulesets for L3A analysis.
 DEFAULT_RULESETS = "cleancode,codesize,controversial,design,naming,unusedcode"

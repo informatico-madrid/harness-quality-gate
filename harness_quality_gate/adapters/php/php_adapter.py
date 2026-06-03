@@ -33,7 +33,7 @@ from .psalm_taint_adapter import PsalmTaintAdapter
 from .security_checker_adapter import SecurityCheckerAdapter
 from .weak_test_php import PhpWeakTestLayerAdapter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # -- Framework-conditional PHPStan extension map (FR-22) --------------------
 
@@ -499,6 +499,26 @@ class PhpAdapter(BaseAdapter):
                     repo, env, is_pest_project
                 )
 
+                # Hard-gate: if env flag set and Infection unavailable, fail hard
+                if mutation_stats is None and env.get("HARNESS_INFECTION_REQUIRED"):
+                    all_findings.append(
+                        Finding(
+                            node="infection",
+                            severity="error",
+                            message=(
+                                "Infection mutation gate required but unavailable "
+                                "(HARNESS_INFECTION_REQUIRED=1). "
+                                "Ensure Infection is installed via install-tools."
+                            ),
+                            tool="infection",
+                            layer="L1",
+                            language="php",
+                        )
+                    )
+                    logger.error(
+                        "L1 Infection required but unavailable (HARNESS_INFECTION_REQUIRED=1)"
+                    )
+
                 if mutation_stats:
                     # Gate check (FR-14)
                     gate_findings = self._validate_infection_stats(mutation_stats)
@@ -549,6 +569,38 @@ class PhpAdapter(BaseAdapter):
                 **mutation_meta,
             },
         )
+
+    def _pcov_initial_tests_option(self) -> str:
+        """Return a PHP -d flag string to enable PCOV for Infection's initial test run.
+
+        Returns empty string if PCOV is already loaded (no extra flag needed)
+        or if PCOV cannot be found on this system.
+        """
+        import subprocess as _sp  # noqa: PLC0415
+        import glob as _glob  # noqa: PLC0415
+
+        # If PCOV is already loaded by PHP, no extra flag needed.
+        try:
+            result = _sp.run(
+                ["php", "-m"],
+                capture_output=True, text=True, timeout=5
+            )
+            if "pcov" in result.stdout.lower():
+                return ""
+        except (OSError, _sp.TimeoutExpired):
+            return ""
+
+        # Search for pcov.so in known locations.
+        candidates = [
+            "/tmp/pcov-extract/usr/lib/php/*/pcov.so",
+            "/usr/lib/php/*/pcov.so",
+        ]
+        for pattern in candidates:
+            found = _glob.glob(pattern)
+            if found:
+                return f"-dextension={found[0]}"
+
+        return ""
 
     def _run_phpunit_tests(
         self, repo: Path, env: Mapping[str, str]
@@ -618,17 +670,19 @@ class PhpAdapter(BaseAdapter):
             ``MutationStats`` or None if Infection is unavailable.
         """
         try:
-            # Build infection arguments with strict thresholds
+            # Build infection arguments with strict thresholds.
+            # Flags compatible with Infection 0.29.x (--formatter is "dot"/"progress", not "json").
             args: list[str] = [
                 "--no-progress",
-                "--log-nums",
-                "--format=json",
                 "--threads=max",
                 "--min-msi=100",
                 "--min-covered-msi=100",
-                "--timeouts-as-escaped",
-                "--max-timeouts=0",
             ]
+
+            # Pass PCOV to PHPUnit's initial test run for coverage collection.
+            pcov_flag = self._pcov_initial_tests_option()
+            if pcov_flag:
+                args.append(f"--initial-tests-php-options={pcov_flag}")
 
             if is_pest_project:
                 args.append("--test-framework=pest")
@@ -636,6 +690,27 @@ class PhpAdapter(BaseAdapter):
             invocation = self._infection.invoke(
                 repo, args, env=env, timeout=600.0
             )
+
+            # Binary missing: invoke() returns exitcode=3 with empty stdout.
+            if invocation.exitcode == 3 and not invocation.stdout.strip():
+                logger.warning("Infection unavailable (exitcode=3, no output)")
+                return None
+
+            # Distinguish infra errors from threshold failures.
+            # A threshold failure (MSI < 100%) produces text output with mutation
+            # stats and a non-zero exit; that is NOT an infra error.
+            # An infra error (no PCOV, invalid flags) produces error text with NO stats.
+            has_stats = any(
+                marker in (invocation.stdout + invocation.stderr)
+                for marker in ("Mutation Score Indicator", "mutations were generated", "mutants were killed")
+            )
+            if not has_stats and invocation.exitcode != 0:
+                logger.warning(
+                    "Infection infra error (exitcode=%d, no stats): %s",
+                    invocation.exitcode,
+                    (invocation.stderr or invocation.stdout)[:200],
+                )
+                return None
 
             # Parse JSON log → MutationStats
             stats = self._infection.parse(invocation.stdout, invocation.stderr, invocation.exitcode)

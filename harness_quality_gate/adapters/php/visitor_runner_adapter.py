@@ -21,7 +21,7 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Visitor scripts live alongside this module.
 VISITORS_DIR = Path(__file__).resolve().parent / "visitors"

@@ -416,7 +416,7 @@ def detect_ap02(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         non_static = cls["all_methods"] - cls["static_methods"] - cls["class_methods"]
         if non_static == 0 and cls["all_methods"] >= 3:
             violations.append({
-                "id": "AP02", "name": "Functional Decomposition",
+                "XXidXX": "AP02", "name": "Functional Decomposition",
                 "class": cls["name"], "lineno": cls["lineno"],
                 "issue": "all " + str(cls["all_methods"]) + " methods are static/class methods, no instance state",
             })
@@ -910,7 +910,7 @@ def detect_ap39(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
 
     for cls in visitor.classes:
         depth = get_depth(cls["name"], set())
-        if depth > max_depth:
+        if depth >= max_depth:
             violations.append({
                 "id": "AP39", "name": "Yo-Yo Problem",
                 "class": cls["name"], "lineno": cls["lineno"],

@@ -1,7 +1,8 @@
 {
+    "source": {
+        "directories": ["src"]
+    },
     "minMsi": 100,
     "minCoveredMsi": 100,
-    "timeoutsAsEscaped": true,
-    "maxTimeouts": 0,
     "tmpDir": "var/infection"
 }

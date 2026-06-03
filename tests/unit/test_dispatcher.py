@@ -35,10 +35,30 @@ def test_route_unknown() -> None:
     assert route("rust") is None
 
 
-def test_run_layer_default() -> None:
-    """Non-PHP/non-L3A → stub LayerResult with passed=True."""
+def test_run_layer_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """python+L3A → delegates to PythonAdapter.run_l3a."""
+    mock_adapter = MagicMock()
+    mock_adapter.run_l3a.return_value = build_layer_result(
+        layer="L3A", language="python", passed=True
+    )
+    monkeypatch.setattr(
+        "harness_quality_gate.dispatcher.PythonAdapter", lambda: mock_adapter
+    )
     result = run_layer(
         language="python",
+        layer="L3A",
+        repo=Path("/tmp"),
+        work_dir=Path("/tmp/work"),
+        env={},
+    )
+    assert result.passed is True
+    mock_adapter.run_l3a.assert_called_once()
+
+
+def test_run_layer_unknown_language() -> None:
+    """Unknown language → stub LayerResult with passed=True."""
+    result = run_layer(
+        language="rust",
         layer="L3A",
         repo=Path("/tmp"),
         work_dir=Path("/tmp/work"),

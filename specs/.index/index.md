@@ -3,7 +3,7 @@
 Auto-generated summary of all specs across configured directories.
 See [index-state.json](./index-state.json) for machine-readable data.
 
-**Last updated:** 2026-05-26T16:01:52Z
+**Last updated:** 2026-05-31T12:22:12Z
 
 ## Directories (1)
 
@@ -15,7 +15,7 @@ See [index-state.json](./index-state.json) for machine-readable data.
 
 | Spec | Directory | Phase | Status |
 |------|-----------|-------|--------|
-| php-support | ./specs | execution | 84/120 tasks |
+| php-support | ./specs | execution | 89/120 tasks |
 
 ---
 

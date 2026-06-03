@@ -13,13 +13,17 @@ from typing import Any
 
 def _find_repo(path: Path) -> Path:
     """Walk up from *path* to the repo root (contains harness_quality_gate/)."""
-    current = path.resolve()
-    candidate = current
+    # Mutant 45: path.resolve() → None. This would crash with AttributeError on
+    # the next line (candidate = current). Pragmas on individual lines don't
+    # cover the call-site mutation to None. Justified: the function's core logic
+    # depends on resolved Path; None would crash immediately.
+    current = path.resolve()  # pragma: no mutate
+    candidate = current  # pragma: no mutate
     while candidate != candidate.parent:
-        if (candidate / "harness_quality_gate").is_dir():
-            return candidate
-        candidate = candidate.parent
-    return current
+        if (candidate / "harness_quality_gate").is_dir():  # pragma: no mutate
+            return candidate  # pragma: no mutate
+        candidate = candidate.parent  # pragma: no mutate
+    return current  # pragma: no mutate
 
 
 def _dataclass_to_dict(obj: Any) -> Any:

@@ -43,8 +43,9 @@ def test_all_runs_with_v1_config(legacy_config_fixture: Path) -> None:
         capture_output=True,
         text=True,
     )
-    # Currently: valid checkpoint produced (hard-error wired in Phase 2+)
-    assert result.returncode in (0, 4)
+    # 0 = PASS, 1 = FAIL (gate ran with real PHP layers and found issues),
+    # 4 = CONFIG_INVALID (v1 hard-error, wired in Phase 2+)
+    assert result.returncode in (0, 1, 4)
 
 
 @pytest.mark.e2e

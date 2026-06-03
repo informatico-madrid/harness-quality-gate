@@ -26,7 +26,40 @@ _quality-gate/
 
 # mutmut
 .mutmut/
+mutants/
+.mutmut-cache
+.mutmut-state
+mutation*.out
+
+# Agent scratch / editor backups (never commit)
+*.bak
+*.deb
+
+# PHP fixture dependencies (composer-installed; not versioned).
+# composer.lock IS kept tracked for deterministic Infection runs (NFR-7).
+tests/fixtures/**/vendor/
+tests/fixtures/**/bin/
+# PHP test-run RUNTIME artifacts (Infection/phpunit scratch — never source)
+tests/fixtures/**/var/
+tests/fixtures/**/.phpunit.result.cache
+
+# Falsified/scratch self-gate analysis (superseded by mutmut-baseline-REAL.md)
+specs/php-support/mutmut-survivors.md
+specs/php-support/pragma-inventory.md
+
+# Harness coordination lockfiles / scratch (not repo artifacts)
+/.git-commit.lock
+/chat.md
+/chat.md.lock
+
+# Claude Code local settings (API keys — never commit)
+.claude/settings.json
 
 # OS
 .DS_Store
 Thumbs.db
+.mutmut-cache
+specs/php-support/mutmut-cli-bottleneck-analysis.md
+specs/php-support/bottleneck-analysis-complete.md
+specs/php-support/bottleneck-root-cause.md
+specs/php-support/mutmut-performance-solutions.md

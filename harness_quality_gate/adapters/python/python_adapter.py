@@ -25,7 +25,7 @@ from .pytest_adapter import PytestAdapter
 from .ruff_adapter import RuffAdapter
 from .vulture_adapter import VultureAdapter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 
 # ---------------------------------------------------------------------------

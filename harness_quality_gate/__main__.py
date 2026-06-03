@@ -4,4 +4,4 @@ import sys
 
 from .cli import main
 
-sys.exit(main(sys.argv[1:]))
+sys.exit(main(sys.argv[1:]))  # pragma: no mutate

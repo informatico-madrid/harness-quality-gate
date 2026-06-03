@@ -37,4 +37,16 @@ final class CalculatorTest extends TestCase
     {
         $this->assertSame(0, $this->calculator->add(0, 0));
     }
+
+    // Kills DecrementInteger mutant on $a===0 branch (a=-1 must return 4, not 5)
+    public function testAddNegativeFirst(): void
+    {
+        $this->assertSame(4, $this->calculator->add(-1, 5));
+    }
+
+    // Kills DecrementInteger mutant on $b===0 branch (b=-1 must return 4, not 5)
+    public function testAddNegativeSecond(): void
+    {
+        $this->assertSame(4, $this->calculator->add(5, -1));
+    }
 }

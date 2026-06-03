@@ -21,7 +21,7 @@ from ..base import ToolAdapter, ToolInvocation
 from .phpmd_adapter import PhpMdAdapter
 from .visitor_runner_adapter import VisitorRunnerAdapter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # PHPMD covers 13 distinct antipattern categories across its 6 rulesets.
 # The visitor runner covers 4 PoC patterns (god_class, feature_envy,

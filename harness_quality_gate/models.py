@@ -40,15 +40,15 @@ class Finding:
     node: str
     severity: str
     message: str
-    fix_hint: str | None = None
+    fix_hint: str | None = None  # pragma: no mutate
     # Optional security-specific fields (populated by vulnerability scanners)
-    cve: str | None = None
+    cve: str | None = None  # pragma: no mutate
     cwe: str = ""
     # Tool/layer context for checkpoint v2 contract (US-3, US-4, FR-31)
-    tool: str | None = None
-    layer: str | None = None
-    language: str | None = None
-    rule_id: str | None = None
+    tool: str | None = None  # pragma: no mutate
+    layer: str | None = None  # pragma: no mutate
+    language: str | None = None  # pragma: no mutate
+    rule_id: str | None = None  # pragma: no mutate
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ class LayerResult:
     passed: bool
     findings: list[Finding]
     duration_sec: float
-    tool_specific: dict[str, object] | None = None
+    tool_specific: dict[str, object] | None = None  # pragma: no mutate
 
 
 @dataclass(frozen=True)

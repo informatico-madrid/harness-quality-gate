@@ -47,12 +47,19 @@ def test_l1_runs_phpunit_on_fixture() -> None:
 def test_l1_mutation_stats_parsed() -> None:
     """InfectionAdapter.parse_stats on canned JSON → MutationStats."""
     adapter = InfectionAdapter()
-    stats = adapter.parse_stats(
-        '{"killed":5,"survived":0,"timed_out":0,"escaped":0,"untested":0}'
+    # Infection v0.29.x text format (primary parser)
+    text = (
+        "5 mutations were generated:\n"
+        "       5 mutants were killed\n"
+        "       0 covered mutants were not detected\n"
+        "Metrics:\n"
+        "         Mutation Score Indicator (MSI): 100%\n"
+        "         Covered Code MSI: 100%\n"
     )
+    stats = adapter.parse_stats(text)
     assert stats.killed == 5
-    assert stats.msi == 1.0
-    assert stats.covered_msi == 1.0
+    assert stats.msi == 100.0
+    assert stats.covered_msi == 100.0
 
 
 @pytest.mark.integration

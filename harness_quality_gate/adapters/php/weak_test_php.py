@@ -23,7 +23,7 @@ from ...models import Finding, LayerResult
 from ..base import ToolAdapter, ToolInvocation
 from .visitor_runner_adapter import VisitorRunnerAdapter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Weak-test visitor names (matches weak_test_a{1..8}.php in visitors/)
 _WEAK_TEST_VISITORS = [

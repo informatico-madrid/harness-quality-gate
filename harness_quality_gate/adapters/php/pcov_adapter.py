@@ -10,6 +10,7 @@ Requirements: FR-28, US-11
 
 from __future__ import annotations
 
+import glob
 import logging
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ from typing import Mapping
 from ...models import Finding, LayerResult
 from ..base import ToolAdapter, ToolInvocation
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # pragma: no mutate
 
 
 class PcovAdapter(ToolAdapter):
@@ -101,6 +102,19 @@ class PcovAdapter(ToolAdapter):
 
         if has_pcov:
             return "pcov"
+
+        # PCOV not system-loaded: check for pcov.so in well-known locations.
+        # This covers cases where pcov was extracted from the package but not
+        # installed system-wide (e.g. /tmp/pcov-extract or /usr/lib/php/*/).
+        so_candidates = [
+            "/tmp/pcov-extract/usr/lib/php/*/pcov.so",
+            "/usr/lib/php/*/pcov.so",
+        ]
+        for pattern in so_candidates:
+            found = glob.glob(pattern)
+            if found:
+                logger.info("PCOV available as shared extension: %s", found[0])
+                return "pcov"
 
         if has_xdebug:
             logger.warning(

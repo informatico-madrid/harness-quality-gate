@@ -7,6 +7,7 @@ FR-31 (tool path resolution order), US-11 (Spanish output).
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -70,8 +71,18 @@ def _resolve_tool(
     repo = str(repo)
     candidates: list[str] = []
 
-    # 1. vendor/bin inside repo
+    # 1. vendor/bin inside repo (default composer bin-dir)
     candidates.append(os.path.join(repo, "vendor", "bin", name))
+
+    # 1.5. composer.json bin-dir (project may configure a non-default bin-dir)
+    _composer_json = os.path.join(repo, "composer.json")
+    try:
+        with open(_composer_json, encoding="utf-8") as _f:
+            _bin_dir = json.load(_f).get("config", {}).get("bin-dir", "vendor/bin")
+        if _bin_dir != "vendor/bin":
+            candidates.append(os.path.join(repo, _bin_dir, name))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
 
     # 2. COMPOSER_HOME/vendor/bin
     if composer_home:

@@ -135,7 +135,11 @@ def test_expand_env_vars_dollar_no_braces() -> None:
 
 def test_expand_env_vars_missing_unchanged() -> None:
     """Missing env var → original ${VAR} left unchanged."""
-    with patch.dict(os.environ, {}, clear=True):
+    # Ensure the target var is absent without clearing os.environ wholesale —
+    # a full clear strips mutmut's MUTANT_UNDER_TEST and crashes the mutation
+    # baseline. clear=False restores any change on exit.
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("MISSING_VAR", None)
         result = _expand_env_vars("${MISSING_VAR}")
     assert result == "${MISSING_VAR}"
 
