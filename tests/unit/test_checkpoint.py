@@ -93,3 +93,115 @@ def test_write_timestamped_copy(good_detection: dict, tmp_path: Path) -> None:
     # Timestamped copies should also exist
     children = list(tmp_path.glob("quality-gate-*.json"))
     assert len(children) >= 2  # latest + at least one timestamped
+
+
+def test_build_layer_entry_keys_exact(good_detection: dict) -> None:
+    """Kill lr.get('layer'→'XXlayerXX'), lr.get('language'→'XXlanguageXX'), etc.
+
+    Pass a layer dict with non-empty findings and assert each key by name so
+    any string-mutation of the key produces a wrong result.
+    """
+    from harness_quality_gate.models import Finding
+    finding = Finding(node="src/Foo.php", severity="error", message="SRP violation")
+    layer_dict = {
+        "layer": "L3A",
+        "language": "php",
+        "passed": False,
+        "findings": [finding],
+        "duration_sec": 1.5,
+    }
+    result = build(
+        [layer_dict],
+        {"python_version": "3.12", "concurrency": "sequential", "ci": True},
+        good_detection,
+    )
+    entry = result["layers"][0]
+    # Each key must be exactly the expected string — kills key-mutation survivors
+    assert entry["layer"] == "L3A"
+    assert entry["language"] == "php"
+    assert entry["passed"] is False
+    assert entry["duration_sec"] == 1.5
+    # findings must be populated from the "findings" key, not empty default
+    assert len(entry["findings"]) == 1
+    assert entry["findings"][0]["node"] == "src/Foo.php"
+    assert entry["findings"][0]["severity"] == "error"
+
+
+def test_build_detection_keys_used(good_detection: dict) -> None:
+    """Kill detection.get('language'→'XXlanguageXX') and detection.get('repo_path'→...) mutations."""
+    detection = {
+        "repo_path": "/app/myproject",
+        "language": "php",
+        "framework": "symfony",
+        "confidence": 0.99,
+    }
+    result = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, detection)
+    # These must come from the "language" and "repo_path" keys — not defaults
+    assert result["language"] == "php"
+    assert result["repository"] == "/app/myproject"
+
+
+def test_build_to_dict_dataclass_vs_type(good_detection: dict) -> None:
+    """Kill is_dataclass(obj) && not isinstance(obj, type) → isinstance(obj, type) mutation.
+
+    Passing a dataclass instance as a finding must produce a dict;
+    passing the dataclass class itself must NOT be treated as a dataclass instance.
+    """
+    from harness_quality_gate.models import Finding
+    instance = Finding(node="src/A.php", severity="warning", message="msg")
+    layer_dict = {
+        "layer": "L3A",
+        "language": "python",
+        "passed": True,
+        "findings": [instance],
+        "duration_sec": 0.0,
+    }
+    result = build(
+        [layer_dict],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    f = result["layers"][0]["findings"][0]
+    # Must be a plain dict (dataclass converted), not the dataclass object itself
+    assert isinstance(f, dict)
+    assert f["node"] == "src/A.php"
+    assert f["severity"] == "warning"
+
+
+def test_build_passed_default_false(good_detection: dict) -> None:
+    """Kill lr.get('passed', False) → lr.get('passed', True) mutation."""
+    # Layer dict missing 'passed' key — must default to False, not True
+    layer_dict = {"layer": "L3A", "language": "python", "findings": [], "duration_sec": 0.0}
+    result = build(
+        [layer_dict],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    assert result["layers"][0]["passed"] is False
+
+
+def test_build_findings_default_empty_list(good_detection: dict) -> None:
+    """Kill lr.get('findings', []) → lr.get('XXfindingsXX', []) mutation.
+
+    When the dict has no 'findings' key, the result must be an empty list (not
+    come from a wrong key). When it does have 'findings', they must be preserved.
+    """
+    # With key present — must use the key value, not the default
+    from harness_quality_gate.models import Finding
+    f = Finding(node="X.php", severity="error", message="err")
+    with_findings = {"layer": "L1", "language": "php", "passed": False, "findings": [f], "duration_sec": 0.5}
+    result = build(
+        [with_findings],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    assert len(result["layers"][0]["findings"]) == 1
+
+    # Without key present — must fall back to [] (not error)
+    without_findings = {"layer": "L1", "language": "php", "passed": True, "duration_sec": 0.5}
+    result2 = build(
+        [without_findings],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    assert result2["layers"][0]["findings"] == []

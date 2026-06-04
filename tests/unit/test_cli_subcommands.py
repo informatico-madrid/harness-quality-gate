@@ -81,6 +81,29 @@ class TestAsdict:
                 return "foo-str"
         assert _asdict(Foo()) == "foo-str"
 
+    def test_dataclass_instance_converted_to_dict(self):
+        """Kill is_dataclass(obj) → is_dataclass(None) mutation (mutant_2)
+        and is_dataclass(obj) && isinstance(obj, type) mutation (mutant_3):
+        the dataclass class itself must NOT be converted, only instances."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class Point:
+            x: int
+            y: int
+
+        # Instance → dict (the real path)
+        result = _asdict(Point(x=1, y=2))
+        assert result == {"x": 1, "y": 2}
+
+        # Class object (a type) → str, NOT asdict (kills mutant_3)
+        result_type = _asdict(Point)
+        assert isinstance(result_type, str)
+
+    def test_none_is_not_treated_as_dataclass(self):
+        """Kill is_dataclass(None) mutation — None must pass through unchanged."""
+        assert _asdict(None) is None
+
 
 # ---------------------------------------------------------------------------
 # _exit_with
@@ -91,9 +114,27 @@ class TestExitWith:
         _exit_with(PASS, {"key": "val"}, json_mode=True)
         assert json.loads(capsys.readouterr().out) == {"key": "val"}
 
+    def test_json_output_uses_indent_2(self, capsys):
+        """Kill indent=2→None mutation: output must be pretty-printed (has newlines)."""
+        _exit_with(PASS, {"key": "val"}, json_mode=True)
+        out = capsys.readouterr().out
+        assert "\n" in out  # indent=None produces a single line; indent=2 adds newlines
+
     def test_non_json_dict_prints_json(self, capsys):
         _exit_with(PASS, {"x": 1}, json_mode=False)
         assert '"x": 1' in capsys.readouterr().out
+
+    def test_non_json_str_prints_string_not_none(self, capsys):
+        """Kill print(payload)→print(None) mutation: str payload printed as-is."""
+        _exit_with(PASS, "hello-world", json_mode=False)
+        out = capsys.readouterr().out
+        assert "hello-world" in out
+        assert "None" not in out
+
+    def test_default_quiet_is_false_output_produced(self, capsys):
+        """Kill quiet default False→True mutation: output must appear by default."""
+        _exit_with(PASS, {"k": "v"})
+        assert capsys.readouterr().out != ""
 
     def test_quiet_suppresses_output(self, capsys):
         _exit_with(PASS, {"key": "val"}, json_mode=True, quiet=True)
@@ -179,6 +220,62 @@ class TestCmdAll:
         out = json.loads(capsys.readouterr().out)
         assert "layers" in out
         assert out["language"] == "python"
+
+    def test_nonexistent_repo_json_error_has_error_key(self, tmp_path, capsys):
+        """Kill error-dict key mutations: JSON must contain 'error' and 'exit_code'."""
+        code = _cmd_all(_make_args(repo=str(tmp_path / "nowhere"), json=True))
+        assert code == UNSUPPORTED
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        assert out["exit_code"] == UNSUPPORTED
+
+    def test_adapter_exception_json_error_keys(self, tmp_path, capsys):
+        """Kill error-dict key mutations on adapter load failure path."""
+        with patch("harness_quality_gate.cli.PythonAdapter", side_effect=ImportError("missing")):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        assert code == INTERNAL_ERROR
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        assert out["exit_code"] == INTERNAL_ERROR
+
+    def test_php_language_uses_php_adapter_not_python(self, tmp_path):
+        """Kill language=='php'→'XXphpXX' mutation: composer.json must trigger PhpAdapter."""
+        (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
+        php_adapter = MagicMock()
+        py_adapter = MagicMock()
+        lr = _make_layer(passed=True)
+        for m in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(php_adapter, m).return_value = lr
+            getattr(py_adapter, m).return_value = lr
+        with (
+            patch("harness_quality_gate.cli.PhpAdapter", return_value=php_adapter),
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=py_adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+        # PhpAdapter must have been called, NOT PythonAdapter
+        assert php_adapter.run_l3a.called
+        assert not py_adapter.run_l3a.called
+
+    def test_checkpoint_written_to_quality_gate_path(self, tmp_path):
+        """Kill work_dir path mutations: checkpoint written under _quality-gate/work."""
+        adapter = MagicMock()
+        lr = _make_layer(passed=True)
+        for m in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, m).return_value = lr
+        written_paths: list[str] = []
+
+        def capture_write(path, data):
+            written_paths.append(str(path))
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint", side_effect=capture_write),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+        assert written_paths, "write_checkpoint should have been called"
+        assert "_quality-gate" in written_paths[0]
+        assert "work" in written_paths[0]
 
     def test_latest_checkpoint_write_failure_is_swallowed(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
