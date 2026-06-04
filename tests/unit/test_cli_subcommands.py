@@ -299,8 +299,11 @@ class TestCmdAll:
         ):
             _cmd_all(_make_args(repo=str(tmp_path)))
         assert written_paths, "write_checkpoint should have been called"
-        assert "_quality-gate" in written_paths[0]
-        assert "work" in written_paths[0]
+        from pathlib import PurePath
+        p = PurePath(written_paths[0])
+        # Must be under _quality-gate/work/ directory (not just in the filename)
+        assert "_quality-gate" in p.parts, f"Expected _quality-gate dir in {p}"
+        assert "work" in p.parts, f"Expected work dir in {p}"
 
     def test_layer_receives_repo_path_not_none(self, tmp_path):
         """Kill run_layer(repo, env) → run_layer(None, env) mutation.
@@ -327,10 +330,12 @@ class TestCmdAll:
         )
 
     def test_json_output_layer_keys(self, tmp_path, capsys):
-        """Kill 'layer'→'XXlayerXX' / 'language'→'XXlanguageXX' mutations in layer_dicts.
-        The checkpoint JSON must use the exact key names."""
+        """Kill 'layer'→'XXlayerXX', 'findings'→'XXfindingsXX', 'duration_sec' mutations
+        in layer_dicts. The checkpoint JSON must use exact key names with correct values."""
+        from harness_quality_gate.models import Finding
         adapter = MagicMock()
-        lr = _make_layer(passed=True, layer="L3A", language="python")
+        finding = Finding(node="src/A.php", severity="error", message="SRP violation")
+        lr = LayerResult(layer="L3A", language="python", passed=True, findings=[finding], duration_sec=1.25)
         for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
             getattr(adapter, method).return_value = lr
         with (
@@ -344,7 +349,10 @@ class TestCmdAll:
         assert layer["layer"] == "L3A"
         assert layer["language"] == "python"
         assert layer["passed"] is True
-        assert "duration_sec" in layer
+        assert layer["duration_sec"] == 1.25
+        # findings must come from the "findings" key, not empty default
+        assert len(layer["findings"]) == 1
+        assert layer["findings"][0]["node"] == "src/A.php"
 
     def test_json_output_detection_keys(self, tmp_path, capsys):
         """Kill 'repo_path'→'XXrepo_pathXX', 'language'→'XXlanguageXX' in detection_info."""
