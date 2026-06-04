@@ -27,7 +27,8 @@
 10. [Installation](#installation)
 11. [Usage](#usage)
 12. [Contributing](#contributing)
-13. [License](#license)
+13. [Mutation Testing Workflow](MUTATION_TESTING.md) — how to run mutmut, read `mutmut results` vs `mutmut-cicd-stats.json`, close survivors honestly
+14. [License](#license)
 
 ---
 
@@ -553,7 +554,13 @@ Contributions are welcome! If this skill proves useful to you, please consider g
 1. **Fork** the repository
 2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
 3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate full .`)
-4. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
+4. **Run the full quality gate before pushing**:
+   - `ruff check harness_quality_gate/ tests/`
+   - `pytest tests/unit/ -q --cov=harness_quality_gate --cov-fail-under=100 -p no:randomly`
+   - `python -m harness_quality_gate audit-ignores harness_quality_gate` (must exit 0)
+   - `make mutation` (CI checks `mutants/mutmut-cicd-stats.json`; must have 0 survived/no_tests/suspicious/timeout)
+   - See [MUTATION_TESTING.md](MUTATION_TESTING.md) for the why behind each gate
+5. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
 5. **Push to the branch** (`git push origin feature/amazing-feature`)
 6. **Open a Pull Request**
 
