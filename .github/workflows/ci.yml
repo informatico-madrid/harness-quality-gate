@@ -53,7 +53,8 @@ jobs:
           python -c "import json,sys; s=json.load(open('mutants/mutmut-cicd-stats.json')); print(s); sys.exit(1 if (s['survived'] or s['no_tests'] or s['suspicious'] or s['timeout']) else 0)"
 
       - name: Audit suppressions (PHP @infection-ignore-all + Python pragmas)
-        run: python -m harness_quality_gate audit-ignores .
+        # Audit only the package source, not vendor/mutants/tests/fixtures
+        run: python -m harness_quality_gate audit-ignores harness_quality_gate
 
       - name: Self-application (full gate, dogfood)
         run: python -m harness_quality_gate all --repo . --concurrency=sequential

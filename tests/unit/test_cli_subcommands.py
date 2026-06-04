@@ -221,6 +221,31 @@ class TestCmdAll:
         assert "layers" in out
         assert out["language"] == "python"
 
+    def test_nonexistent_repo_quiet_suppresses_output(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→None on the nonexistent-repo error path."""
+        code = _cmd_all(_make_args(repo=str(tmp_path / "nowhere"), quiet=True))
+        assert code == UNSUPPORTED
+        assert capsys.readouterr().out == ""
+
+    def test_adapter_error_quiet_suppresses(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→None on the adapter-load-error path."""
+        with patch("harness_quality_gate.cli.PythonAdapter", side_effect=ImportError("boom")):
+            code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == INTERNAL_ERROR
+        assert capsys.readouterr().out == ""
+
+    def test_layer_error_quiet_suppresses(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→None on the layer-execution-error path."""
+        adapter = MagicMock()
+        adapter.run_l3a.side_effect = RuntimeError("boom")
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == INTERNAL_ERROR
+        assert capsys.readouterr().out == ""
+
     def test_nonexistent_repo_json_error_has_error_key(self, tmp_path, capsys):
         """Kill error-dict key mutations: JSON must contain 'error' and 'exit_code'."""
         code = _cmd_all(_make_args(repo=str(tmp_path / "nowhere"), json=True))
@@ -435,6 +460,52 @@ class TestCmdAll:
         ):
             _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
         assert capsys.readouterr().out == ""
+
+    def test_ci_env_detected_in_runtime(self, tmp_path, capsys, monkeypatch):
+        """Kill 'ci': bool(os.environ.get('CI')) mutation: CI flag must be True when set."""
+        monkeypatch.setenv("CI", "true")
+        adapter = self._make_mock_adapter(passed=True)
+        checkpoint_calls: list = []
+
+        def capture_build(*args, **kwargs):
+            checkpoint_calls.append(kwargs)
+            from harness_quality_gate.checkpoint import build
+            return build(*args, **kwargs)
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+            patch("harness_quality_gate.cli.build_checkpoint", side_effect=capture_build),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+
+        assert checkpoint_calls, "build_checkpoint must be called"
+        runtime = checkpoint_calls[0].get("runtime", {})
+        assert runtime.get("ci") is True
+
+    def test_build_checkpoint_called_with_runtime_and_detection(self, tmp_path):
+        """Kill runtime=runtime→runtime=None and detection=detection_info→detection=None mutations."""
+        adapter = self._make_mock_adapter(passed=True)
+        build_calls: list = []
+
+        def capture_build(layer_results, runtime, detection):
+            build_calls.append({"runtime": runtime, "detection": detection})
+            from harness_quality_gate.checkpoint import build
+            return build(layer_results=layer_results, runtime=runtime, detection=detection)
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+            patch("harness_quality_gate.cli.build_checkpoint", side_effect=capture_build),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+
+        assert build_calls, "build_checkpoint must be called"
+        # Both runtime and detection must be non-None dicts
+        assert isinstance(build_calls[0]["runtime"], dict)
+        assert isinstance(build_calls[0]["detection"], dict)
+        assert "python_version" in build_calls[0]["runtime"]
+        assert "language" in build_calls[0]["detection"]
 
     def test_latest_checkpoint_write_failure_is_swallowed(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
