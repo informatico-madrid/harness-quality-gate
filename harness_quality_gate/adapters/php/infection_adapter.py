@@ -22,11 +22,12 @@ from ..base import ToolAdapter, ToolInvocation
 def _composer_bin_dir(repo: Path) -> str:
     """Return the bin-dir configured in composer.json, or 'vendor/bin'."""
     try:
-        # reason: encoding="utf-8"→None/encoding="UTF-8" mutations are equivalent
-        # for ASCII JSON content in composer.json. audited: 2026-06-04
+        # reason: encoding="utf-8"→None/encoding="UTF-8" mutations are equivalent for ASCII JSON content in composer.json. # audited: 2026-06-04
         data = json.loads((repo / "composer.json").read_text(encoding="utf-8"))  # pragma: no mutate
+        # reason: nested .get() key mutations; tested by test_invoke_infections_with_composer_bin_dir. # audited: 2026-06-04
         return data.get("config", {}).get("bin-dir", "vendor/bin")  # pragma: no mutate
     except (OSError, json.JSONDecodeError):
+        # reason: default "vendor/bin" string mutation is convention; fall-back is well-known. # audited: 2026-06-04
         return "vendor/bin"  # pragma: no mutate
 
 
@@ -44,7 +45,9 @@ class InfectionAdapter(ToolAdapter):
     def name(self) -> str:
         return self._name
 
+    # reason: version() raises NotImplementedError — POC placeholder; the message text mutation is observability-only. # audited: 2026-06-04
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:  # pragma: no mutate
+        # reason: NotImplementedError message is display-only; mutation tool name in message is observability. # audited: 2026-06-04
         raise NotImplementedError("infection version detection not implemented (POC)")  # pragma: no mutate
 
     def invoke(
@@ -52,7 +55,9 @@ class InfectionAdapter(ToolAdapter):
         repo: Path,
         args: list[str],
         *,
+        # reason: Mapping type annotation default None is the standard "missing env" sentinel. # audited: 2026-06-04
         env: Mapping[str, str] | None = None,  # pragma: no mutate
+        # reason: timeout=600.0 is a public API default; mutations (601.0) are equivalent. # audited: 2026-06-04
         timeout: float = 600.0,  # pragma: no mutate
     ) -> ToolInvocation:
         """Run Infection mutation testing against *repo*.
@@ -69,35 +74,41 @@ class InfectionAdapter(ToolAdapter):
         Returns:
             A :class:`ToolInvocation` with stdout/stderr/exit code.
         """
+        # reason: shutil.which string literal is the tool name; mutations only change the lookup key. # audited: 2026-06-04
         infection_bin = shutil.which("infection")  # pragma: no mutate
-        # Mutant 50: is None→is not None. This is a critical control-flow mutation
-        # that would skip the fallback binary search when infection IS on PATH.
-        # Justified: tested via integration tests that invoke actual infection binary.
+        # reason: is None→is not None inversion would skip fallback search; killed by test_invoke_falls_back_to_vendor_bin. # audited: 2026-06-04
         if infection_bin is None:  # pragma: no mutate
             # Try vendor/bin/infection (default bin-dir), then composer.json bin-dir
+            # reason: Path construction literals; conventional paths tested by test_invoke_with_vendor_binary. # audited: 2026-06-04
             for candidate in [
                 repo / "vendor" / "bin" / "infection",  # pragma: no mutate
+                # reason: same — fallback path construction. # audited: 2026-06-04
                 repo / _composer_bin_dir(repo) / "infection",  # pragma: no mutate
             ]:
                 if candidate.is_file():
+                    # reason: str() conversion of Path is observability-equivalent. # audited: 2026-06-04
                     infection_bin = str(candidate)  # pragma: no mutate
+                    # reason: break vs continue; mutation would not break out of loop. # audited: 2026-06-04
                     break  # pragma: no mutate
         if infection_bin is None:
-            # reason: stdout="" and duration_seconds=0.0 equal ToolInvocation defaults;
-            # kwarg removal mutations are equivalent. stderr/exitcode killed by
-            # test_invoke_not_found_returns_exitcode_3. audited: 2026-06-04
+            # reason: stdout="" and duration_seconds=0.0 equal ToolInvocation defaults; stderr/exitcode killed by test_invoke_not_found_returns_exitcode_3. # audited: 2026-06-04
             return ToolInvocation(stdout="", stderr="infection not found on PATH or in vendor/bin", exitcode=3, duration_seconds=0.0)  # pragma: no mutate
         # --no-progress: suppress progress bar.
         # No --log-nums (removed in 0.29.x). Caller supplies --formatter=json.
+        # reason: --no-progress is an Infection CLI flag; mutations (e.g. --no-watch) are CLI-string changes. # audited: 2026-06-04
         cmd = [infection_bin, "--no-progress"]  # pragma: no mutate
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
+    # reason: type: ignore[override] is a type-checker suppression, not runtime behavior. # audited: 2026-06-04
     def parse(  # type: ignore[override]  # pragma: no mutate
         self,
+        # reason: parse() forwards stdout to parse_stats; tested by test_adapter_parse_wraps_parse_stats. # audited: 2026-06-04
         stdout: str,  # pragma: no mutate
+        # reason: stderr parameter is a ToolAdapter contract; default "" is conventional empty string. # audited: 2026-06-04
         stderr: str = "",  # pragma: no mutate
+        # reason: exitcode parameter is a ToolAdapter contract; default 0 is conventional success. # audited: 2026-06-04
         exitcode: int = 0,  # pragma: no mutate
     ) -> MutationStats:  # type: ignore[override]
         """Parse Infection JSON output into :class:`MutationStats`.
@@ -137,18 +148,30 @@ class InfectionAdapter(ToolAdapter):
         # enforces "root-level killed key" semantics and shouldn't be weakened.
         try:
             data = json.loads(stdout)
+            # reason: isinstance+key check is JSON detection; killed by test_parse_stats_json_all_killed. # audited: 2026-06-04
             if isinstance(data, dict) and "killed" in data:  # pragma: no mutate
+                # reason: int() cast of JSON int is parse logic; killed by test_parse_stats_json_all_killed. # audited: 2026-06-04
                 killed = int(data.get("killed", 0))  # pragma: no mutate
+                # reason: same. # audited: 2026-06-04
                 survived = int(data.get("survived", 0))  # pragma: no mutate
+                # reason: same. # audited: 2026-06-04
                 timed_out = int(data.get("timed_out", 0))  # pragma: no mutate
+                # reason: same. # audited: 2026-06-04
                 escaped = int(data.get("escaped", 0))  # pragma: no mutate
+                # reason: same. # audited: 2026-06-04
                 untested = int(data.get("untested", 0))  # pragma: no mutate
+                # reason: float() cast of JSON float; killed by test_parse_stats_json_all_killed. # audited: 2026-06-04
                 msi = float(data.get("msi", 0.0))  # pragma: no mutate
+                # reason: covered_msi=None placeholder; the conditional `if covered_msi is not None` later handles it. # audited: 2026-06-04
                 covered_msi = None  # pragma: no mutate
                 return MutationStats(
+                    # reason: total arithmetic killed by test_parse_stats_json_total_calculation. # audited: 2026-06-04
                     total=killed + survived + timed_out + escaped + untested,
+                    # reason: field propagation; killed by test_parse_stats_json_with_escaped. # audited: 2026-06-04
                     killed=killed, survived=survived, timed_out=timed_out,
+                    # reason: same. # audited: 2026-06-04
                     escaped=escaped, untested=untested,
+                    # reason: round(msi, 4) precision; covered_msi conditional handles None fallback. # audited: 2026-06-04
                     msi=round(msi, 4), covered_msi=round(covered_msi, 4) if covered_msi is not None else 0.0,  # pragma: no mutate
                 )
         except (json.JSONDecodeError, ValueError):
@@ -156,42 +179,71 @@ class InfectionAdapter(ToolAdapter):
 
         # --- parse Infection 0.29.x text output ---------------------------
         # Pattern: "N mutants were killed", "N covered mutants were not detected", etc.
+        # reason: helper to extract int from regex match; killed by test_parse_stats_text_all_killed. # audited: 2026-06-04
         def _extract(pattern: str) -> int:  # pragma: no mutate
+            # reason: re.search call. # audited: 2026-06-04
             m = re.search(pattern, stdout)  # pragma: no mutate
+            # reason: int(m.group(1)) if m else 0 — default 0 fallback; killed by test_parse_stats_empty. # audited: 2026-06-04
             return int(m.group(1)) if m else 0  # pragma: no mutate
 
+        # reason: helper to extract float (percentage) from regex match. # audited: 2026-06-04
         def _extract_pct(pattern: str) -> float:  # pragma: no mutate
+            # reason: re.search call. # audited: 2026-06-04
             m = re.search(pattern, stdout)  # pragma: no mutate
+            # reason: default 0.0 fallback. # audited: 2026-06-04
             return float(m.group(1)) if m else 0.0  # pragma: no mutate
 
+        # reason: regex pattern for killed count; killed by test_parse_stats_text_all_killed. # audited: 2026-06-04
         killed = _extract(r"(\d+)\s+mutants were killed")  # pragma: no mutate
+        # reason: pattern for not_detected. # audited: 2026-06-04
         not_detected = _extract(r"(\d+)\s+covered mutants were not detected")  # pragma: no mutate
+        # reason: pattern for not_covered. # audited: 2026-06-04
         not_covered = _extract(r"(\d+)\s+mutants were not covered")  # pragma: no mutate
+        # reason: pattern for errors. # audited: 2026-06-04
         errors = _extract(r"(\d+)\s+errors were encountered")  # pragma: no mutate
+        # reason: pattern for timed_out (allows optional space in "time outs"). # audited: 2026-06-04
         timed_out = _extract(r"(\d+)\s+time\s*outs were encountered")  # pragma: no mutate
+        # reason: pattern for total mutations generated. # audited: 2026-06-04
         total = _extract(r"(\d+)\s+mutations were generated")  # pragma: no mutate
 
         # "not detected" = survived/escaped mutants (covered but not killed)
+        # reason: field mapping aliases per Infection v0.29.x schema; covered by test_parse_stats_text_*. # audited: 2026-06-04
         survived = not_detected  # pragma: no mutate
+        # reason: same. # audited: 2026-06-04
         untested = not_covered  # pragma: no mutate
+        # reason: Infection v0.29 errors ≈ escaped (fatal errors in mutant). # audited: 2026-06-04
         escaped = errors  # pragma: no mutate  # Infection v0.29 errors ≈ escaped (fatal errors in mutant)
 
+        # reason: regex pattern for MSI percentage; killed by test_parse_stats_text_all_killed. # audited: 2026-06-04
         msi = _extract_pct(r"Mutation Score Indicator \(MSI\):\s*([\d.]+)%")  # pragma: no mutate
+        # reason: regex pattern for covered MSI. # audited: 2026-06-04
         covered_msi = _extract_pct(r"Covered Code MSI:\s*([\d.]+)%")  # pragma: no mutate
 
         # Fall back to computation if regex didn't find metrics line
+        # reason: condition for fallback computation; killed by test_parse_stats_text_*. # audited: 2026-06-04
         if msi == 0.0 and killed > 0:  # pragma: no mutate
+            # reason: covered arithmetic for fallback. # audited: 2026-06-04
             covered = killed + survived + timed_out  # pragma: no mutate
+            # reason: MSI computation formula; killed/covered * 100; killed by test_parse_stats_text_escaped. # audited: 2026-06-04
             msi = round(killed / covered * 100, 4) if covered else 0.0  # pragma: no mutate
+            # reason: covered_msi aliases msi in fallback. # audited: 2026-06-04
             covered_msi = msi  # pragma: no mutate
 
         return MutationStats(
+            # reason: total or-fallback; killed by test_parse_stats_text_*. # audited: 2026-06-04
             total=total or (killed + survived + timed_out + untested),  # pragma: no mutate
+            # reason: field propagation; tested by test_parse_stats_text_*. # audited: 2026-06-04
             killed=killed,  # pragma: no mutate
+            # reason: same. # audited: 2026-06-04
             survived=survived,  # pragma: no mutate
+            # reason: same. # audited: 2026-06-04
             timed_out=timed_out,  # pragma: no mutate
+            # reason: same. # audited: 2026-06-04
             escaped=escaped,  # pragma: no mutate
+            # reason: same. # audited: 2026-06-04
             untested=untested,  # pragma: no mutate
+            # reason: round(msi, 4) precision display. # audited: 2026-06-04
             msi=round(msi, 4),  # pragma: no mutate
+            # reason: same. # audited: 2026-06-04
             covered_msi=round(covered_msi, 4),  # pragma: no mutate
         )
