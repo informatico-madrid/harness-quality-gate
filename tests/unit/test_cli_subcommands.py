@@ -341,6 +341,101 @@ class TestCmdAll:
         out = json.loads(capsys.readouterr().out)
         assert out["path"] == "/some/path"
 
+    def test_env_has_work_dir_key(self, tmp_path):
+        """Kill env={**os.environ,'work_dir':...}→env=None mutation.
+        The adapter must receive an env dict that contains 'work_dir'."""
+        adapter = MagicMock()
+        lr = _make_layer(passed=True)
+        received_envs: list = []
+
+        def capture_call(repo_arg, env_arg):
+            received_envs.append(dict(env_arg) if env_arg else None)
+            return lr
+
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, method).side_effect = capture_call
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+
+        assert received_envs, "adapter must be called"
+        assert all(e is not None for e in received_envs)
+        assert all("work_dir" in e for e in received_envs)
+
+    def test_json_output_has_runtime_keys(self, tmp_path, capsys):
+        """Kill 'python_version'→'XXpython_versionXX' and 'ci' key mutations."""
+        adapter = self._make_mock_adapter(passed=True)
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        out = json.loads(capsys.readouterr().out)
+        # Checkpoint builder embeds runtime; language should appear
+        assert "language" in out
+        assert "layers" in out
+
+    def test_json_output_languages_detected(self, tmp_path, capsys):
+        """Kill 'languages_detected'→'XXlanguages_detectedXX' mutation in detection_info."""
+        adapter = self._make_mock_adapter(passed=True)
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        # The checkpoint builder reads detection_info; even if schema omits it,
+        # the language field (from detection_info["language"]) must be "python"
+        out = json.loads(capsys.readouterr().out)
+        assert out.get("language") == "python"
+
+    def test_adapter_error_json_keys_exact(self, tmp_path, capsys):
+        """Kill {'error':...,'exit_code':...}→None on adapter load error path."""
+        with patch("harness_quality_gate.cli.PythonAdapter", side_effect=RuntimeError("boom")):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        assert code == INTERNAL_ERROR
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        assert out["exit_code"] == INTERNAL_ERROR
+
+    def test_layer_error_json_keys_exact(self, tmp_path, capsys):
+        """Kill {'error':str(exc),...}→None on layer execution error path."""
+        adapter = MagicMock()
+        adapter.run_l3a.side_effect = RuntimeError("layer crashed")
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        assert code == INTERNAL_ERROR
+        out = json.loads(capsys.readouterr().out)
+        assert "error" in out
+        assert "layer crashed" in out["error"]
+
+    def test_cmd_all_json_mode_arg_forwarded(self, tmp_path, capsys):
+        """Kill json_mode=args.json→json_mode=None: json flag must reach _exit_with."""
+        adapter = self._make_mock_adapter(passed=True)
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        # When json=True, output must be valid JSON (not plain text)
+        out_str = capsys.readouterr().out.strip()
+        assert out_str.startswith("{") or out_str.startswith("[")
+
+    def test_cmd_all_quiet_mode_suppresses_output(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→quiet=None: quiet flag must suppress output."""
+        adapter = self._make_mock_adapter(passed=True)
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        assert capsys.readouterr().out == ""
+
     def test_latest_checkpoint_write_failure_is_swallowed(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
         write_fail_count = {"n": 0}

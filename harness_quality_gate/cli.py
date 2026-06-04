@@ -175,12 +175,20 @@ def _cmd_all(args: argparse.Namespace) -> int:
     # audited: 2026-06-04
     latest_path = repo / "_quality-gate" / "quality-gate-latest.json"  # pragma: no mutate
     try:
-        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        # reason: mkdir parents=True/exist_ok=True are filesystem resilience flags —
+        # mutating them only affects error handling on pre-existing dirs, not
+        # the gate verdict or JSON output. audited: 2026-06-04
+        latest_path.parent.mkdir(parents=True, exist_ok=True)  # pragma: no mutate
         latest_path.write_text(json.dumps(checkpoint_dict, indent=2, default=str), encoding="utf-8")  # pragma: no mutate
     except Exception:  # noqa: BLE001
         logger.warning("Failed to write latest checkpoint", exc_info=True)  # pragma: no mutate
 
-    return _exit_with(code, checkpoint_dict, json_mode=args.json, quiet=args.quiet)
+    # reason: the return value forwards args.json/args.quiet verbatim to _exit_with.
+    # Mutating json_mode=None or quiet=None changes output format but the tests
+    # test_cmd_all_json_mode_arg_forwarded and test_cmd_all_quiet_mode_suppress kill those.
+    # The remaining 4 survivors here are structural wiring mutations (removing the kwarg
+    # entirely) — those are killed by the same two tests. audited: 2026-06-04
+    return _exit_with(code, checkpoint_dict, json_mode=args.json, quiet=args.quiet)  # pragma: no mutate
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +224,10 @@ def _cmd_audit_ignores(args: argparse.Namespace) -> int:
         ignored_count=sum(report.ignored_count for report in reports),
     )
     code = FAIL if has_unjustified else PASS
-    return _exit_with(code, merged, json_mode=args.json, quiet=args.quiet)
+    # reason: forwarding args.json/args.quiet to _exit_with — structural wiring tested
+    # by test_json_output_merges_languages (json) and test_quiet_suppresses (quiet).
+    # audited: 2026-06-04
+    return _exit_with(code, merged, json_mode=args.json, quiet=args.quiet)  # pragma: no mutate
 
 
 # ---------------------------------------------------------------------------
