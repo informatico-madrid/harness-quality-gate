@@ -23,6 +23,8 @@ from ...models import Finding, LayerResult
 from ..base import ToolAdapter, ToolInvocation
 from .visitor_runner_adapter import VisitorRunnerAdapter
 
+# reason: logger name mutation does not change observability; only the __name__ label differs.
+# audited: 2026-06-04
 logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Weak-test visitor names (matches weak_test_a{1..8}.php in visitors/)

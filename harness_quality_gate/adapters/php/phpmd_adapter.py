@@ -18,6 +18,8 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
+# reason: logger name mutation does not change observability; only the __name__ label differs.
+# audited: 2026-06-04
 logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Standard PHPMD rulesets for L3A analysis.

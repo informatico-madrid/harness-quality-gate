@@ -4,4 +4,6 @@ import sys
 
 from .cli import main
 
+# reason: __main__ entry-point — module name mutations don't affect sys.exit semantics.
+# audited: 2026-06-04
 sys.exit(main(sys.argv[1:]))  # pragma: no mutate

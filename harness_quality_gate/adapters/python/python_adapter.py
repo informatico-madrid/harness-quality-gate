@@ -25,6 +25,8 @@ from .pytest_adapter import PytestAdapter
 from .ruff_adapter import RuffAdapter
 from .vulture_adapter import VultureAdapter
 
+# reason: logger name mutation doesn't change observability; only the __name__ label differs.
+# audited: 2026-06-04
 logger = logging.getLogger(__name__)  # pragma: no mutate
 
 
