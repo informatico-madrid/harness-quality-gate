@@ -180,6 +180,86 @@ def test_build_passed_default_false(good_detection: dict) -> None:
     assert result["layers"][0]["passed"] is False
 
 
+def test_build_to_dict_filters_none_fields(good_detection: dict) -> None:
+    """Kill 'v is not None' → 'v is None' mutation in _to_dict.
+
+    Finding has optional fields (fix_hint, cve, etc.) that are None by default.
+    When _to_dict filters 'if v is not None', None fields are excluded from output.
+    When mutated to 'if v is None', only None fields appear — non-None fields vanish.
+    """
+    from harness_quality_gate.models import Finding
+    # Create Finding with all required fields non-None, optional fields left as None
+    f = Finding(node="src/Foo.php", severity="error", message="SRP violation")
+    assert f.fix_hint is None  # optional field
+    assert f.cve is None        # optional field
+
+    layer_dict = {
+        "layer": "L3A", "language": "php", "passed": False,
+        "findings": [f], "duration_sec": 0.1,
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    finding_out = result["layers"][0]["findings"][0]
+
+    # Required fields MUST be present (not filtered by is_not_None)
+    assert finding_out["node"] == "src/Foo.php"
+    assert finding_out["severity"] == "error"
+    assert finding_out["message"] == "SRP violation"
+    # Optional None fields must NOT be present (filtered out)
+    assert "fix_hint" not in finding_out, "None fields should be excluded by _to_dict"
+    assert "cve" not in finding_out
+
+
+def test_build_to_dict_is_dataclass_and_not_type(good_detection: dict) -> None:
+    """Kill 'is_dataclass(obj) and not isinstance(obj,type)' → 'or' mutation.
+
+    With `and`: is_dataclass(FindingClass) AND not isinstance(FindingClass,type) = True AND False = False
+      → _to_dict returns the class unchanged (correct).
+    With `or`: is_dataclass(FindingClass) OR not isinstance(FindingClass,type) = True OR False = True
+      → _to_dict tries dataclasses.asdict(FindingClass) which raises TypeError.
+
+    So the mutant crashes; the test must assert no exception is raised.
+    """
+    from harness_quality_gate.models import Finding
+    layer_dict = {
+        "layer": "L3A", "language": "python", "passed": True,
+        "findings": [Finding],  # class, not instance
+        "duration_sec": 0.0,
+    }
+    # Must not raise — the class is passed through unchanged
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    finding_out = result["layers"][0]["findings"][0]
+    # The class itself is returned (not converted), which is a type object
+    assert finding_out is Finding
+
+
+def test_write_calls_validate_with_data(good_detection: dict, tmp_path: Path) -> None:
+    """Kill validate(data) → validate(None) mutation in write().
+
+    write() must call validate() with the actual data, not None.
+    """
+    data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    target = tmp_path / "out.json"
+    # Should not raise (valid data passed)
+    write(target, data)
+    assert target.exists()
+    # Content must be valid JSON matching the built data
+    import json as json_mod
+    loaded = json_mod.loads(target.read_text())
+    assert loaded["language"] == data["language"]
+    assert loaded["version"] == "v2"
+
+
+def test_validate_schema_path_resolves(good_detection: dict) -> None:
+    """Kill schema_path=None mutation in validate().
+
+    validate() must successfully load the schema file (not None).
+    If schema_path=None, schema_path.open() would raise AttributeError.
+    """
+    data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    # Should not raise — schema file must be found and loaded
+    validate(data)
+
+
 def test_build_layer_with_per_language(good_detection: dict) -> None:
     """Kill 'per_language' key mutation and cover the branch (line 62)."""
     layer_dict = {
