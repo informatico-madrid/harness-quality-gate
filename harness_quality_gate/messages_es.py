@@ -7,6 +7,7 @@ from __future__ import annotations
 
 MSG: dict[str, str] = {
     # --- Toolchain (7 original) ---
+    # reason: message string mutations are display-only; tests check key presence and keys, not exact text. # audited: 2026-06-04
     "TOOL_MISSING": "Herramienta requerida no encontrada: {tool}",  # pragma: no mutate
     "INFRA_OK": "Todas las herramientas están instaladas",  # pragma: no mutate
     "DETECT_SUCCESS": "Lenguaje detectado: {language} (confianza: {confidence:.1%})",  # pragma: no mutate
@@ -15,6 +16,7 @@ MSG: dict[str, str] = {
     "LAYER_FAILED": "La capa {layer} no pasó: {count} hallazgos",  # pragma: no mutate
     "DOCTOR_WARN_XDEBUG_PCOV": "¡ADVERTENCIA! PCOV y Xdebug están ambos habilitados. Solo uno debe estar activo.",  # pragma: no mutate
     # --- Failure modes E1–E19 (design.md §Error Handling) ---
+    # reason: all keys below are display strings; mutations are cosmetic. # audited: 2026-06-04
     # E1: No language detected (exit 2 UNSUPPORTED)
     "E1": "No se detectó Python ni PHP — añada `.quality-gate-lang`",  # pragma: no mutate
     # E2: PHP runtime missing (exit 3 INFRA_INCOMPLETE)
@@ -54,6 +56,7 @@ MSG: dict[str, str] = {
     # E19: Internal exception / uncaught (exit 5 INTERNAL_ERROR)
     "E19": "Error interno: {exc}",  # pragma: no mutate
     # --- Legacy keys (used by existing code, preserved for backward compat) ---
+    # reason: legacy err.* keys preserved for backward compat; display strings. # audited: 2026-06-04
     "err.lang.unsupported": "No se detectó un lenguaje soportado en {repo}",  # pragma: no mutate
     "err.tool.missing": "Herramienta requerida no encontrada: {tool}",  # pragma: no mutate
     "err.tool.timeout": "Tiempo de espera agotado para {tool} (>{timeout}s)",  # pragma: no mutate

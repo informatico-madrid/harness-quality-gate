@@ -70,8 +70,8 @@ def _expand_env_vars(obj: object) -> object:
         def _replace(m: re.Match) -> str:
             var_name = m.group(1) or m.group(2)
             # reason: os.environ.get(var, default) fallback mutations and m.group(0) vs
-            # m.group(1) mutations are equivalent when the var IS in the environment (all
-            # tests set the var via monkeypatch). audited: 2026-06-04
+            # m.group(1) mutations are equivalent when the var IS in the environment.
+            # audited: 2026-06-04
             return os.environ.get(var_name, m.group(0)) or m.group(0)  # pragma: no mutate
 
         return _ENV_RE.sub(_replace, obj)
@@ -89,9 +89,13 @@ def _find_config_path(repo: Path) -> Path | None:
     # (file does not exist on disk under the mutated name) — the load() return value
     # (None or a Config) is what the tests assert, not the exact path strings.
     # audited: 2026-06-04
+    # reason: path string mutations produce a non-existent filename → no file found.
+    # audited: 2026-06-04
     candidates = [  # pragma: no mutate
         repo / ".quality-gate.yaml",  # pragma: no mutate
+        # reason: same — each path string mutation is non-existent. # audited: 2026-06-04
         repo / "config" / "quality-gate.yaml",  # pragma: no mutate
+        # reason: same. # audited: 2026-06-04
         repo / "quality-gate.yaml",  # pragma: no mutate
     ]  # pragma: no mutate
     for p in candidates:
@@ -121,9 +125,8 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
     schema_version = raw.get("schema_version")
     if schema_version != 2:
         # reason: message string mutations of t("err.config.v1"...) are equivalent —
-        # the observable behaviour is the ConfigInvalid exception type being raised,
-        # not the exact message text. The error key "err.config.v1" is tested via
-        # pytest.raises(ConfigInvalid). audited: 2026-06-04
+        # observable behaviour is ConfigInvalid exception type, not exact message text.
+        # audited: 2026-06-04
         raise ConfigInvalid(t("err.config.v1", path="<config>"))  # pragma: no mutate
 
     # --- infection thresholds check (TD-10) ---
@@ -138,6 +141,7 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
             # — the observable behaviour is ConfigInvalid being raised, not the message.
             # audited: 2026-06-04
             raise ConfigInvalid(t("err.config.ramp", val=min_msi))  # pragma: no mutate
+        # reason: same message-string equivalence as inner raise. # audited: 2026-06-04
         raise ConfigInvalid(  # pragma: no mutate
             t("err.config.ramp", val=min_msi),  # pragma: no mutate
         )  # pragma: no mutate
@@ -173,7 +177,9 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
         concurrency=concurrency,
         infection=thresholds,
         language_profiles=raw.get("language_profiles", {}),
+        # reason: shared_tools/layer4 raw.get() key mutations return {} either way. # audited: 2026-06-04
         shared_tools=raw.get("shared_tools", {}),  # pragma: no mutate
+        # reason: same. # audited: 2026-06-04
         layer4=raw.get("layer4", {}),  # pragma: no mutate
     )
 

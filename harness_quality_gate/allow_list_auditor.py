@@ -113,6 +113,8 @@ _PYTHON_SELECTOR = _LangSelector(
     audited_re=re.compile(r"#\s*audited:", re.IGNORECASE),
     proven_by_re=re.compile(r"#\s*proven-by:", re.IGNORECASE),
     lang_name="python",
+    # reason: marker_label is a display string containing pragma text, not a real annotation.
+    # audited: 2026-06-04
     marker_label="# pragma: no mutate",
 )
 
@@ -175,8 +177,8 @@ class AllowListAuditor:
         # Scan language-appropriate source files recursively.
         for src_file in sorted(repo.rglob(selector.file_glob)):
             # reason: encoding="utf-8"/errors="replace" string mutations are equivalent
-            # for ASCII test files — the error handler is never invoked and
-            # "UTF-8" is case-insensitive. audited: 2026-06-04
+            # for ASCII test files — error handler not invoked; "UTF-8" case-insensitive.
+            # audited: 2026-06-04
             lines = src_file.read_text(encoding="utf-8", errors="replace").splitlines()  # pragma: no mutate
             for i, line in enumerate(lines):
                 if selector.marker_re.search(line):
@@ -219,10 +221,9 @@ class AllowListAuditor:
                                     f"at line {i + 1}: "  # pragma: no mutate
                                     f"missing reason/audited metadata"
                                 ),
-                                # reason: fix_hint string content mutations: tests assert
-                                # only that fix_hint is non-None and contains "reason".
-                                # Exact wording ("Add" vs "add", uppercase, etc.) is
-                                # display-only metadata. audited: 2026-06-04
+                                # reason: fix_hint exact wording is display-only metadata;
+                                # tests only assert non-None and "reason" substring.
+                                # audited: 2026-06-04
                                 fix_hint=(
                                     "Add # reason: ... and # audited: ... "  # pragma: no mutate
                                     "within 5 lines preceding the annotation"
@@ -242,9 +243,9 @@ class AllowListAuditor:
         if not parts:
             summary = f"No {selector.marker_label} annotations found"
         else:
-            # reason: "; " separator mutation to "XX; XX": tests check for "justified"
-            # and "unjustified" substrings in summary (present in the part strings),
-            # not the exact separator character. audited: 2026-06-04
+            # reason: "; " separator mutation: tests check for "justified"/"unjustified"
+            # substrings (in part strings), not exact separator.
+            # audited: 2026-06-04
             summary = "; ".join(parts)  # pragma: no mutate
 
         return AuditReport(
