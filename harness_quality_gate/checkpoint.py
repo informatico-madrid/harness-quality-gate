@@ -143,11 +143,7 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
     # reason: prefix/suffix/dir are temp-file naming conventions — mutations of these
     # strings affect only the temp filename, not the final written content or file
     # location. audited: 2026-06-04
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(output_path.parent),  # pragma: no mutate
-        prefix=".quality-gate-",  # pragma: no mutate
-        suffix=".tmp",  # pragma: no mutate
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=str(output_path.parent), prefix=".quality-gate-", suffix=".tmp")  # pragma: no mutate
     try:
         # reason: encoding="utf-8" mutations are equivalent for ASCII JSON content.
         # audited: 2026-06-04

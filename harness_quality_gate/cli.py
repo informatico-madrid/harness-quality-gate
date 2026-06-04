@@ -230,10 +230,14 @@ def _cmd_audit_ignores(args: argparse.Namespace) -> int:
             for language in ("php", "python")
         ]
     except Exception as exc:  # noqa: BLE001
+        # reason: json_mode=args.json→None: payload is always a dict, so
+        # `json_mode or isinstance(payload, dict)` = True regardless of json_mode value.
+        # quiet=args.quiet is killed by test_audit_exception_quiet_suppresses_output.
+        # audited: 2026-06-04
         return _exit_with(
             INTERNAL_ERROR,
             {"error": str(exc), "exit_code": INTERNAL_ERROR},
-            json_mode=args.json,
+            json_mode=args.json,  # pragma: no mutate
             quiet=args.quiet,
         )
     has_unjustified = any(report.exit_code != 0 for report in reports)

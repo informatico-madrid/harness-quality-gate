@@ -375,8 +375,8 @@ class TestCmdAll:
         assert out["path"] == "/some/path"
 
     def test_env_has_work_dir_key(self, tmp_path):
-        """Kill env={**os.environ,'work_dir':...}→env=None mutation.
-        The adapter must receive an env dict that contains 'work_dir'."""
+        """Kill env={**os.environ,'work_dir':str(work_dir)}→str(None) mutation.
+        The adapter must receive env with 'work_dir' equal to the actual work path."""
         adapter = MagicMock()
         lr = _make_layer(passed=True)
         received_envs: list = []
@@ -397,6 +397,11 @@ class TestCmdAll:
         assert received_envs, "adapter must be called"
         assert all(e is not None for e in received_envs)
         assert all("work_dir" in e for e in received_envs)
+        # str(None) = "None" — value must be the actual work_dir path, not "None"
+        expected_work_dir = str(tmp_path.resolve() / "_quality-gate" / "work")
+        assert all(e["work_dir"] == expected_work_dir for e in received_envs), (
+            f"Expected work_dir={expected_work_dir!r}, got {received_envs[0].get('work_dir')!r}"
+        )
 
     def test_json_output_has_runtime_keys(self, tmp_path, capsys):
         """Kill 'python_version'→'XXpython_versionXX' and 'ci' key mutations."""
@@ -434,7 +439,7 @@ class TestCmdAll:
         assert out["exit_code"] == INTERNAL_ERROR
 
     def test_layer_error_json_keys_exact(self, tmp_path, capsys):
-        """Kill {'error':str(exc),...}→None on layer execution error path."""
+        """Kill {'error':str(exc),'exit_code':INTERNAL_ERROR} key mutations on layer error."""
         adapter = MagicMock()
         adapter.run_l3a.side_effect = RuntimeError("layer crashed")
         with (
@@ -446,6 +451,8 @@ class TestCmdAll:
         out = json.loads(capsys.readouterr().out)
         assert "error" in out
         assert "layer crashed" in out["error"]
+        # Kill "exit_code"→"XXexit_codeXX" / "EXIT_CODE" key mutations
+        assert out["exit_code"] == INTERNAL_ERROR
 
     def test_cmd_all_json_mode_arg_forwarded(self, tmp_path, capsys):
         """Kill json_mode=args.json→json_mode=None: json flag must reach _exit_with."""
@@ -514,6 +521,26 @@ class TestCmdAll:
         assert isinstance(build_calls[0]["detection"], dict)
         assert "python_version" in build_calls[0]["runtime"]
         assert "language" in build_calls[0]["detection"]
+
+    def test_write_checkpoint_receives_non_none_data(self, tmp_path):
+        """Kill write_checkpoint(output_path, checkpoint_dict)→write_checkpoint(..., None).
+        The data arg must be the actual checkpoint dict (not None) with 'layers' key."""
+        adapter = self._make_mock_adapter(passed=True)
+        written_data: list = []
+
+        def capture_write(path, data):
+            written_data.append(data)
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint", side_effect=capture_write),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+
+        assert written_data, "write_checkpoint must be called"
+        assert written_data[0] is not None
+        assert isinstance(written_data[0], dict)
+        assert "layers" in written_data[0]
 
     def test_latest_checkpoint_write_failure_is_swallowed(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
@@ -602,6 +629,53 @@ class TestCmdAuditIgnores:
         assert out["exit_code"] == PASS
         assert out["ignored_count"] == 1
         assert " | " in out["summary"]
+
+    def test_audit_exception_quiet_suppresses_output(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→None in exception path: quiet=True must suppress output."""
+        with patch.object(
+            __import__("harness_quality_gate.allow_list_auditor", fromlist=["AllowListAuditor"])
+            .AllowListAuditor,
+            "audit",
+            side_effect=RuntimeError("scan failed"),
+        ):
+            code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == INTERNAL_ERROR
+        assert capsys.readouterr().out == ""
+
+    def test_audit_findings_are_merged_from_both_languages(self, tmp_path, capsys):
+        """Kill findings=[flatmap]→findings=None: merged report JSON must list all findings."""
+        from harness_quality_gate.allow_list_auditor import AuditReport
+        from harness_quality_gate.models import Finding
+
+        php_finding = Finding(node="x.php", severity="error", message="PHP suppress")
+        py_finding = Finding(node="m.py", severity="error", message="Py suppress")
+        php_report = AuditReport(findings=[php_finding], summary="php:1", exit_code=FAIL, ignored_count=1)
+        py_report = AuditReport(findings=[py_finding], summary="py:1", exit_code=FAIL, ignored_count=1)
+
+        with patch.object(
+            __import__("harness_quality_gate.allow_list_auditor", fromlist=["AllowListAuditor"])
+            .AllowListAuditor,
+            "audit",
+            side_effect=[php_report, py_report],
+        ):
+            code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), json=True))
+        assert code == FAIL
+        out = json.loads(capsys.readouterr().out)
+        # findings=None would produce null; flatmap must produce a list of 2 entries
+        assert isinstance(out["findings"], list)
+        assert len(out["findings"]) == 2
+        nodes = {f["node"] for f in out["findings"]}
+        assert "x.php" in nodes and "m.py" in nodes
+
+    def test_unjustified_pragma_json_exit_code_is_fail(self, tmp_path, capsys):
+        """Kill exit_code=FAIL if has_unjustified else PASS removal from AuditReport.
+        When unjustified pragma exists, merged JSON must have exit_code=FAIL (not default 0)."""
+        (tmp_path / "m.py").write_text("x = 1  # pragma: no mutate\n", encoding="utf-8")
+        code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), json=True))
+        assert code == FAIL
+        out = json.loads(capsys.readouterr().out)
+        # exit_code in merged AuditReport must be FAIL (1), not the default 0
+        assert out["exit_code"] == FAIL
 
     def test_diff_from_passed_to_both_auditors(self, tmp_path):
         report = self._make_audit_report(exit_code=0)
