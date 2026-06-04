@@ -180,6 +180,53 @@ def test_build_passed_default_false(good_detection: dict) -> None:
     assert result["layers"][0]["passed"] is False
 
 
+def test_build_layer_with_per_language(good_detection: dict) -> None:
+    """Kill 'per_language' key mutation and cover the branch (line 62)."""
+    layer_dict = {
+        "layer": "L3A",
+        "language": "python",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 0.5,
+        "per_language": {"python": {"passed": True}, "php": {"passed": False}},
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    entry = result["layers"][0]
+    assert "per_language" in entry
+    assert entry["per_language"]["python"]["passed"] is True
+
+
+def test_build_layer_with_tool_specific(good_detection: dict) -> None:
+    """Kill tool_specific key mutation and cover the branch (line 64)."""
+    layer_dict = {
+        "layer": "L1",
+        "language": "php",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 1.0,
+        "tool_specific": {"phpunit_version": "10.5.0", "infection_msi": 100.0},
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    entry = result["layers"][0]
+    assert "tool_specific" in entry
+    assert entry["tool_specific"]["phpunit_version"] == "10.5.0"
+
+
+def test_build_layer_without_tool_specific_absent(good_detection: dict) -> None:
+    """Kill tool_specific is not None → is None mutation (line 63).
+    When tool_specific is None, it must NOT appear in the output entry."""
+    layer_dict = {
+        "layer": "L3A",
+        "language": "python",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 0.1,
+        "tool_specific": None,
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    assert "tool_specific" not in result["layers"][0]
+
+
 def test_build_findings_default_empty_list(good_detection: dict) -> None:
     """Kill lr.get('findings', []) → lr.get('XXfindingsXX', []) mutation.
 

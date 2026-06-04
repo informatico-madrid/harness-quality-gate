@@ -214,3 +214,92 @@ def test_load_v1_rejects(tmp_path: Path) -> None:
     _write_yaml(tmp_path, ".quality-gate.yaml", cfg)
     with pytest.raises(ConfigInvalid, match="v1"):
         load(tmp_path)
+
+
+def test_validate_passthrough_fields() -> None:
+    """Kill raw.get('gates'→'XXgatesXX'), raw.get('shared_tools'→...) etc.
+
+    These fields are passed through verbatim; mutating their keys causes the
+    wrong (empty) dict to land in Config.
+    """
+    cfg = _make_v2_config({
+        "gates": {"layer1": {"coverage": 85}},
+        "detection": {"language": "php"},
+        "language_profiles": {"php": {"min_msi": 100}},
+        "shared_tools": {"ruff": {"enabled": True}},
+        "layer4": {"severity": "high"},
+    })
+    config = validate(cfg)
+    assert config.gates == {"layer1": {"coverage": 85}}
+    assert config.detection == {"language": "php"}
+    assert config.language_profiles == {"php": {"min_msi": 100}}
+    assert config.shared_tools == {"ruff": {"enabled": True}}
+    assert config.layer4 == {"severity": "high"}
+
+
+def test_validate_threshold_defaults_exact() -> None:
+    """Kill default value mutations in _Thresholds constructor.
+
+    timeouts_as_escaped default True, max_timeouts default 0,
+    allow_ramp_flag_required default True — each asserted by name.
+    """
+    config = validate(_make_v2_config())
+    assert config.infection.timeouts_as_escaped is True
+    assert config.infection.max_timeouts == 0
+    assert config.infection.allow_ramp_flag_required is True
+
+
+def test_validate_concurrency_defaults_exact() -> None:
+    """Kill max_workers_local=4, max_workers_ci=1 default mutations.
+    When concurrency section exists, ci_env_vars comes from config; when absent, default is [].
+    """
+    config = validate(_make_v2_config())
+    assert config.concurrency.max_workers_local == 4
+    assert config.concurrency.max_workers_ci == 1
+
+    # With explicit ci_env_vars in config — kills ci_env_vars key mutation
+    cfg = _make_v2_config({"concurrency": {"ci_env_vars": ["CI", "GITHUB_ACTIONS"]}})
+    config2 = validate(cfg)
+    assert "CI" in config2.concurrency.ci_env_vars
+    assert "GITHUB_ACTIONS" in config2.concurrency.ci_env_vars
+
+
+def test_validate_threshold_from_config() -> None:
+    """Kill float(min_msi) → int(min_msi) and similar type-cast mutations."""
+    cfg = _make_v2_config({
+        "infection": {
+            "thresholds": {
+                "min_msi": 100,  # int in YAML → must be floated
+                "min_covered_msi": 100,
+                "timeouts_as_escaped": False,
+                "max_timeouts": 3,
+                "allow_ramp_flag_required": False,
+            }
+        }
+    })
+    config = validate(cfg)
+    assert isinstance(config.infection.min_msi, float)
+    assert config.infection.min_msi == 100.0
+    assert config.infection.timeouts_as_escaped is False
+    assert config.infection.max_timeouts == 3
+    assert config.infection.allow_ramp_flag_required is False
+
+
+def test_load_from_config_subdir(tmp_path: Path) -> None:
+    """Kill repo/'config'/'quality-gate.yaml' path mutation.
+    Config in config/ subdirectory must be found and loaded.
+    """
+    cfg = {"schema_version": 2}
+    _write_yaml(tmp_path, "config/quality-gate.yaml", cfg)
+    loaded = load(tmp_path)
+    assert loaded.schema_version == 2
+
+
+def test_load_allow_ramp_with_lowered_threshold_still_rejects(tmp_path: Path) -> None:
+    """Kill 'if not allow_ramp' → 'if allow_ramp' inversion.
+    Even with allow_ramp=True, lowered thresholds must raise ConfigInvalid.
+    """
+    cfg = _make_v2_config({"infection": {"thresholds": {"min_msi": 80.0}}})
+    _write_yaml(tmp_path, ".quality-gate.yaml", cfg)
+    with pytest.raises(ConfigInvalid):
+        load(tmp_path, allow_ramp=True)

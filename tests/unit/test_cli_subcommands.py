@@ -277,6 +277,70 @@ class TestCmdAll:
         assert "_quality-gate" in written_paths[0]
         assert "work" in written_paths[0]
 
+    def test_layer_receives_repo_path_not_none(self, tmp_path):
+        """Kill run_layer(repo, env) → run_layer(None, env) mutation.
+        The adapter must receive the actual repo Path, not None."""
+        adapter = MagicMock()
+        lr = _make_layer(passed=True)
+        received_repos: list = []
+
+        def capture_call(repo_arg, env_arg):
+            received_repos.append(repo_arg)
+            return lr
+
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, method).side_effect = capture_call
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path)))
+
+        assert all(r == tmp_path.resolve() for r in received_repos), (
+            f"Expected all calls with repo={tmp_path.resolve()!r}, got {received_repos}"
+        )
+
+    def test_json_output_layer_keys(self, tmp_path, capsys):
+        """Kill 'layer'→'XXlayerXX' / 'language'→'XXlanguageXX' mutations in layer_dicts.
+        The checkpoint JSON must use the exact key names."""
+        adapter = MagicMock()
+        lr = _make_layer(passed=True, layer="L3A", language="python")
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, method).return_value = lr
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        assert code == PASS
+        out = json.loads(capsys.readouterr().out)
+        layer = out["layers"][0]
+        assert layer["layer"] == "L3A"
+        assert layer["language"] == "python"
+        assert layer["passed"] is True
+        assert "duration_sec" in layer
+
+    def test_json_output_detection_keys(self, tmp_path, capsys):
+        """Kill 'repo_path'→'XXrepo_pathXX', 'language'→'XXlanguageXX' in detection_info."""
+        adapter = self._make_mock_adapter(passed=True)
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        out = json.loads(capsys.readouterr().out)
+        assert out["language"] == "python"
+        assert out["repository"] == str(tmp_path.resolve())
+
+    def test_exit_with_non_serialisable_uses_default_str(self, capsys):
+        """Kill default=str → default=None: non-JSON-serialisable objects must appear as strings."""
+        from pathlib import Path
+        # Path is not JSON-serialisable without default=str
+        _exit_with(PASS, {"path": Path("/some/path")}, json_mode=True)
+        out = json.loads(capsys.readouterr().out)
+        assert out["path"] == "/some/path"
+
     def test_latest_checkpoint_write_failure_is_swallowed(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
         write_fail_count = {"n": 0}
@@ -409,4 +473,18 @@ class TestMain:
 
     def test_unknown_subcommand_returns_unsupported(self):
         code = main(["nonexistent"])
+        assert code == UNSUPPORTED
+
+    def test_main_with_none_argv_uses_sys_argv(self, monkeypatch):
+        """Kill argv is None → argv is not None: when None, must read sys.argv[1:]."""
+        monkeypatch.setattr("sys.argv", ["prog"])  # sys.argv[1:] = []
+        code = main(None)
+        # With empty argv, command is None → UNSUPPORTED
+        assert code == UNSUPPORTED
+
+    def test_main_with_explicit_argv_ignores_sys_argv(self, monkeypatch):
+        """Kill argv is None inversion: explicit argv must NOT fall back to sys.argv."""
+        monkeypatch.setattr("sys.argv", ["prog", "all"])
+        # Pass explicit empty list — should NOT dispatch 'all' from sys.argv
+        code = main([])
         assert code == UNSUPPORTED

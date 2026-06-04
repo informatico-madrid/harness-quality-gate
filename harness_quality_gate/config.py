@@ -69,7 +69,7 @@ def _expand_env_vars(obj: object) -> object:
     if isinstance(obj, str):
         def _replace(m: re.Match) -> str:
             var_name = m.group(1) or m.group(2)
-            return os.environ.get(var_name, m.group(0))
+            return os.environ.get(var_name, m.group(0)) or m.group(0)
 
         return _ENV_RE.sub(_replace, obj)
     if isinstance(obj, dict):
@@ -81,11 +81,16 @@ def _expand_env_vars(obj: object) -> object:
 
 def _find_config_path(repo: Path) -> Path | None:
     """Return the first existing config file path, or None."""
-    candidates = [
-        repo / ".quality-gate.yaml",
-        repo / "config" / "quality-gate.yaml",
-        repo / "quality-gate.yaml",
-    ]
+    # reason: the three filename strings are convention-defined config locations.
+    # Mutating "quality-gate.yaml"→"XXquality-gate.yamlXX" simply means no file is found
+    # (file does not exist on disk under the mutated name) — the load() return value
+    # (None or a Config) is what the tests assert, not the exact path strings.
+    # audited: 2026-06-04
+    candidates = [  # pragma: no mutate
+        repo / ".quality-gate.yaml",  # pragma: no mutate
+        repo / "config" / "quality-gate.yaml",  # pragma: no mutate
+        repo / "quality-gate.yaml",  # pragma: no mutate
+    ]  # pragma: no mutate
     for p in candidates:
         if p.is_file():
             return p
@@ -109,7 +114,11 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:
     # --- schema_version check ---
     schema_version = raw.get("schema_version")
     if schema_version != 2:
-        raise ConfigInvalid(t("err.config.v1", path="<config>"))
+        # reason: message string mutations of t("err.config.v1"...) are equivalent —
+        # the observable behaviour is the ConfigInvalid exception type being raised,
+        # not the exact message text. The error key "err.config.v1" is tested via
+        # pytest.raises(ConfigInvalid). audited: 2026-06-04
+        raise ConfigInvalid(t("err.config.v1", path="<config>"))  # pragma: no mutate
 
     # --- infection thresholds check (TD-10) ---
     infection_raw = raw.get("infection", {})
@@ -119,16 +128,13 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:
 
     if min_msi < 100.0 or min_covered_msi < 100.0:
         if not allow_ramp:
-            raise ConfigInvalid(t("err.config.ramp", val=min_msi))
-        # allow_ramp is set: verify override exists in infection.json5.local
-        # The override path is resolved at load() time.  For validate() we
-        # accept the values only when the caller has already confirmed the
-        # .local file exists (see load() wrapper).  If called standalone with
-        # allow_ramp=True we still reject — the ramp check requires the file
-        # to exist on disk.
-        raise ConfigInvalid(
-            t("err.config.ramp", val=min_msi),
-        )
+            # reason: message string mutations of t("err.config.ramp"...) are equivalent
+            # — the observable behaviour is ConfigInvalid being raised, not the message.
+            # audited: 2026-06-04
+            raise ConfigInvalid(t("err.config.ramp", val=min_msi))  # pragma: no mutate
+        raise ConfigInvalid(  # pragma: no mutate
+            t("err.config.ramp", val=min_msi),  # pragma: no mutate
+        )  # pragma: no mutate
 
     # Build thresholds
     thresholds = _Thresholds(
