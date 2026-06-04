@@ -149,7 +149,7 @@ class InfectionAdapter(ToolAdapter):
                     total=killed + survived + timed_out + escaped + untested,
                     killed=killed, survived=survived, timed_out=timed_out,
                     escaped=escaped, untested=untested,
-                    msi=round(msi, 4), covered_msi=round(covered_msi, 4) if covered_msi is not None else None,  # pragma: no mutate
+                    msi=round(msi, 4), covered_msi=round(covered_msi, 4) if covered_msi is not None else 0.0,  # pragma: no mutate
                 )
         except (json.JSONDecodeError, ValueError):
             pass

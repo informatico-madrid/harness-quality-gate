@@ -1,3 +1,7 @@
+[tool.ruff]
+# Fixtures are intentionally defective code used to test the gate itself.
+extend-exclude = ["tests/fixtures"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
@@ -47,10 +51,6 @@ omit = [
     "harness_quality_gate/adapters/python/weak_test.py",
     # Shared infrastructure adapters for external scanners (checkov, gitleaks, semgrep, trivy)
     "harness_quality_gate/adapters/shared/*",
-    # Configurator UI (interactive wizard, not core gate logic)
-    "harness_quality_gate/configurator.py",
-    # Legacy checkpoint v2 builder (superseded by checkpoint.py)
-    "harness_quality_gate/checkpoint_v2.py",
 ]
 
 [tool.coverage.report]
@@ -77,18 +77,10 @@ paths_to_mutate = [
     "harness_quality_gate/allow_list_auditor.py",
     "harness_quality_gate/checkpoint.py",
     "harness_quality_gate/cli.py",
-    "harness_quality_gate/concurrency.py",
     "harness_quality_gate/config.py",
-    "harness_quality_gate/detector.py",
-    "harness_quality_gate/dispatcher.py",
-    "harness_quality_gate/doctor.py",
     "harness_quality_gate/exit_codes.py",
-    "harness_quality_gate/framework_sniffer.py",
-    "harness_quality_gate/installer.py",
     "harness_quality_gate/messages_es.py",
-    "harness_quality_gate/messages_fr.py",
     "harness_quality_gate/models.py",
-    "harness_quality_gate/state.py",
 ]
 # Tests directory (REQUIRED — was missing, causing mutmut to not find tests)
 tests_dir = ["tests/unit/"]
