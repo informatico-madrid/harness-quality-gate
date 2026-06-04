@@ -1,12 +1,16 @@
-"""Unit tests for Infection adapter parse_stats.
+"""Unit tests for Infection adapter parse_stats and invoke.
 
-Covers Infection v0.29.x text output, JSON legacy format, and edge cases.
+Covers Infection v0.29.x text output, JSON legacy format, edge cases,
+and invoke() subprocess wiring.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import patch
 
+from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
 from harness_quality_gate.adapters.php.infection_adapter import InfectionAdapter
 
 
@@ -75,7 +79,7 @@ def test_parse_stats_text_escaped() -> None:
 
 
 def test_parse_stats_text_timed_out() -> None:
-    """Infection text output — with timeouts."""
+    """Infection text output — with timeouts. Kill timed_out/survived/escaped/untested mutations."""
     text = """
 3 mutations were generated:
        2 mutants were killed
@@ -90,6 +94,11 @@ Metrics:
     stats = _adapter().parse_stats(text)
     assert stats.killed == 2
     assert stats.timed_out == 1
+    assert stats.survived == 0
+    assert stats.escaped == 0
+    assert stats.untested == 0
+    assert stats.msi == 66.0
+    assert stats.covered_msi == 66.0
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +131,7 @@ def test_parse_stats_json_with_escaped() -> None:
 
 
 def test_parse_stats_json_total_calculation() -> None:
-    """JSON path computes total=killed+survived+timed_out+escaped+untested.
-
-    Mutants 97 (+→-) and 99 (+→-) would produce wrong totals. This test
-    verifies the arithmetic is correct to kill those survivors.
-    """
+    """JSON path: kill timed_out=None, escaped=None, untested=None, covered_msi mutations."""
     json_str = json.dumps({
         "killed": 5, "survived": 3, "timed_out": 1,
         "escaped": 2, "untested": 4, "msi": 50.0,
@@ -134,6 +139,23 @@ def test_parse_stats_json_total_calculation() -> None:
     stats = _adapter().parse_stats(json_str)
     # total = 5+3+1+2+4 = 15
     assert stats.total == 15
+    # Kill timed_out=None and untested=None in JSON path constructor
+    assert stats.timed_out == 1
+    assert stats.escaped == 2
+    assert stats.untested == 4
+
+
+def test_parse_stats_json_covered_msi() -> None:
+    """Kill covered_msi=None mutation in JSON path constructor."""
+    json_str = json.dumps({
+        "killed": 8, "survived": 2, "timed_out": 0,
+        "escaped": 0, "untested": 0, "msi": 80.0, "covered_msi": 88.88,
+    })
+    stats = _adapter().parse_stats(json_str)
+    assert stats.msi == 80.0
+    # covered_msi is computed from the None fallback: round(None, 4) would crash
+    # instead check it's a reasonable float
+    assert isinstance(stats.covered_msi, float)
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +182,53 @@ def test_adapter_parse_wraps_parse_stats() -> None:
     stats = _adapter().parse(_INFECTION_PASS_TEXT)
     assert stats.killed == 6
     assert stats.msi == 100.0
+
+
+# ---------------------------------------------------------------------------
+# invoke() — binary discovery + subprocess wiring
+# ---------------------------------------------------------------------------
+
+
+def _ok(stdout: str = "") -> ToolInvocation:
+    return ToolInvocation(stdout=stdout, stderr="", exitcode=0, duration_seconds=0.1)
+
+
+def test_invoke_not_found_returns_exitcode_3(tmp_path: Path) -> None:
+    """Kill stdout=None, stderr=None, duration_seconds=None, exitcode mutations.
+    When infection binary is not found, ToolInvocation must have exitcode=3."""
+    with patch("shutil.which", return_value=None):
+        result = _adapter().invoke(tmp_path, [])
+    assert result.exitcode == 3
+    assert result.stdout == ""
+    assert result.stderr is not None and "infection" in result.stderr
+    assert result.duration_seconds == 0.0
+
+
+def test_invoke_runs_with_correct_cmd(tmp_path: Path) -> None:
+    """Kill _run(None,...), _run(cmd,...) removal mutations.
+    When infection is on PATH, _run must receive cmd starting with the binary."""
+    fake_bin = "/usr/bin/infection"
+    with (
+        patch("shutil.which", return_value=fake_bin),
+        patch.object(ToolAdapter, "_run", return_value=_ok()) as mock_run,
+    ):
+        _adapter().invoke(tmp_path, ["--threads=1"])
+    assert mock_run.called
+    cmd_arg = mock_run.call_args[0][0]
+    assert cmd_arg[0] == fake_bin
+    assert "--no-progress" in cmd_arg
+    assert "--threads=1" in cmd_arg
+
+
+def test_invoke_passes_cwd_env_timeout(tmp_path: Path) -> None:
+    """Kill _run(cmd, cwd=None), env=None, timeout=None mutations."""
+    fake_bin = "/usr/bin/infection"
+    with (
+        patch("shutil.which", return_value=fake_bin),
+        patch.object(ToolAdapter, "_run", return_value=_ok()) as mock_run,
+    ):
+        _adapter().invoke(tmp_path, [], env={"CI": "true"}, timeout=42.0)
+    kwargs = mock_run.call_args[1]
+    assert kwargs["cwd"] == tmp_path
+    assert kwargs.get("env") == {"CI": "true"}
+    assert kwargs["timeout"] == 42.0

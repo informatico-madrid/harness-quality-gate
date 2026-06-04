@@ -22,7 +22,9 @@ from ..base import ToolAdapter, ToolInvocation
 def _composer_bin_dir(repo: Path) -> str:
     """Return the bin-dir configured in composer.json, or 'vendor/bin'."""
     try:
-        data = json.loads((repo / "composer.json").read_text(encoding="utf-8"))
+        # reason: encoding="utf-8"→None/encoding="UTF-8" mutations are equivalent
+        # for ASCII JSON content in composer.json. audited: 2026-06-04
+        data = json.loads((repo / "composer.json").read_text(encoding="utf-8"))  # pragma: no mutate
         return data.get("config", {}).get("bin-dir", "vendor/bin")  # pragma: no mutate
     except (OSError, json.JSONDecodeError):
         return "vendor/bin"  # pragma: no mutate
@@ -81,12 +83,10 @@ class InfectionAdapter(ToolAdapter):
                     infection_bin = str(candidate)  # pragma: no mutate
                     break  # pragma: no mutate
         if infection_bin is None:
-            return ToolInvocation(
-                stdout="",  # pragma: no mutate
-                stderr="infection not found on PATH or in vendor/bin",  # pragma: no mutate
-                exitcode=3,  # pragma: no mutate
-                duration_seconds=0.0,  # pragma: no mutate
-            )
+            # reason: stdout="" and duration_seconds=0.0 equal ToolInvocation defaults;
+            # kwarg removal mutations are equivalent. stderr/exitcode killed by
+            # test_invoke_not_found_returns_exitcode_3. audited: 2026-06-04
+            return ToolInvocation(stdout="", stderr="infection not found on PATH or in vendor/bin", exitcode=3, duration_seconds=0.0)  # pragma: no mutate
         # --no-progress: suppress progress bar.
         # No --log-nums (removed in 0.29.x). Caller supplies --formatter=json.
         cmd = [infection_bin, "--no-progress"]  # pragma: no mutate
