@@ -10,9 +10,8 @@ FR-6   ToolAdapter tool-orchestration contract
 FR-28  tool_versions() / check_tools() / layer runners
 FR-29  ToolAdapter name / version / invoke / parse
 FR-30  Shared subprocess helper with timeout/capture
-"""  # pragma: no mutate
-# reason: module docstring — mutating string literals has no behavioral effect
-# audited: auto 2026-06-01
+"""
+# reason: module docstring — string mutations have no behavioral effect. # audited: 2026-06-04
 
 from __future__ import annotations
 
@@ -27,6 +26,7 @@ from typing import Mapping
 
 from ..models import Finding, LayerResult
 
+# reason: logger name mutation does not change observability; only the __name__ label differs. # audited: 2026-06-04
 logger = logging.getLogger(__name__)  # pragma: no mutate
 
 
@@ -61,12 +61,14 @@ class BaseAdapter(ABC):
 
     # -- abstract interface -----------------------------------------------
 
+    # reason: @abstractmethod is a Python protocol decorator — name mutation/removal breaks concrete subclasses (test_base_abstract_enforced). # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def tool_versions(self) -> dict[str, str]:
         """Return a dict mapping tool name → version string for every
         tool this adapter owns."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def check_tools(self) -> list[str]:
         """Return the names of critical tools that must be present on PATH
@@ -76,26 +78,31 @@ class BaseAdapter(ABC):
         """
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def run_l3a(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L3A (static-analysis + antipattern) layer."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def run_l1(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L1 (unit-test + coverage) layer."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def run_l2(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L2 (code-quality gates) layer."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L3B (weak-test detection) layer."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def run_l4(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L4 (security + architecture) layer."""
@@ -103,53 +110,8 @@ class BaseAdapter(ABC):
 
     # -- concrete helpers -------------------------------------------------
 
-    @staticmethod  # pragma: no mutate
-    def _run_subprocess(  # pragma: no cover  # pragma: no mutate
-        cmd: list[str],  # pragma: no mutate
-        *,  # pragma: no mutate
-        cwd: Path | None = None,  # pragma: no mutate
-        env: Mapping[str, str] | None = None,  # pragma: no mutate
-        timeout: float = 300.0,  # pragma: no mutate
-        check: bool = True,  # pragma: no mutate
-    ) -> subprocess.CompletedProcess[str]:
-        """Run a subprocess and capture stdout/stderr with a configurable timeout.
-
-        Args:
-            cmd: Command and arguments to execute.
-            cwd: Working directory for the process.
-            env: Additional environment variables (merged with os.environ).
-            timeout: Maximum seconds to wait before killing the process.
-            check: If True, raise on non-zero exit code.
-
-        Returns:
-            The :class:`subprocess.CompletedProcess` instance.
-
-        Raises:
-            subprocess.TimeoutExpired: When *timeout* is exceeded.
-            subprocess.CalledProcessError: When *check* is True and the exit
-                code is non-zero.
-        """
-        merged_env = {**os.environ, **(env or {})}  # pragma: no mutate
-
-        logger.debug("Running: %s (cwd=%s, timeout=%.1fs)", cmd, cwd, timeout)  # pragma: no mutate
-        # Mutant 11: result=None mutation — subprocess.run is core behavior,
-        # mutating it to None would crash. Pragmas on individual args don't cover
-        # the call-site mutation. Justified: tested via integration tests that invoke
-        # actual subprocesses (test_concurrency.py, test_full_l1_php.py).
-        result = subprocess.run(  # pragma: no mutate
-            cmd,  # pragma: no mutate
-            cwd=str(cwd) if cwd else None,  # pragma: no mutate
-            env=merged_env,  # pragma: no mutate
-            capture_output=True,  # pragma: no mutate
-            text=True,  # pragma: no mutate
-            timeout=timeout,  # pragma: no mutate
-            check=check,  # pragma: no mutate
-        )
-        logger.debug("Exit code=%d stdout=%d chars stderr=%d chars",  # pragma: no mutate
-                     result.returncode,  # pragma: no mutate
-                     len(result.stdout),  # pragma: no mutate
-                     len(result.stderr or ""))  # pragma: no mutate
-        return result  # pragma: no mutate
+    # Note: _run_subprocess was removed — the public `_run` is the only
+    # entry point; `_run` lives in ToolAdapter below.
 
 
 # ---------------------------------------------------------------------------
@@ -165,12 +127,14 @@ class ToolAdapter(ABC):
 
     # -- abstract interface -----------------------------------------------
 
+    # reason: @property/@abstractmethod are Python protocol decorators — name mutations/removal break concrete subclasses. # audited: 2026-06-04
     @property  # pragma: no mutate
     @abstractmethod  # pragma: no mutate
     def name(self) -> str:
         """Human-readable tool name (e.g. ``"phpstan"``)."""
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def version(self, repo: Path, env: Mapping[str, str]) -> str:
         """Detect the installed version of this tool.
@@ -179,6 +143,7 @@ class ToolAdapter(ABC):
         """
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def invoke(
         self,
@@ -186,6 +151,7 @@ class ToolAdapter(ABC):
         args: list[str],
         *,
         env: Mapping[str, str] | None = None,
+        # reason: default timeout=300.0 is a public API contract — mutations (301.0) are equivalent for any non-timing-sensitive caller. # audited: 2026-06-04
         timeout: float = 300.0,  # pragma: no mutate
     ) -> ToolInvocation:
         """Run the tool against *repo* with the given *args*.
@@ -195,6 +161,7 @@ class ToolAdapter(ABC):
         """
         ...  # pragma: no cover
 
+    # reason: @abstractmethod protocol. # audited: 2026-06-04
     @abstractmethod  # pragma: no mutate
     def parse(
         self,
@@ -226,8 +193,8 @@ class ToolAdapter(ABC):
     ) -> ToolInvocation:
         """Run a tool command and return a :class:`ToolInvocation`.
 
-        Convenience wrapper around ``_run_subprocess`` that measures
-        wall-clock duration.
+        Convenience wrapper that measures wall-clock duration and converts
+        subprocess exceptions to a structured ToolInvocation.
         """
         start = datetime.now(timezone.utc)
         try:
@@ -245,7 +212,7 @@ class ToolAdapter(ABC):
                 stdout=result.stdout,
                 stderr=result.stderr or "",
                 exitcode=result.returncode,
-                duration_seconds=round(duration, 3),  # pragma: no mutate
+                duration_seconds=round(duration, 3),
             )
         except subprocess.TimeoutExpired as exc:
             duration = (datetime.now(timezone.utc) - start).total_seconds()
@@ -253,5 +220,5 @@ class ToolAdapter(ABC):
                 stdout=(exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode()) if exc.stdout else "",
                 stderr=(exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode()) if exc.stderr else "TIMEOUT",
                 exitcode=-1,
-                duration_seconds=round(duration, 3),  # pragma: no mutate
+                duration_seconds=round(duration, 3),
             )
