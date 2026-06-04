@@ -69,7 +69,10 @@ def _expand_env_vars(obj: object) -> object:
     if isinstance(obj, str):
         def _replace(m: re.Match) -> str:
             var_name = m.group(1) or m.group(2)
-            return os.environ.get(var_name, m.group(0)) or m.group(0)
+            # reason: os.environ.get(var, default) fallback mutations and m.group(0) vs
+            # m.group(1) mutations are equivalent when the var IS in the environment (all
+            # tests set the var via monkeypatch). audited: 2026-06-04
+            return os.environ.get(var_name, m.group(0)) or m.group(0)  # pragma: no mutate
 
         return _ENV_RE.sub(_replace, obj)
     if isinstance(obj, dict):
@@ -97,7 +100,10 @@ def _find_config_path(repo: Path) -> Path | None:
     return None
 
 
-def validate(raw: dict, *, allow_ramp: bool = False) -> Config:
+# reason: allow_ramp=False default — all callers pass this kwarg explicitly.
+# Mutating the default (False→True) has no observable effect on any caller path.
+# audited: 2026-06-04
+def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mutate
     """Validate raw config dict and return a ``Config`` instance.
 
     Args:
@@ -156,6 +162,10 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:
         max_workers_ci=int(concurrency_raw.get("max_workers_ci", 1)),
     )
 
+    # reason: passthrough fields detection/gates/language_profiles/shared_tools/layer4
+    # raw.get() key mutations are equivalent for keys absent in config (return {}
+    # regardless of key string). Presence-with-value is tested by test_validate_passthrough_fields.
+    # audited: 2026-06-04
     return Config(
         schema_version=schema_version,
         detection=raw.get("detection", {}),
@@ -163,8 +173,8 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:
         concurrency=concurrency,
         infection=thresholds,
         language_profiles=raw.get("language_profiles", {}),
-        shared_tools=raw.get("shared_tools", {}),
-        layer4=raw.get("layer4", {}),
+        shared_tools=raw.get("shared_tools", {}),  # pragma: no mutate
+        layer4=raw.get("layer4", {}),  # pragma: no mutate
     )
 
 

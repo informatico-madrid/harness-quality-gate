@@ -263,6 +263,15 @@ def test_validate_concurrency_defaults_exact() -> None:
     assert "CI" in config2.concurrency.ci_env_vars
     assert "GITHUB_ACTIONS" in config2.concurrency.ci_env_vars
 
+    # Pass explicit non-default values — kills 'max_workers_local' key mutation
+    # (if key becomes 'XXmax_workers_localXX', the value 8 won't be found → default 4 used)
+    cfg3 = _make_v2_config({
+        "concurrency": {"max_workers_local": 8, "max_workers_ci": 2}
+    })
+    config3 = validate(cfg3)
+    assert config3.concurrency.max_workers_local == 8
+    assert config3.concurrency.max_workers_ci == 2
+
 
 def test_validate_threshold_from_config() -> None:
     """Kill float(min_msi) → int(min_msi) and similar type-cast mutations."""
