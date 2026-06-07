@@ -561,6 +561,35 @@ class TestCmdAll:
             code = _cmd_all(_make_args(repo=str(tmp_path)))
         assert code == PASS
 
+    def test_timestamped_checkpoint_write_failure_is_swallowed(self, tmp_path):
+        """Kill the 'except Exception ... logger.warning' mutation path (cli.py lines 187-189).
+
+        When write_checkpoint raises for the timestamped file, the warning must be
+        logged but execution continues so the latest checkpoint is still written.
+        """
+        adapter = self._make_mock_adapter(passed=True)
+        call_count = {"n": 0}
+
+        def failing_write(path, data):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call: timestamped checkpoint — raise
+                raise OSError("disk full for timestamped")
+            # Second call: latest checkpoint — succeeds
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint", side_effect=failing_write),
+            patch.object(Path, "write_text", Path.write_text),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path)))
+
+        # The command should still pass — exception is swallowed
+        assert code == PASS
+        # The latest checkpoint must still have been written
+        latest = tmp_path / "_quality-gate" / "quality-gate-latest.json"
+        assert latest.exists()
+
 
 # ---------------------------------------------------------------------------
 # _cmd_audit_ignores

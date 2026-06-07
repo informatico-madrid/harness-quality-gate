@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 import jsonschema
 
+from unittest.mock import patch
+
 from harness_quality_gate.checkpoint import build, validate, write
 from tests.factories import build_layer_result
 
@@ -332,3 +334,23 @@ def test_build_findings_default_empty_list(good_detection: dict) -> None:
         good_detection,
     )
     assert result2["layers"][0]["findings"] == []
+
+
+def test_write_atomic_cleanup_on_fdopen_failure(good_detection: dict, tmp_path: Path) -> None:
+    """Kill the 'BaseException after mkstemp → no cleanup' mutation in write().
+
+    When os.fdopen raises, the except block must call os.unlink(tmp_path)
+    to clean up the orphaned temp file.  If os.unlink is removed or the
+    exception is swallowed without cleanup, the mutant survives.
+    """
+    data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    target = tmp_path / "checkpoint.json"
+
+    with patch("harness_quality_gate.checkpoint.os.fdopen", side_effect=IOError("write failed")):
+        with pytest.raises(IOError, match="write failed"):
+            write(target, data)
+
+    # The target must NOT exist (write never completed)
+    assert not target.exists()
+    # Temp file must be cleaned up — no .quality-gate-*.tmp leftovers
+    assert list(tmp_path.glob(".quality-gate-*.tmp")) == []

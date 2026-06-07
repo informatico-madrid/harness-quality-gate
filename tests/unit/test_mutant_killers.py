@@ -140,6 +140,21 @@ def test_detection_default_fields() -> None:
     assert d.file_counts == {}
 
 
+def test_detection_primary_returns_language() -> None:
+    """Kill Detection.primary property mutation (line 35):
+    return self.language → return self.framework (or None, etc).
+
+    The `primary` alias must return the exact `language` value.
+    """
+    from harness_quality_gate.models import Detection, Runtime
+
+    for lang in ("python", "php", "rust", "go"):
+        rt = Runtime(python_version="3.12", concurrency="parallel", ci=False)
+        d = Detection(repo_path="/tmp", language=lang, framework=None,
+                      confidence=1.0, runtime=rt)
+        assert d.primary == lang, f"primary should equal language ({lang})"
+
+
 # ---------------------------------------------------------------------------
 # concurrency.py — CI env var names, mode strings, max_threads values
 # ---------------------------------------------------------------------------
@@ -355,5 +370,24 @@ def test_base_run_timeout_duration_rounded_to_3_places() -> None:
         result = PhpStanAdapter._run(['echo'], timeout=0.001)
     assert result.duration_seconds == round(result.duration_seconds, 3)
     assert result.exitcode == -1
+
+
+# ---------------------------------------------------------------------------
+# __main__.py — entry point coverage (lines 3-9: import sys, from .cli import
+# main, sys.exit(main(sys.argv[1:])))
+# ---------------------------------------------------------------------------
+
+
+def test_main_no_args_returns_unsupported() -> None:
+    """Exercises cli.main([]) which is what __main__.py executes on line 9.
+
+    This confirms the main function in cli.py behaves correctly when
+    called from __main__.py's sys.exit(main(sys.argv[1:])) pattern.
+    """
+    from harness_quality_gate.cli import main
+    from harness_quality_gate.exit_codes import UNSUPPORTED
+    assert main([]) == UNSUPPORTED
+
+
 
 

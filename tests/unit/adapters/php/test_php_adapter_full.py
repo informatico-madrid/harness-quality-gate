@@ -1445,6 +1445,34 @@ class TestRunInfection:
         result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
         assert result is None
 
+    def test_infection_pcov_flag_appended(self, tmp_path):
+        """Kill 'if pcov_flag' dead code mutant (line 686-687).
+
+        When _pcov_initial_tests_option returns a non-empty PCOV flag,
+        the --initial-tests-php-options must be appended to the args list
+        before __main__.py mutation exclusion.
+        """
+        adapter = PhpAdapter()
+        # Mock inner adapters
+        adapter._infection = MagicMock()
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="6 mutants were killed\n", stderr="", exitcode=0
+        )
+        adapter._infection.parse.return_value = MutationStats(
+            total=6, killed=6, survived=0, escaped=0, timed_out=0,
+            untested=0, msi=100.0, covered_msi=100.0
+        )
+        # Mock _pcov_initial_tests_option to return a non-empty flag
+        # (simulating PCOV loaded but not by PHP — found via glob)
+        with patch.object(
+            adapter,
+            "_pcov_initial_tests_option",
+            return_value="-dextension=/usr/lib/php/20210902/pcov.so",
+        ):
+            result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        call_args = adapter._infection.invoke.call_args[0][1]
+        assert "--initial-tests-php-options=-dextension=/usr/lib/php/20210902/pcov.so" in call_args
+
     def test_infection_args_order(self, tmp_path):
         adapter = _make_mock_adapter(
             infection_stats=MutationStats(
