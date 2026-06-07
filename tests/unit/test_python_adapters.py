@@ -49,7 +49,59 @@ class TestBanditAdapter:
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="bandit 1.7.5\n")):
                 result = self._adapter().version(tmp_path)
-                assert result == "bandit 1.7.5"
+            assert result == "bandit 1.7.5"
+
+    def test_version_passes_env_to_run(self, tmp_path: Path):
+        """env dict is passed through to _run. Kills mutmut_13,15,16 (env mutations)."""
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+            capture = []
+            def cap(cmd, **kw):
+                capture.append(kw)
+                return _fake_invocation(stdout="1.7.5\n")
+            with patch.object(self._adapter().__class__, "_run", side_effect=cap):
+                self._adapter().version(tmp_path, env={"MY_ENV": "val"})
+            # env must be {"MY_ENV": "val"}, not None or mutated
+            assert capture[0]["env"] == {"MY_ENV": "val"}
+            # cwd must be tmp_path, not None or mutated
+            assert capture[0]["cwd"] is tmp_path
+
+    def test_version_command_args_validated(self, tmp_path: Path):
+        """Verify _run receives correct cmd and kwargs.
+        This kills mutations on _run() args: missing kwarg, None, wrong values."""
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+            capture = []
+            def capture_run(cmd, **kwargs):
+                capture.append((cmd, kwargs))
+                return _fake_invocation(stdout="bandit 1.7.5\n")
+            with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
+                self._adapter().version(tmp_path)
+        # Check both cmd and kwargs
+        assert capture == [
+            (["/usr/bin/bandit", "--version"], {
+                "cwd": tmp_path, "env": None
+            })
+        ]
+
+    def test_version_which_arg_is_string(self, tmp_path: Path):
+        """_run receives a real binary path from shutil.which('bandit').
+        Kills: shutil.which('bandit') → shutil.which(None/'XXbanditXX'/'BANDIT').
+        Uses side_effect so that mutated strings return None, triggering the error."""
+        with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="bandit 1.7.5\n")):
+            with patch(
+                "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+                side_effect=lambda name: "/usr/bin/bandit" if name == "bandit" else None,
+            ):
+                result = self._adapter().version(tmp_path)
+            assert result == "bandit 1.7.5"
+
+    def test_version_binary_not_found_raises(self, tmp_path: Path):
+        """When shutil.which can't find bandit, raises RuntimeError."""
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+            return_value=None,
+        ):
+            with pytest.raises(RuntimeError, match="bandit not found on PATH"):
+                self._adapter().version(tmp_path)
 
     def test_version_empty_output(self, tmp_path: Path):
         """Version returns 'unknown' when stdout is empty."""
@@ -64,6 +116,13 @@ class TestBanditAdapter:
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="v2.0\n")):
                 result = self._adapter().version(tmp_path)
                 assert result.startswith("v2.0")
+
+    def test_version_not_found_exact_message(self, tmp_path: Path):
+        """Exact error message — kills string mutations (prefix/suffix, case)."""
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc:
+                self._adapter().version(tmp_path)
+        assert str(exc.value) == "bandit not found on PATH"
 
     # -- invoke --
 
@@ -92,6 +151,7 @@ class TestBanditAdapter:
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
                 assert cmd == ["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path), "--ignore-paths", "tests"]
+                assert kwargs.get("cwd") is tmp_path
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
                 inv = self._adapter().invoke(tmp_path, ["--ignore-paths", "tests"])
@@ -102,15 +162,17 @@ class TestBanditAdapter:
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
                 assert cmd == ["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path)]
+                assert kwargs.get("cwd") is tmp_path
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 0
 
     def test_invoke_timeout_passthrough(self, tmp_path: Path):
-        """Timeout is passed to _run as keyword arg."""
+        """Timeout is passed to _run as keyword arg. Cwd is also validated."""
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
+                assert kwargs.get("cwd") is tmp_path
                 assert kwargs.get("timeout") == 60.0
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
@@ -120,10 +182,42 @@ class TestBanditAdapter:
         """env dict is passed to _run."""
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
+                assert kwargs.get("cwd") is tmp_path
                 assert kwargs.get("env").get("BANDIT_CONF") == "/custom.conf"
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
                 self._adapter().invoke(tmp_path, [], env={"BANDIT_CONF": "/custom.conf"})
+
+    def test_invoke_with_no_args_validates_cmd(self, tmp_path: Path):
+        """Verify _run receives correct command list.
+        This kills mutmut on _run() args (missing cmd, None, etc.)."""
+        capture = []
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+            side_effect=lambda name: "/usr/bin/bandit" if name == "bandit" else None,
+        ):
+            def cap(cmd, **kw):
+                capture.append((cmd, kw))
+                return _fake_invocation(stdout='{"results":[]}')
+            with patch.object(self._adapter().__class__, "_run", side_effect=cap):
+                self._adapter().invoke(tmp_path, [])
+        assert capture == [
+            (["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path)], {
+                "cwd": tmp_path, "env": None, "timeout": 300.0
+            })
+        ]
+
+    def test_invoke_binary_not_found_via_which(self, tmp_path: Path):
+        """When shutil.which returns None, invoke returns error without calling _run."""
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+            return_value=None,
+        ):
+            with patch.object(self._adapter().__class__, "_run") as mock_run:
+                inv = self._adapter().invoke(tmp_path, [])
+                mock_run.assert_not_called()
+                assert inv.exitcode == 3
+                assert "not found on PATH" in inv.stderr
 
     # -- parse --
 
@@ -295,15 +389,45 @@ class TestBanditAdapter:
 
     def test_parse_missing_fields_uses_defaults(self):
         """Missing fields in issue dict use defaults (empty string, 'MEDIUM' severity, 0 line)."""
-        data = {"results": [{"filename": "minimal.py"}]}
+        data = {"results": [{"filename": "minimal.py", "issue_id": "B999"}]}
         findings = self._adapter().parse(json.dumps(data))
         assert len(findings) == 1
         assert findings[0].node == "minimal.py"
         assert findings[0].severity == "warning"  # default severity
-        assert findings[0].rule_id == ""
+        assert findings[0].rule_id == "B999"
         assert findings[0].cwe == ""
-        assert "minimal.py" in findings[0].message
+        assert findings[0].message is not None
+        assert isinstance(findings[0].message, str)
+        # Exact message includes line_number=0 (kills mutmut_70 default 0→1)
+        assert findings[0].message == "minimal.py:0 [B999]: "
         assert findings[0].fix_hint is not None
+        # Exact message includes issue_id in brackets - kills default-value mutations
+        assert findings[0].message == "minimal.py:0 [B999]: "
+
+    def test_parse_empty_issue_with_no_keys(self):
+        """Issue with ALL keys missing → default values used.
+        Kills default-value mutations: filename→None/XXXX, issue_id→None,
+        line_number→None/1, issue_text→None/XXXX, cwe→None."""
+        data = {"results": [{}]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        # These defaults are asserted exactly
+        assert f.node == ""                 # kills filename default to None/"XXXX"
+        assert f.severity == "warning"      # kills severity_map key mutations on MEDIUM
+        assert f.message is not None        # kills issue_text default to None
+        assert isinstance(f.message, str)   # kills issue_text default to None
+        assert f.fix_hint is not None       # kills fix_hint with empty details
+        assert f.rule_id == ""              # kills issue_id default to None
+        assert f.cwe == ""                  # kills cwe default to None
+        """issue_text missing → default '' → killed when mutation changes to None or 'XXXX'."""
+        data = {"results": [{"filename": "x.py", "line_number": 5, "issue_id": "B999"}]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].message is not None
+        assert isinstance(findings[0].message, str)
+        assert findings[0].fix_hint is not None
+        assert isinstance(findings[0].fix_hint, str)
 
     def test_parse_multiple_findings(self):
         """Multiple findings returned in correct order."""
@@ -319,6 +443,110 @@ class TestBanditAdapter:
         assert findings[0].severity == "error"
         assert findings[1].node == "b.py"
         assert findings[1].severity == "info"
+
+    def test_parse_data_without_results_key(self):
+        """Data without 'results' key → empty list.
+        Catches mutations on dict.get('results', []) default:
+          None/empty-tuple mutation → not a list → returns []"""
+        findings = self._adapter().parse(json.dumps({}))
+        assert findings == []
+
+    def test_parse_data_results_is_dict(self):
+        """results is a dict (not list) → empty list returned.
+        Kills: isinstance(issues, list) → isinstance(issues, list) return findings"""
+        findings = self._adapter().parse(json.dumps({"results": {"foo": "bar"}}))
+        assert findings == []
+
+    def test_parse_severity_all_values_asserted(self):
+        """All severity levels mapped exactly to kill severity_map mutations.
+        Covers: HIGH→error, MEDIUM→warning, LOW→info key/value mutations."""
+        data = {"results": [
+            {"filename": "a.py", "issue_id": "B101",
+             "issue_severity": "HIGH", "issue_text": "x", "line_number": 1, "cwe": ""},
+            {"filename": "b.py", "issue_id": "B102",
+             "issue_severity": "MEDIUM", "issue_text": "y", "line_number": 2, "cwe": ""},
+            {"filename": "c.py", "issue_id": "B103",
+             "issue_severity": "LOW", "issue_text": "z", "line_number": 3, "cwe": ""},
+        ]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 3
+        assert findings[0].severity == "error"       # kills mutations on HIGH→XerrorX
+        assert findings[0].message == "a.py:1 [B101]: x"
+        assert findings[1].severity == "warning"     # kills mutations on MEDIUM key/value
+        assert findings[1].message == "b.py:2 [B102]: y"
+        assert findings[2].severity == "info"        # kills mutations on LOW key/value
+        assert findings[2].message == "c.py:3 [B103]: z"
+
+    def test_parse_issue_missing_keys_asserts_exactly(self):
+        """Issue without severity/filename/issue_id → exact defaults verified.
+        Catches default mutations on: issue_severity, filename, issue_id, issue_text,
+        line_number, cwe key and default-value mutations."""
+        data = {"results": [
+            {"filename": "minimal.py"},  # missing all optional keys
+        ]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "minimal.py"
+        assert f.severity == "warning"      # default severity_raw is "MEDIUM"
+        assert f.message is not None
+        assert "minimal.py" in f.message
+        assert f.fix_hint is not None
+        # These assertions catch default-value mutations:
+        assert f.rule_id == ""              # catches issue_id default to None/"XXXX"
+        assert f.cwe == ""                  # catches cwe default to None/"XXXX"
+        assert f.message is not None        # catches issue_text default to None
+
+    def test_parse_with_none_cwe(self):
+        """CWE value is None (not dict, not string) → cwe_id stays as default.
+        Kills mutations on cwe_id = '': None and XXXX variants."""
+        data = {"results": [
+            {"filename": "f.py", "issue_id": "B602",
+             "issue_severity": "MEDIUM", "issue_text": "test",
+             "line_number": 5, "cwe": None},
+        ]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].cwe == ""        # mutation to None or "XXXX" killed
+
+    def test_parse_severity_missing_key_all_severities(self):
+        """Issues without issue_severity key — default 'MEDIUM' used.
+        Verifies that default value mutations (MEDIUM→None/XXMEDIUMXX/medium) all
+        produce 'warning' as the severity (which is the map's MEDIUM→warning mapping)."""
+        data = {"results": [
+            {"filename": "a.py", "issue_id": "B1", "issue_text": "t1",
+             "line_number": 1, "cwe": ""},
+            {"filename": "b.py", "issue_id": "B2",
+             "issue_severity": "UNKNOWN", "issue_text": "t2",
+             "line_number": 2, "cwe": ""},
+        ]}
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 2
+        # Both: default MEDIUM and explicit UNKNOWN → severity_map defaults to "warning"
+        assert findings[0].severity == "warning"
+        assert findings[1].severity == "warning"
+
+    def test_parse_cwe_id_missing_from_dict(self):
+        """CWE dict without 'id' → falls back to 'link'.
+        Kills mutations on dict.get('id', '') default mutations."""
+        data = json.loads('{"results": [{"filename": "f.py", "issue_id": "B602", '
+                          '"issue_severity": "MEDIUM", "issue_text": "test", '
+                          '"line_number": 5, "cwe": {"link": "https://example.com"}}]}')
+        findings = self._adapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].cwe == "https://example.com"
+
+    def test_parse_result_key_changes(self):
+        """Test with data lacking 'results' key — mutations that change key work.
+        Catches: data.get('results') → data.get('RESULTS'), 'Issues', etc."""
+        # Data with 'results' key (normal)
+        normal = self._adapter().parse(json.dumps({"results": [
+            {"filename": "a.py", "issue_id": "B1",
+             "issue_severity": "HIGH", "issue_text": "x", "line_number": 1, "cwe": ""}]}))
+        # Data without 'results' key (triggers default in mutated code)
+        no_results = self._adapter().parse(json.dumps({}))
+        assert len(normal) == 1
+        assert len(no_results) == 0
 
     # RuffAdapter
     # ---------------------------------------------------------------------------
