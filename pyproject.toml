@@ -61,9 +61,10 @@ fail_under = 100
 # Array format for paths_to_mutate (not comma-separated string)
 paths_to_mutate = [
     "harness_quality_gate/__init__.py",
-    "harness_quality_gate/__main__.py",
     "harness_quality_gate/adapters/__init__.py",
     "harness_quality_gate/adapters/base.py",
+    # NOTE: __main__.py EXCLUDED — mutmut trampoline fails on frozen stdlib paths
+    # when this module is mutated. See Makefile KNOWN BUG section for details.
     "harness_quality_gate/adapters/php/",
     "harness_quality_gate/adapters/python/__init__.py",
     "harness_quality_gate/adapters/python/bandit_adapter.py",

@@ -63,3 +63,10 @@ specs/php-support/mutmut-cli-bottleneck-analysis.md
 specs/php-support/bottleneck-analysis-complete.md
 specs/php-support/bottleneck-root-cause.md
 specs/php-support/mutmut-performance-solutions.md
+mutmut-run.log
+*/results.txt
+*/results.json
+.gitignore
+*/mutation.log
+results.json
+mutmut_run.log
