@@ -256,10 +256,12 @@ class TestValidateInfectionStats:
         assert any("Mutation score" in f.message for f in findings)
         for f in findings:
             if "Mutation score" in f.message:
+                assert f.node == "infection"
                 assert f.severity == "error"
                 assert f.tool == "infection"
                 assert f.layer == "L1"
                 assert f.language == "php"
+                assert f.fix_hint == "Increase test coverage for mutants — see notCovered[] in checkpoint"
 
     def test_escaped_mutants_detected(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -267,10 +269,13 @@ class TestValidateInfectionStats:
             untested=0, msi=95.0, covered_msi=95.0
         ))
         assert any("escaped" in f.message.lower() for f in findings)
-        for f in findings:
-            if "escaped" in f.message.lower():
-                assert f.severity == "error"
-                assert f.tool == "infection"
+        escaped_f = [f for f in findings if "escaped" in f.message.lower()]
+        assert escaped_f[0].node == "infection"
+        assert escaped_f[0].severity == "error"
+        assert escaped_f[0].tool == "infection"
+        assert escaped_f[0].layer == "L1"
+        assert escaped_f[0].language == "php"
+        assert escaped_f[0].fix_hint == "Review survived mutants and improve tests"
 
     def test_timed_out_mutants_detected(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -278,10 +283,13 @@ class TestValidateInfectionStats:
             untested=0, msi=95.0, covered_msi=95.0
         ))
         assert any("timed out" in f.message.lower() for f in findings)
-        for f in findings:
-            if "timed out" in f.message.lower():
-                assert f.tool == "infection"
-                assert f.layer == "L1"
+        timeout_f = [f for f in findings if "timed out" in f.message.lower()]
+        assert timeout_f[0].node == "infection"
+        assert timeout_f[0].severity == "error"
+        assert timeout_f[0].tool == "infection"
+        assert timeout_f[0].layer == "L1"
+        assert timeout_f[0].language == "php"
+        assert timeout_f[0].fix_hint == "Investigate slow mutants; increase timeout or fix performance"
 
     def test_low_covered_msi(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -289,10 +297,13 @@ class TestValidateInfectionStats:
             untested=0, msi=95.0, covered_msi=90.0
         ))
         assert any("Covered mutation score" in f.message for f in findings)
-        for f in findings:
-            if "Covered mutation score" in f.message:
-                assert f.tool == "infection"
-                assert f.severity == "error"
+        covered_f = [f for f in findings if "Covered mutation score" in f.message]
+        assert covered_f[0].node == "infection"
+        assert covered_f[0].severity == "error"
+        assert covered_f[0].tool == "infection"
+        assert covered_f[0].layer == "L1"
+        assert covered_f[0].language == "php"
+        assert covered_f[0].fix_hint == "Write tests for mutants in covered code"
 
     def test_passing_stats_no_findings(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -308,12 +319,39 @@ class TestValidateInfectionStats:
         ))
         msi_f = [f for f in findings if "Mutation score" in f.message]
         covered_f = [f for f in findings if "Covered mutation" in f.message]
-        escaped_f = [f for f in findings if "escaped" in f.message.lower()]
+        escaped_f = [f for f in findings if f.message.startswith("5 mutant(s) escaped")]
         timeout_f = [f for f in findings if "timed out" in f.message.lower()]
         assert len(msi_f) >= 1
         assert len(covered_f) >= 1
         assert len(escaped_f) >= 1
         assert len(timeout_f) >= 1
+        # Verify ALL fields for each finding type to catch string mutation survivors
+        for f in msi_f:
+            assert f.node == "infection"
+            assert f.severity == "error"
+            assert f.tool == "infection"
+            assert f.layer == "L1"
+            assert f.language == "php"
+        for f in covered_f:
+            assert f.node == "infection"
+            assert f.severity == "error"
+            assert f.tool == "infection"
+            assert f.layer == "L1"
+            assert f.language == "php"
+        for f in escaped_f:
+            assert f.node == "infection"
+            assert f.severity == "error"
+            assert f.tool == "infection"
+            assert f.layer == "L1"
+            assert f.language == "php"
+            assert f.fix_hint == "Review survived mutants and improve tests"
+        for f in timeout_f:
+            assert f.node == "infection"
+            assert f.severity == "error"
+            assert f.tool == "infection"
+            assert f.layer == "L1"
+            assert f.language == "php"
+            assert f.fix_hint == "Investigate slow mutants; increase timeout or fix performance"
 
     def test_message_format_contains_percentage(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -328,8 +366,11 @@ class TestValidateInfectionStats:
             total=100, killed=90, survived=5, escaped=10, timed_out=0,
             untested=0, msi=90.0, covered_msi=90.0
         ))
-        escaped = [f for f in findings if "escaped" in f.message.lower()]
+        escaped = [f for f in findings if f.message.startswith("10 mutant(s) escaped")]
         assert any("10 mutant" in f.message for f in escaped)
+        # Check fix_hint to kill mutations on fix_hint field
+        assert escaped[0].fix_hint == "Review survived mutants and improve tests"
+        assert escaped[0].node == "infection"
 
     def test_timed_out_message_mentions_maxTimeouts(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -346,6 +387,10 @@ class TestValidateInfectionStats:
         ))
         msi_findings = [f for f in findings if "Mutation score" in f.message]
         assert any("FR-14" in f.message for f in msi_findings)
+        # Verify complete field integrity to catch node/fix_hint/tool/layer/language mutations
+        f = msi_findings[0]
+        assert f.node == "infection"
+        assert f.fix_hint == "Increase test coverage for mutants — see notCovered[] in checkpoint"
 
     def test_timeout_message_references_fr13(self):
         findings = PhpAdapter._validate_infection_stats(MutationStats(
@@ -354,6 +399,73 @@ class TestValidateInfectionStats:
         ))
         timeout_findings = [f for f in findings if "timed out" in f.message.lower()]
         assert any("FR-13" in f.message for f in timeout_findings)
+        f = timeout_findings[0]
+        assert f.node == "infection"
+
+    # Boundary conditions to kill comparison mutations (< → <=, < → ==)
+    def test_msi_at_boundary_99_99_triggers_gate(self):
+        """msi=99.99 should trigger gate because 99.99 < 100 is True.
+        This kills mutations: < → <= (99.99 <= 100 still True → survives)
+        and < → == (99.99 == 100 is False → killed).
+        """
+        findings = PhpAdapter._validate_infection_stats(MutationStats(
+            total=100, killed=99, survived=1, escaped=0, timed_out=0,
+            untested=0, msi=99.99, covered_msi=99.99
+        ))
+        msi_findings = [f for f in findings if "Mutation score" in f.message]
+        assert len(msi_findings) >= 1
+        f = msi_findings[0]
+        assert f.node == "infection"
+        assert f.severity == "error"
+        assert f.tool == "infection"
+        assert f.layer == "L1"
+        assert f.language == "php"
+
+    def test_escaped_exact_1_triggers_gate(self):
+        """escaped=1 should trigger gate because 1 > 0 is True."""
+        findings = PhpAdapter._validate_infection_stats(MutationStats(
+            total=100, killed=99, survived=1, escaped=1, timed_out=0,
+            untested=0, msi=99.0, covered_msi=99.0
+        ))
+        escaped_findings = [f for f in findings if "mutant(s) escaped" in f.message]
+        assert len(escaped_findings) >= 1
+        f = escaped_findings[0]
+        assert f.node == "infection"
+        assert f.fix_hint == "Review survived mutants and improve tests"
+
+    def test_timed_out_exact_1_triggers_gate(self):
+        """timed_out=1 should trigger gate because 1 > 0 is True."""
+        findings = PhpAdapter._validate_infection_stats(MutationStats(
+            total=100, killed=99, survived=1, escaped=0, timed_out=1,
+            untested=0, msi=99.0, covered_msi=99.0
+        ))
+        timeout_f = [f for f in findings if "timed out" in f.message.lower()]
+        assert len(timeout_f) >= 1
+        f = timeout_f[0]
+        assert f.node == "infection"
+        assert f.fix_hint == "Investigate slow mutants; increase timeout or fix performance"
+
+    def test_escaped_message_format_with_count(self):
+        """Mutant: fix_hint removed → test checks fix_hint value."""
+        findings = PhpAdapter._validate_infection_stats(MutationStats(
+            total=100, killed=90, survived=10, escaped=5, timed_out=0,
+            untested=0, msi=90.0, covered_msi=90.0
+        ))
+        escaped_f = [f for f in findings if "escaped" in f.message.lower()]
+        assert len(escaped_f) >= 1
+        f = escaped_f[0]
+        assert f.fix_hint == "Review survived mutants and improve tests"
+
+    def test_timed_out_message_format_with_count(self):
+        """Mutant: fix_hint removed → test checks fix_hint value."""
+        findings = PhpAdapter._validate_infection_stats(MutationStats(
+            total=100, killed=90, survived=10, escaped=0, timed_out=3,
+            untested=0, msi=90.0, covered_msi=90.0
+        ))
+        timeout_f = [f for f in findings if "timed out" in f.message.lower()]
+        assert len(timeout_f) >= 1
+        f = timeout_f[0]
+        assert f.fix_hint == "Investigate slow mutants; increase timeout or fix performance"
 
 
 # ===========================================================================
@@ -372,6 +484,8 @@ class TestRunL1PcovProbeFailure:
         pcov_findings = [f for f in result.findings if f.tool == "pcov"]
         assert pcov_findings[0].severity == "error"
         assert "probe failed" in pcov_findings[0].message.lower()
+        # Kill 'probe(repo)' → 'probe(None)' mutation
+        assert adapter._pcov.probe.call_args[0][0] == tmp_path
 
     def test_probe_fails_gate_fails(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -389,6 +503,8 @@ class TestRunL1PcovProbeFailure:
         )
         result = adapter.run_l1(tmp_path, {})
         assert any(f.tool == "pcov" for f in result.findings)
+        # Verify probe was called with correct repo
+        assert adapter._pcov.probe.call_args[0][0] == tmp_path
 
 
 # ===========================================================================
@@ -410,9 +526,17 @@ class TestRunL1PestPaths:
         ]
         result = adapter.run_l1(tmp_path, {})
         assert result.layer == "L1"
+        assert result.language == "php"
         assert result.passed is False  # info finding for mutation skipped
         assert any("pest-plugin-mutate" in str(f.message) for f in result.findings)
         assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
+        # Kill 'probe(repo)' → 'probe(None)' mutation
+        assert adapter._pcov.probe.call_args[0][0] == tmp_path
+        # Kill '_pest_binary(repo)' → '_pest_binary(None)' mutation (called twice)
+        assert adapter._pest._pest_binary.call_args_list[0][0][0] == tmp_path
+        # Kill '_pest_invoke(repo)' → '_pest_invoke(None)' mutation
+        assert adapter._pest.invoke.call_args[0][0] == tmp_path
+        assert adapter._pest.invoke.call_args[1]["env"] == {}
 
     def test_pest_with_mutate_infection_called(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -431,8 +555,17 @@ class TestRunL1PestPaths:
         ]
         result = adapter.run_l1(tmp_path, {})
         adapter._infection.invoke.assert_called_once()
-        call_args = adapter._infection.invoke.call_args[0][1]
-        assert "--test-framework=pest" in call_args
+        call_args = adapter._infection.invoke.call_args[0]
+        assert call_args[0] == tmp_path
+        kwargs = adapter._infection.invoke.call_args[1]
+        assert kwargs["env"] == {}
+        assert kwargs["timeout"] == 600.0
+        flags = call_args[1]
+        assert "--test-framework=pest" in flags
+        assert "--min-msi=100" in flags
+        assert "--min-covered-msi=100" in flags
+        # Kill 'invoke(repo,...)' → 'invoke(None,...)' mutation
+        assert adapter._infection.invoke.call_args[0][0] == tmp_path
 
     def test_pest_tests_fail(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -479,7 +612,16 @@ class TestRunL1PHPUnitPaths:
         )
         adapter._phpunit.invoke.return_value = MagicMock(exitcode=0, stdout="", stderr="")
         result = adapter.run_l1(tmp_path, {})
+        assert result.layer == "L1"
+        assert result.language == "php"
         assert result.passed is True
+        assert result.findings == []
+        # Kill 'pytest(repo,...)' → 'pytest(None,...)' mutations
+        assert adapter._phpunit.invoke.call_args[0][0] == tmp_path
+        assert adapter._phpunit.invoke.call_args[0][1] == ["--log-junit", "junit.xml"]
+        call_kws = adapter._phpunit.invoke.call_args[1]
+        assert call_kws["env"] == {}
+        assert call_kws["timeout"] == 300.0
 
     def test_phpunit_fails(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -495,6 +637,8 @@ class TestRunL1PHPUnitPaths:
         assert result.passed is False
         assert any(f.tool == "phpunit" for f in result.findings)
         assert any(f.tool == "phpunit" for f in result.findings)
+        # Kill invoke repo mutation
+        assert adapter._phpunit.invoke.call_args[0][0] == tmp_path
 
     def test_phpunit_invoke_raises(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -523,6 +667,11 @@ class TestRunL1InfectionPaths:
         result = adapter.run_l1(tmp_path, {})
         assert result.passed is True
         assert result.findings == []
+        # Verify all tool calls received correct repoinfection invoke
+        assert adapter._infection.invoke.call_args[0][0] == tmp_path
+        call_kwargs = adapter._infection.invoke.call_args[1]
+        assert call_kwargs["env"] == {}
+        assert call_kwargs["timeout"] == 600.0
 
     def test_infection_msi_below_threshold(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -637,6 +786,60 @@ class TestRunL1InfectionPaths:
         result = adapter.run_l1(tmp_path, {})
         assert any("Mutation score" in f.message for f in result.findings)
 
+    def test_run_l1_infection_called_with_strict_thresholds(self, tmp_path):
+        """Verify infection is invoked with min-msi=100 and min-covered-msi=100."""
+        adapter = _make_mock_adapter(
+            pcov_driver="pcov",
+            pest_binary=None,
+            infection_stats=MutationStats(
+                total=100, killed=100, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        result = adapter.run_l1(tmp_path, {})
+        call_args = adapter._infection.invoke.call_args[0]
+        assert call_args[0] == tmp_path
+        kwargs = adapter._infection.invoke.call_args[1]
+        assert kwargs["env"] == {}
+        assert kwargs["timeout"] == 600.0
+        # Verify threshold flags are present
+        flags = call_args[1]
+        assert "--min-msi=100" in flags
+        assert "--min-covered-msi=100" in flags
+        assert "--no-progress" in flags
+        assert "--threads=max" in flags
+
+    def test_run_l1_pest_binary_called_with_repo(self, tmp_path):
+        """Verify _pest_binary is called twice with correct repo."""
+        adapter = _make_mock_adapter(
+            pest_binary="pest",
+            pest_has_mutate=True,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        result = adapter.run_l1(tmp_path, {})
+        # _pest_binary is called twice in run_l1
+        pest_binary_calls = adapter._pest._pest_binary.call_args_list
+        assert len(pest_binary_calls) == 2
+        assert pest_binary_calls[0][0][0] == tmp_path
+        assert pest_binary_calls[1][0][0] == tmp_path
+
+    def test_run_l1_pcov_probe_with_repo(self, tmp_path):
+        """Verify _pcov.probe is called with correct repo."""
+        adapter = _make_mock_adapter(
+            pcov_driver="pcov",
+            pest_binary=None,
+            infection_stats=MutationStats(
+                total=100, killed=100, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert adapter._pcov.probe.call_args[0][0] == tmp_path
+
 
 # ===========================================================================
 # run_l1 — tool_specific metadata
@@ -727,8 +930,15 @@ class TestRunL2:
         adapter._antipattern.parse.return_value = []
         result = adapter.run_l2(tmp_path, {})
         assert result.layer == "L2"
+        assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
+        assert result.duration_sec >= 0
+        # Kill mutations on invoke parameters (repo, env)
+        call = adapter._antipattern.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
 
     def test_l2_with_findings(self, tmp_path):
         adapter = PhpAdapter()
@@ -740,8 +950,13 @@ class TestRunL2:
         )]
         result = adapter.run_l2(tmp_path, {})
         assert result.layer == "L2"
+        assert result.language == "php"
         assert result.passed is False
         assert len(result.findings) >= 1
+        # Kill mutation on invoke parameters
+        call = adapter._antipattern.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == {}
 
     def test_l2_runtime_error_skipped(self, tmp_path):
         adapter = PhpAdapter()
@@ -750,7 +965,9 @@ class TestRunL2:
         adapter._antipattern.parse.return_value = []
         result = adapter.run_l2(tmp_path, {})
         assert result.layer == "L2"
+        assert result.language == "php"
         assert result.passed is True
+        assert result.duration_sec >= 0
 
     def test_l2_duration_non_negative(self, tmp_path):
         adapter = PhpAdapter()
@@ -759,6 +976,18 @@ class TestRunL2:
         adapter._antipattern.parse.return_value = []
         result = adapter.run_l2(tmp_path, {})
         assert result.duration_sec >= 0
+
+    def test_l2_env_passed_to_invoke(self, tmp_path):
+        """Kill env=env removal mutations in run_l2."""
+        adapter = PhpAdapter()
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        env = {"FOO": "bar"}
+        adapter.run_l2(tmp_path, env)
+        call = adapter._antipattern.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == env
 
 
 # ===========================================================================
@@ -780,8 +1009,23 @@ class TestRunL3a:
         adapter._antipattern.parse.return_value = []
         result = adapter.run_l3a(tmp_path, {})
         assert result.layer == "L3A"
+        assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
+        assert result.duration_sec >= 0
+        # Kill mutations on each tool call parameters (repo, env)
+        adapter._phpstan.run_l3a.assert_called_once_with(tmp_path, {})
+        adapter._phpmd.run_l3a.assert_called_once_with(tmp_path, {})
+        cs_args = adapter._cs_fixer.invoke.call_args[0]
+        assert cs_args[0] == tmp_path
+        assert cs_args[1] == ["fix", "--dry-run", "--format=json", "--no-progress", str(tmp_path)]
+        cs_kwargs = adapter._cs_fixer.invoke.call_args[1]
+        assert cs_kwargs["env"] == {}
+        assert cs_kwargs["timeout"] == 300.0
+        ant_args = adapter._antipattern.invoke.call_args[0]
+        assert ant_args[0] == tmp_path
+        ant_kwargs = adapter._antipattern.invoke.call_args[1]
+        assert ant_kwargs["env"] == {}
 
     def test_l3a_phpstan_finds(self, tmp_path):
         adapter = PhpAdapter()
@@ -985,8 +1229,16 @@ class TestRunL4:
         adapter = self._make_l4_mock_adapter()
         result = adapter.run_l4(tmp_path, {})
         assert result.layer == "L4"
+        assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
+        assert result.duration_sec >= 0
+        # Kill mutations on each tool invoke call parameters
+        for tool_name in ("_psalm_taint", "_composer_audit", "_security_checker",
+                          "_dead_code", "_dep_analyser", "_deptrac"):
+            call = getattr(adapter, tool_name).invoke.call_args
+            assert call[0][0] == tmp_path
+            assert call[1]["env"] == {}
 
     def test_l4_psalm_finds(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
@@ -1045,6 +1297,7 @@ class TestRunL4:
             setattr(adapter, attr + ".invoke", MagicMock(side_effect=RuntimeError("not found")))
         result = adapter.run_l4(tmp_path, {})
         assert result.layer == "L4"
+        assert result.language == "php"
         assert result.passed is True
 
     def test_l4_duration_non_negative(self, tmp_path):
@@ -1077,6 +1330,101 @@ class TestRunL4:
         adapter.run_l4(tmp_path, {})
         call_args = adapter._deptrac.invoke.call_args[0][1]
         assert "--formatter=json" in call_args
+
+    def test_l4_psalm_invoke_args(self, tmp_path):
+        """Verify all invoke arguments passed to kill parameter mutation survivors."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._psalm_taint.invoke.call_args
+        # First positional arg = repo (not mutated to None)
+        assert call[0][0] == tmp_path
+        # Second positional arg = args list
+        assert call[0][1] == ["--taint-analysis", "--no-progress"]
+        # Keyword args = env and timeout
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 600.0
+        # Verify parse was called with invocation attributes
+        parse_call = adapter._psalm_taint.parse.call_args
+        assert parse_call[0][0] == "[]"
+        assert parse_call[0][1] == ""
+        assert parse_call[0][2] == 0
+
+    def test_l4_composer_audit_invoke_args(self, tmp_path):
+        """Verify all invoke arguments for composer-audit."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._composer_audit.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[0][1] == ["--format=json", "--no-dev"]
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
+
+    def test_l4_security_checker_invoke_args(self, tmp_path):
+        """Verify all invoke arguments for security checker."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._security_checker.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[0][1] == ["--format=json"]
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
+
+    def test_l4_dead_code_invoke_args(self, tmp_path):
+        """Verify all invoke arguments for dead-code-detector."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._dead_code.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
+
+    def test_l4_dep_analyser_invoke_args(self, tmp_path):
+        """Verify all invoke arguments for dep-analyser."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._dep_analyser.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
+
+    def test_l4_deptrac_invoke_args(self, tmp_path):
+        """Verify all invoke arguments for deptrac."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        call = adapter._deptrac.invoke.call_args
+        assert call[0][0] == tmp_path
+        assert call[1]["env"] == {}
+        assert call[1]["timeout"] == 300.0
+
+    def test_l4_parse_arguments_verified(self, tmp_path):
+        """Kill mutations on parse arguments (exitcode → None, etc)."""
+        adapter = self._make_l4_mock_adapter()
+        adapter._psalm_taint.invoke.return_value = MagicMock(
+            stdout='[{"node":"x"}]', stderr="warn", exitcode=0
+        )
+        adapter._psalm_taint.parse.return_value = []
+        adapter.run_l4(tmp_path, {})
+        parse_call = adapter._psalm_taint.parse.call_args
+        assert parse_call[0][2] == 0  # exitcode not mutated to None
+
+    def test_l4_env_passed_to_all_invokes(self, tmp_path):
+        """Kill mutations where env=env is removed or mutated to None."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {"CUSTOM_ENV": "value"})
+        for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
+                      "_dead_code", "_dep_analyser", "_deptrac"):
+            call = getattr(adapter, attr).invoke.call_args
+            assert call[1]["env"] == {"CUSTOM_ENV": "value"}
+    def test_l4_invoke_timeout_params(self, tmp_path):
+        """Verify timeout values for all L4 tool invokes to kill timeout mutation survivors."""
+        adapter = self._make_l4_mock_adapter()
+        adapter.run_l4(tmp_path, {})
+        # psalm has 600.0 timeout, others have 300.0
+        assert adapter._psalm_taint.invoke.call_args[1]["timeout"] == 600.0
+        for attr in ("_composer_audit", "_security_checker"):
+            assert getattr(adapter, attr).invoke.call_args[1]["timeout"] == 300.0
+        for attr in ("_dead_code", "_dep_analyser", "_deptrac"):
+            assert getattr(adapter, attr).invoke.call_args[1]["timeout"] == 300.0
 
 
 # ===========================================================================
@@ -1258,6 +1606,9 @@ class TestAntipatternInvokeAndParse:
         result = adapter._antipattern_invoke_and_parse(tmp_path, {})
         assert len(result) >= 1
         assert result[0].tool == "antipattern"
+        #Kill mutations on invoke args
+        assert adapter._antipattern.invoke.call_args[0][0] == tmp_path
+        assert adapter._antipattern.invoke.call_args[1]["env"] == {}
 
     def test_invoke_and_parse_forward_env(self, tmp_path):
         adapter = PhpAdapter()
@@ -1490,6 +1841,52 @@ class TestRunInfection:
         assert call_args[2] == "--min-msi=100"
         assert call_args[3] == "--min-covered-msi=100"
 
+    def test_infection_invoke_passes_env(self, tmp_path):
+        """Verify env is passed to invoke to kill 'env=env' removal mutation."""
+        adapter = _make_mock_adapter(
+            infection_stats=MutationStats(
+                total=100, killed=100, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="Mutation Score Indicator (MSI): 100%", stderr="", exitcode=0
+        )
+        env = {"FOO": "bar", "PATH": "/usr/bin"}
+        adapter._run_infection(tmp_path, env, is_pest_project=False)
+        call_kwargs = adapter._infection.invoke.call_args[1]
+        assert call_kwargs["env"] == env
+
+    def test_infection_invoke_passes_timeout(self, tmp_path):
+        """Verify timeout=600.0 is passed to kill timeout removal mutation."""
+        adapter = _make_mock_adapter(
+            infection_stats=MutationStats(
+                total=100, killed=100, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="Mutation Score Indicator (MSI): 100%", stderr="", exitcode=0
+        )
+        adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        call_kwargs = adapter._infection.invoke.call_args[1]
+        assert call_kwargs["timeout"] == 600.0
+
+    def test_infection_invoke_passes_repo(self, tmp_path):
+        """Verify repo is passed to kill 'repo=None' mutation."""
+        adapter = _make_mock_adapter(
+            infection_stats=MutationStats(
+                total=100, killed=100, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0
+            )
+        )
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="Mutation Score Indicator (MSI): 100%", stderr="", exitcode=0
+        )
+        adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        call_args = adapter._infection.invoke.call_args[0]
+        assert call_args[0] == tmp_path
+
 
 # ===========================================================================
 # _run_phpunit_tests
@@ -1531,6 +1928,30 @@ class TestRunPhpunitTests:
         assert "--log-junit" in call_args
         assert "junit.xml" in call_args
 
+    def test_phpunit_invoke_called_with_repo(self, tmp_path):
+        """Kill 'repo → None' mutation in _run_phpunit_tests."""
+        adapter = PhpAdapter()
+        adapter._phpunit = MagicMock()
+        adapter._phpunit.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        adapter._phpunit.parse.return_value = []
+        adapter._run_phpunit_tests(tmp_path, {})
+        call_args = adapter._phpunit.invoke.call_args[0]
+        assert call_args[0] == tmp_path
+
+    def test_phpunit_parse_called_with_stdout_stderr_exitcode(self, tmp_path):
+        """Kill mutations on parse arguments (exitcode → None, stderr → None)."""
+        adapter = PhpAdapter()
+        adapter._phpunit = MagicMock()
+        adapter._phpunit.invoke.return_value = MagicMock(
+            stdout="test output", stderr="stderr text", exitcode=1
+        )
+        adapter._phpunit.parse.return_value = []
+        adapter._run_phpunit_tests(tmp_path, {})
+        parse_call = adapter._phpunit.parse.call_args
+        assert parse_call[0][0] == "test output"
+        assert parse_call[0][1] == "stderr text"
+        assert parse_call[0][2] == 1
+
 
 # ===========================================================================
 # _run_pest_tests
@@ -1567,6 +1988,24 @@ class TestRunPestTests:
         adapter._run_pest_tests(tmp_path, {})
         call_args = adapter._pest.invoke.call_args[0][1]
         assert "--no-output" in call_args
+
+    def test_pest_invoke_called_with_repo(self, tmp_path):
+        """Kill 'repo → None' mutation in _run_pest_tests."""
+        adapter = PhpAdapter()
+        adapter._pest = MagicMock()
+        adapter._pest.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        adapter._run_pest_tests(tmp_path, {})
+        call_args = adapter._pest.invoke.call_args[0]
+        assert call_args[0] == tmp_path
+
+    def test_pest_invoke_called_with_env(self, tmp_path):
+        """Kill 'env=env → None' mutation in _run_pest_tests."""
+        adapter = PhpAdapter()
+        adapter._pest = MagicMock()
+        adapter._pest.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        adapter._run_pest_tests(tmp_path, {"FOO": "BAR"})
+        call_kwargs = adapter._pest.invoke.call_args[1]
+        assert call_kwargs["env"] == {"FOO": "BAR"}
 
 
 # ===========================================================================

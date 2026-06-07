@@ -131,14 +131,7 @@ class VisitorRunnerAdapter(ToolAdapter):
                 findings = self._parse_visitor_output(result.stdout)
                 all_findings.extend(findings)
 
-        merged_stdout = json.dumps(all_findings, ensure_ascii=False)
-        merged_stderr = "\n".join(stderr_parts) if stderr_parts else ""
-
-        return ToolInvocation(
-            stdout=merged_stdout,
-            stderr=merged_stderr,
-            exitcode=0 if not stderr_parts else 1,
-        )
+        return self._build_invocation(all_findings, stderr_parts)
 
     # -- parse -----------------------------------------------------------
 
@@ -162,37 +155,69 @@ class VisitorRunnerAdapter(ToolAdapter):
 
         items = self._parse_visitor_output(stdout)
         for item in items:
-            if not isinstance(item, dict):
-                continue
-            filepath = item.get("file", item.get("path", ""))
-            line = item.get("line")
-            rule_id = item.get("rule_id", "")
-            message = item.get("message", "")
-            severity = item.get("severity", "info")
-            fix_hint = item.get("fix_hint")
-
-            node = f"{filepath}:{line}" if line else filepath
-            if line:
-                try:
-                    line = int(line)
-                except (ValueError, TypeError):
-                    pass
-
-            findings.append(
-                Finding(
-                    node=node,
-                    severity=severity,
-                    message=message,
-                    fix_hint=fix_hint,
-                    rule_id=rule_id,
-                    tool=self._name,
-                    layer="L3A",
-                    language="php",
-                )
-            )
+            finding = self._build_finding(item)
+            if finding is not None:
+                findings.append(finding)
         return findings
 
+    # -- parse helper -----------------------------------------------------
+
+    @staticmethod
+    def _build_finding(item: object) -> Finding | None:
+        """Build a single :class:`Finding` from a parsed JSON dict item.
+
+        Returns None if the item is not a valid dict.
+        """
+        if not isinstance(item, dict):
+            return None
+        filepath = item.get("file", item.get("path", ""))
+        line = item.get("line")
+        rule_id = item.get("rule_id", "")
+        message = item.get("message", "")
+        severity = item.get("severity", "info")
+        fix_hint = item.get("fix_hint")
+
+        node = f"{filepath}:{line}" if line else filepath
+        if line:
+            try:
+                line = int(line)
+            except (ValueError, TypeError):
+                pass
+
+        return Finding(
+            node=node,
+            severity=severity,
+            message=message,
+            fix_hint=fix_hint,
+            rule_id=rule_id,
+            tool="visitor-runner",
+            layer="L3A",
+            language="php",
+        )
+
     # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _merge_findings(all_findings: list[dict]) -> str:
+        """Serialize merged findings to JSON string."""
+        return json.dumps(all_findings, ensure_ascii=False)
+
+    @staticmethod
+    def _build_stderr(stderr_parts: list[str]) -> str:
+        """Build merged stderr string from parts, or empty string."""
+        return "\n".join(stderr_parts) if stderr_parts else ""
+
+    @staticmethod
+    def _build_invocation(
+        all_findings: list[dict],
+        stderr_parts: list[str],
+    ) -> ToolInvocation:
+        """Build final ToolInvocation from findings and stderr parts."""
+        return ToolInvocation(
+            stdout=VisitorRunnerAdapter._merge_findings(all_findings),
+            stderr=VisitorRunnerAdapter._build_stderr(stderr_parts),
+            exitcode=0 if not stderr_parts else 1,
+        )
 
     @staticmethod
     def _collect_php_files(repo: Path) -> list[Path]:

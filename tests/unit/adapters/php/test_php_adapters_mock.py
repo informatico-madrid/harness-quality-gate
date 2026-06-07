@@ -1378,6 +1378,47 @@ class TestVisitorRunnerAdapter:
         assert result.stdout == "[]"
         assert "no PHP files" in result.stderr
 
+    def test_discover_visitors_empty_dir(self, tmp_path: Path) -> None:
+        """_discover_visitors on empty directory returns empty list."""
+        import harness_quality_gate.adapters.php.visitor_runner_adapter as vra_mod
+        orig = vra_mod.VISITORS_DIR
+        empty_dir = tmp_path / "empty_visitors"
+        empty_dir.mkdir()
+        vra_mod.VISITORS_DIR = empty_dir
+        try:
+            result = vra_mod._discover_visitors()
+        finally:
+            vra_mod.VISITORS_DIR = orig
+        assert result == []
+
+    def test_discover_visitors_with_visitors(self, tmp_path: Path) -> None:
+        """_discover_visitors finds .php files excluding those starting with _."""
+        import harness_quality_gate.adapters.php.visitor_runner_adapter as vra_mod
+        orig = vra_mod.VISITORS_DIR
+        visitors_dir = tmp_path / "my_visitors"
+        visitors_dir.mkdir()
+        for name in ["god_class", "cyclomatic", "_private"]:
+            (visitors_dir / f"{name}.php").touch()
+        vra_mod.VISITORS_DIR = visitors_dir
+        try:
+            result = vra_mod._discover_visitors()
+        finally:
+            vra_mod.VISITORS_DIR = orig
+        assert result == ["cyclomatic", "god_class"]
+        assert "_private" not in result
+
+    def test_discover_visitors_nonexistent_dir(self, tmp_path: Path) -> None:
+        """_discover_visitors on nonexistent dir returns empty list."""
+        import harness_quality_gate.adapters.php.visitor_runner_adapter as vra_mod
+        orig = vra_mod.VISITORS_DIR
+        nonexist = tmp_path / "nonexistent_visitors"
+        vra_mod.VISITORS_DIR = nonexist
+        try:
+            result = vra_mod._discover_visitors()
+        finally:
+            vra_mod.VISITORS_DIR = orig
+        assert result == []
+
     def test_invoke_visitor_runs_successfully(self, tmp_path: Path) -> None:
         php_file = tmp_path / "Foo.php"
         php_file.touch()
@@ -1484,6 +1525,329 @@ class TestVisitorRunnerAdapter:
         files = VisitorRunnerAdapter._collect_php_files(tmp_path)
         assert all("vendor" not in str(f) for f in files)
         assert len(files) == 1
+
+    def test_collect_php_files_oserror_returns_empty(self, tmp_path: Path) -> None:
+        """Ensure OSError during rglob doesn't crash."""
+        import os
+        with patch("pathlib.Path.rglob", side_effect=OSError("permission denied")):
+            files = VisitorRunnerAdapter._collect_php_files(tmp_path)
+        assert files == []
+        assert isinstance(files, list)
+
+    def test_build_invocation_empty_findings(self) -> None:
+        result = VisitorRunnerAdapter._build_invocation([], [])
+        assert result.stdout == "[]"
+        assert result.stderr == ""
+        assert result.exitcode == 0
+
+    def test_build_invocation_with_findings_no_stderr(self) -> None:
+        findings = [{"file": "x.php", "line": 1, "rule_id": "R"}]
+        result = VisitorRunnerAdapter._build_invocation(findings, [])
+        data = json.loads(result.stdout)
+        assert len(data) == 1
+        assert data[0]["file"] == "x.php"
+        assert result.stderr == ""
+        assert result.exitcode == 0
+
+    def test_build_invocation_with_findings_with_stderr(self) -> None:
+        findings = [{"file": "x.php", "line": 1, "rule_id": "R"}]
+        stderr_parts = ["error1", "error2"]
+        result = VisitorRunnerAdapter._build_invocation(findings, stderr_parts)
+        data = json.loads(result.stdout)
+        assert len(data) == 1
+        assert result.stderr == "error1\nerror2"
+        assert result.exitcode == 1
+
+    def test_build_stderr_empty(self) -> None:
+        assert VisitorRunnerAdapter._build_stderr([]) == ""
+
+    def test_build_stderr_with_parts(self) -> None:
+        parts = ["a", "b", "c"]
+        assert VisitorRunnerAdapter._build_stderr(parts) == "a\nb\nc"
+
+    def test_merge_findings_empty(self) -> None:
+        assert VisitorRunnerAdapter._merge_findings([]) == "[]"
+
+    def test_merge_findings_with_data(self) -> None:
+        data = [{"file": "a.php", "line": 1}, {"file": "b.php", "line": 2}]
+        result = VisitorRunnerAdapter._merge_findings(data)
+        parsed = json.loads(result)
+        assert len(parsed) == 2
+        assert parsed[0]["file"] == "a.php"
+        assert parsed[1]["file"] == "b.php"
+
+    def test_merge_findings_unicode_preserved(self) -> None:
+        data = [{"file": "café.php", "message": "ñoño"}]
+        result = VisitorRunnerAdapter._merge_findings(data)
+        assert "café.php" in result
+        assert "ñoño" in result
+
+    def test_build_invocation_exitcode_changes_with_stderr_lines(self) -> None:
+        """Verify exitcode=1 only changes when there ARE stderr_parts, not when empty list."""
+        result_no_stderr = VisitorRunnerAdapter._build_invocation([{"f": "x.php"}], [])
+        assert result_no_stderr.exitcode == 0
+        result_with_stderr = VisitorRunnerAdapter._build_invocation([{"f": "x.php"}], ["err"])
+        assert result_with_stderr.exitcode == 1
+
+    def test_build_stderr_preserves_newlines(self) -> None:
+        parts = ["e1", "e2", "e3"]
+        result = VisitorRunnerAdapter._build_stderr(parts)
+        assert result.count("\n") == 2  # e1\ne2\ne3
+
+    def test_build_stderr_returns_empty_for_none_list(self) -> None:
+        assert VisitorRunnerAdapter._build_stderr([]) == ""
+
+    def test_build_finding_all_defaults(self) -> None:
+        item = {"file": "x.php"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.severity == "info"  # default severity
+        assert finding.message == ""
+        assert finding.rule_id == ""
+        assert finding.fix_hint is None
+        assert finding.tool == "visitor-runner"
+        assert finding.layer == "L3A"
+        assert finding.language == "php"
+
+    def test_build_finding_with_null_line(self) -> None:
+        item = {"file": "x.php", "line": None, "rule_id": "R", "message": "m"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.node == "x.php"  # no line shown
+
+    def test_parse_visitor_output_json_with_trailing_extra_bracket(self) -> None:
+        """Test fallback: JSON followed by text without any ] characters."""
+        text = '[{"a":1}] extra stuff no more square brackets here'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["a"] == 1
+
+    def test_build_finding_severity_not_in_data_defaults_to_info(self) -> None:
+        data = {"file": "x.php", "line": 1, "rule_id": "R", "message": "m"}
+        finding = VisitorRunnerAdapter._build_finding(data)
+        assert finding.severity == "info"
+
+    def test_parse_non_json_survivor_edge_case(self) -> None:
+        """Edge case: start >= 0 but end == start."""
+        text = "["
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_non_json_survivor_edge_case_end_lt_start(self) -> None:
+        """Edge case: ] appears before [. """
+        text = "] no json at all"
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_visitor_output_whitespace_in_json_string_value(self) -> None:
+        """JSON that has whitespace only in a string value."""
+        data = [{"msg": "  hello  ", "path": "x.php"}]
+        text = "note: " + json.dumps(data)
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["msg"] == "  hello  "
+
+    def test_build_finding_line_string_vs_int(self) -> None:
+        """Line as string should be converted to int in node but kept as-is in Finding."""
+        item = {"file": "x.php", "line": 999, "rule_id": "R", "message": "m"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.node == "x.php:999"
+
+    def test_build_finding_empty_dict(self) -> None:
+        finding = VisitorRunnerAdapter._build_finding({})
+        assert finding is not None
+        assert finding.node == ""
+        assert finding.tool == "visitor-runner"
+
+    def test_build_finding_full(self) -> None:
+        item = {
+            "file": "src/Foo.php",
+            "line": 42,
+            "rule_id": "GOD-001",
+            "message": "God class",
+            "severity": "critical",
+            "fix_hint": "Split the class",
+        }
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.node == "src/Foo.php:42"
+        assert finding.severity == "critical"
+        assert finding.message == "God class"
+        assert finding.fix_hint == "Split the class"
+        assert finding.rule_id == "GOD-001"
+        assert finding.tool == "visitor-runner"
+        assert finding.layer == "L3A"
+        assert finding.language == "php"
+
+    def test_build_finding_no_line(self) -> None:
+        item = {"file": "x.php", "rule_id": "R", "message": "m"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.node == "x.php"
+
+    def test_build_finding_with_path_key(self) -> None:
+        item = {"path": "src/Bar.php", "line": 5, "rule_id": "X"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding.node == "src/Bar.php:5"
+        # Verify severity defaults
+        assert finding.severity == "info"
+
+    def test_build_finding_invalid_line_converts(self) -> None:
+        item = {"file": "x.php", "line": "notanumber", "rule_id": "R", "message": "m"}
+        finding = VisitorRunnerAdapter._build_finding(item)
+        assert finding is not None
+        assert finding.node == "x.php:notanumber"
+
+    def test_build_finding_none_for_non_dict(self) -> None:
+        assert VisitorRunnerAdapter._build_finding("string") is None
+        assert VisitorRunnerAdapter._build_finding(42) is None
+        assert VisitorRunnerAdapter._build_finding(None) is None
+        assert VisitorRunnerAdapter._build_finding([1, 2, 3]) is None
+
+    def test_version_allows_call(self, tmp_path: Path) -> None:
+        """Ensure the NotImplementedError is always raised, even if code path changes."""
+        with pytest.raises(NotImplementedError) as excinfo:
+            VisitorRunnerAdapter().version(tmp_path)
+        assert "not implemented" in str(excinfo.value).lower()
+
+    def test_invoke_mixed_success_and_failure(self, tmp_path: Path) -> None:
+        """Test that mixed visitor results correctly merge findings and stderr."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        (tmp_path / "Bar.php").touch()
+
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        for name in ["valid", "failing"]:
+            (visitors_dir / f"{name}.php").touch()
+
+        # valid visitor returns findings
+        valid = MagicMock()
+        valid.returncode = 0
+        valid.stdout = '[{"file": "Foo.php", "line": 1, "rule_id": "R1", "message": "ok"}]'
+        valid.stderr = ""
+
+        # failing visitor
+        failing = MagicMock()
+        failing.returncode = 1
+        failing.stdout = ""
+        failing.stderr = "Fatal error"
+
+        # 2 visitors × 2 files = 4 calls
+        call_order = [valid, valid, failing, failing]
+
+        with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["valid", "failing"]):
+            with patch.object(VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file, tmp_path / "Bar.php"]):
+                with patch("subprocess.run") as mock_run:
+                    def side_effect(*args, **kwargs):
+                        return call_order.pop(0)
+                    mock_run.side_effect = side_effect
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra
+                    orig_visitors_dir = vra.VISITORS_DIR
+                    vra.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra.VISITORS_DIR = orig_visitors_dir
+
+        assert result.exitcode == 1
+        data = json.loads(result.stdout)
+        assert len(data) == 2
+        assert "Fatal error" in result.stderr
+
+    def test_invoke_multiple_visuals_merged(self, tmp_path: Path) -> None:
+        """Test that multiple visitors merging works correctly."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        for name in ["v1", "v2"]:
+            (visitors_dir / f"{name}.php").touch()
+
+        completeds = []
+        for name in ["v1", "v2"]:
+            c = MagicMock()
+            c.returncode = 0
+            c.stdout = json.dumps([{"file": "Foo.php", "line": 1, "rule_id": name, "message": f"from {name}"}])
+            c.stderr = ""
+            completeds.append(c)
+
+        with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["v1", "v2"]):
+            with patch.object(VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]):
+                with patch("subprocess.run", side_effect=completeds):
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_visitors_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_visitors_dir
+
+        data = json.loads(result.stdout)
+        assert len(data) == 2, f"Expected 2 findings, got {len(data)}: {data}"
+        rule_ids = {d["rule_id"] for d in data}
+        assert "v1" in rule_ids
+        assert "v2" in rule_ids
+
+    def test_parse_missing_severity_defaults_to_info(self) -> None:
+        data = [{"file": "x.php", "line": 1, "rule_id": "R", "message": "m"}]
+        findings = VisitorRunnerAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+
+    def test_parse_missing_fix_hint_is_none(self) -> None:
+        data = [{"file": "x.php", "line": 1, "rule_id": "R", "message": "m"}]
+        findings = VisitorRunnerAdapter().parse(json.dumps(data), "", 0)
+        assert findings[0].fix_hint is None
+
+    def test_parse_visitor_output_truncated_json_fails_gracefully(self) -> None:
+        text = '["incomplete"'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_visitor_output_only_closing_bracket_fails(self) -> None:
+        text = "[}"
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_visitor_output_json_with_trailing_extra_bracket(self) -> None:
+        """Test: JSON array ends with ] followed by extra data fails to parse."""
+        text = '[{"a":1}] extra stuff - no more ] here'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 0
+
+    def test_parse_visitor_output_rfind_edge_case(self) -> None:
+        """Test that rfind finds the CLOSEST valid end bracket."""
+        # The ] at position 20 is the real end of JSON
+        text = 'before [{ "val": 42 }] after'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["val"] == 42
+
+    def test_parse_visitor_output_find_missing_falls_back(self) -> None:
+        """When no [ found, return empty list."""
+        text = 'no brackets at all'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_visitor_output_negative_find_falls_back(self) -> None:
+        """When [ found at 0 but ] before [."""
+        text = ']no[json'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == []
+
+    def test_parse_visitor_output_nested_brackets_fallback(self) -> None:
+        """Nested objects with multiple ] should use rfind."""
+        text = 'warn [{ "a": { "b": 2 } }]'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["a"]["b"] == 2
+
+    def test_parse_empty_stdout_after_strip(self) -> None:
+        findings = VisitorRunnerAdapter().parse("   \n  ", "", 0)
+        assert findings == []
+
+    def test_parse_whitespace_only_stderr_ignored(self) -> None:
+        data = [{"file": "x.php", "line": 1, "rule_id": "R", "message": "m"}]
+        findings = VisitorRunnerAdapter().parse(json.dumps(data), "   \n  ", 0)
+        assert len(findings) == 1
 
 
 # ===========================================================================
