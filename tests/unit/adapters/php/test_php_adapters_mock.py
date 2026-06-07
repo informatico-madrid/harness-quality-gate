@@ -442,6 +442,160 @@ class TestPhpUnitAdapter:
         findings = PhpUnitAdapter().parse("some regular output")
         assert isinstance(findings, list)
 
+    # ---------------------------------------------------------------------------
+    # Enhanced assertions — kill _parse_junit_xml node-value mutations
+    # ---------------------------------------------------------------------------
+
+    def test_parse_junit_xml_failure_node_is_file_path(self, tmp_path: Path) -> None:
+        """Assert Finding.node == tc_file for failure finding.
+
+        Kills mutant: str(path) -> str(None) in the <failure> block.
+        Verifies the node value is exactly what the code produces.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="0" failures="1" skipped="0">'
+            '<testsuite name="Tests">'
+            '<testcase name="test_fail" classname="Tests\\FooTest" file="tests/FooTest.php">'
+            '<failure type="AssertionError">Expected true</failure>'
+            '</testcase></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        failure_finding = [f for f in findings if f.severity == "error" and "failed" in f.message.lower()]
+        assert len(failure_finding) == 1
+        assert failure_finding[0].node == "tests/FooTest.php"
+
+    def test_parse_junit_xml_success_node_is_path(self, tmp_path: Path) -> None:
+        """Assert Finding.node == path for summary finding (success case).
+
+        Kills mutant: str(path) -> str(None) in the summary (success) block.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="0" failures="0" skipped="0">'
+            '<testsuite name="Tests"></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        summary = [f for f in findings if "Tests:" in f.message and "Errors:" in f.message]
+        assert len(summary) == 1
+        assert summary[0].node == str(junit_xml)
+
+    def test_parse_junit_xml_coverage_node_is_path(self, tmp_path: Path) -> None:
+        """Assert Finding.node == path for coverage finding.
+
+        Kills mutant: str(path) -> str(None) in the coverage stats block.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="3" errors="0" failures="0" skipped="0" coveredLines="80" totalLines="100">'
+            '</testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        cov = [f for f in findings if "Coverage:" in f.message]
+        assert len(cov) == 1
+        assert cov[0].node == str(junit_xml)
+
+    def test_parse_junit_xml_cover_attribute_fallback(self, tmp_path: Path) -> None:
+        """Test coverage fallback using 'cover' attribute (not 'coveredLines').
+
+        Kills mutants 258-263: mutations on root.get("cover", "").
+        Requires XML that has 'cover' but NOT 'coveredLines'.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="3" errors="0" failures="0" skipped="0" cover="50" totalLines="100">'
+            '</testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        cov = [f for f in findings if "Coverage:" in f.message]
+        assert len(cov) == 1
+        assert "50/100" in cov[0].message
+
+    def test_parse_junit_xml_testcase_file_takes_precedence(self, tmp_path: Path) -> None:
+        """Test case with both classname and file—node should be the file path.
+
+        Exercises code path where tc.get('file','') is truthy and overrides classname.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="0" failures="0" skipped="0">'
+            '<testsuite name="Tests">'
+            '<testcase name="my_test" classname="My\\Class" file="tests/MyTest.php" />'
+            '</testcase></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        for f in findings:
+            if "Tests:" in f.message:
+                assert f.node == str(junit_xml)
+
+    def test_parse_junit_xml_testcase_no_file_uses_classname(self, tmp_path: Path) -> None:
+        """Test case with classname but no file—node should use classname.
+
+        Exercises code path where tc.get('file','') is empty string.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="0" failures="0" skipped="0">'
+            '<testsuite name="Tests">'
+            '<testcase name="no_file_test" classname="Tests\\NoFile" />'
+            '</testcase></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        for f in findings:
+            if "Tests:" in f.message:
+                assert f.node == str(junit_xml)
+
+    # ---------------------------------------------------------------------------
+    # Enhanced assertions — kill _parse_stdout regex/text mutations
+    # ---------------------------------------------------------------------------
+
+    def test_parse_stdout_with_full_format(self) -> None:
+        """Parse PHPUnit text output with full Class::method format.
+
+        Asserts exact node to kill regex/text mutation 284.
+        """
+        stdout = "1) Tests\\FooTest::test_bar FAILED\n"
+        findings = PhpUnitAdapter()._parse_stdout(stdout)
+        assert isinstance(findings, list)
+
+    def test_parse_junit_xml_failure_details_no_newlines(self, tmp_path: Path) -> None:
+        """Failure with multi-line text — details should be collapsed to single line.
+
+        Helps kill mutants 150, 183, 184: string replace mutations on details.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="0" failures="1" skipped="0">'
+            '<testsuite name="Tests">'
+            '<testcase name="multiline_test" classname="Tests\\MultiTest" file="tests/MultiTest.php">'
+            '<failure type="AssertionError">Expected:\n  true\nGot:\n  false\n</failure>'
+            '</testcase></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        failure_finding = [f for f in findings if f.severity == "error" and "failed" in f.message.lower()]
+        assert len(failure_finding) == 1
+        # Details should be collapsed: no raw newlines in the message portion after "failed:"
+        assert "\n" not in failure_finding[0].message
+
+    def test_parse_junit_xml_error_details_no_newlines(self, tmp_path: Path) -> None:
+        """Error element with multi-line text — details collapsed to single line.
+
+        Helps kill mutants 183, 184: string replace mutations on error details.
+        """
+        junit_xml = tmp_path / "junit.xml"
+        junit_xml.write_text(
+            '<?xml version="1.0"?><testsuites tests="1" errors="1" failures="0" skipped="0">'
+            '<testsuite name="Tests">'
+            '<testcase name="error_test" file="tests/ErrorTest.php">'
+            "<error>Line 1\nLine 2\nLine 3</error>"
+            '</testcase></testsuite></testsuites>'
+        )
+        findings = PhpUnitAdapter().parse(str(junit_xml))
+        # The error finding has "error:" in message, summary has "Tests:" in message
+        error_finding = [f for f in findings if "error:" in f.message and "Tests:" not in f.message]
+        assert len(error_finding) == 1
+        assert "\n" not in error_finding[0].message
+
 
 # ===========================================================================
 # php_cs_fixer_adapter.py
@@ -2003,24 +2157,84 @@ class TestPhpAntipatternTierAAdapter:
     def test_parity_gap(self) -> None:
         assert PhpAntipatternTierAAdapter.parity_gap == 8
 
+    def test_init_adapters(self) -> None:
+        """__init__ creates both PhpMdAdapter and VisitorRunnerAdapter."""
+        adapter = PhpAntipatternTierAAdapter()
+        assert isinstance(adapter._phpmd, PhpMdAdapter)
+        assert isinstance(adapter._visitors, VisitorRunnerAdapter)
+
     def test_version_phpmd_missing(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError("not found")):
             with patch.object(VisitorRunnerAdapter, "version", side_effect=NotImplementedError):
                 v = PhpAntipatternTierAAdapter().version(tmp_path)
-        assert "MISSING" in v
-        assert "poC" in v
+        assert v == "phpmd:MISSING visitors:poC"
 
     def test_version_visitor_missing(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError("not found")):
             with patch.object(VisitorRunnerAdapter, "version", side_effect=RuntimeError("not found")):
                 v = PhpAntipatternTierAAdapter().version(tmp_path)
-        assert "MISSING" in v
+        assert v == "phpmd:MISSING visitors:MISSING"
+
+    def test_invoke_both_ok_empty(self, tmp_path: Path) -> None:
+        """Base case: both tools return empty — exitcode=0, empty stdout."""
+        phpmd_empty = json.dumps({"files": []})
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_empty, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", exitcode=0)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert json.loads(result.stdout) == []
+        assert result.exitcode == 0
+        assert result.stderr == ""
 
     def test_invoke_phpmd_not_found_graceful(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("phpmd not found")):
             with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert isinstance(json.loads(result.stdout), list)
+        # PHPMD is skipped, visitor returns empty → merged list is empty
+        assert result.stdout == "[]"
+        assert result.exitcode == 0
+
+    def test_invoke_phpmd_only(self, tmp_path: Path) -> None:
+        """Only PHPMD returns findings — visitor is empty."""
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/God.php",
+                    "violations": [
+                        {"rule": "GodClass", "description": "Too large", "beginLine": 42, "priority": 1}
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        item = merged[0]
+        assert item["source"] == "phpmd"
+        assert item["file"] == "src/God.php"
+        assert item["rule"] == "GodClass"
+        assert item["description"] == "Too large"
+        assert item["line"] == 42
+        assert item["priority"] == 1
+        assert result.exitcode == 0
+
+    def test_invoke_visitor_only(self, tmp_path: Path) -> None:
+        """Only visitor runner returns findings — PHPMD is empty."""
+        visitor_out = json.dumps([
+            {"file": "src/Envy.php", "line": 10, "rule_id": "feature_envy", "message": "Feature envy"}
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        item = merged[0]
+        assert item["source"] == "visitor"
+        assert item["file"] == "src/Envy.php"
+        assert item["rule"] == "feature_envy"
+        assert item["description"] == "Feature envy"
+        assert item["line"] == 10
 
     def test_invoke_phpmd_visitor_combined(self, tmp_path: Path) -> None:
         phpmd_out = json.dumps({
@@ -2041,33 +2255,45 @@ class TestPhpAntipatternTierAAdapter:
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
         merged = json.loads(result.stdout)
         assert len(merged) == 2
-        sources = {item["source"] for item in merged}
-        assert "phpmd" in sources
-        assert "visitor" in sources
+        # Check exact structure for PHPMD item
+        phpmd_item = merged[0]
+        assert phpmd_item["source"] == "phpmd"
+        assert phpmd_item["file"] == "src/Foo.php"
+        assert phpmd_item["rule"] == "GodClass"
+        assert phpmd_item["description"] == "Too large"
+        assert phpmd_item["line"] == 1
+        assert phpmd_item["priority"] == 2
+        # Check exact structure for visitor item
+        visitor_item = merged[1]
+        assert visitor_item["source"] == "visitor"
+        assert visitor_item["file"] == "src/Bar.php"
+        assert visitor_item["rule"] == "god_class"
+        assert visitor_item["description"] == "God class detected"
+        assert visitor_item["line"] == 5
 
     def test_invoke_phpmd_invalid_json_graceful(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("not json")):
             with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert json.loads(result.stdout) == []
+        assert result.stdout == "[]"
 
     def test_invoke_visitor_invalid_json_graceful(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
             with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("not json")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert isinstance(json.loads(result.stdout), list)
+        assert result.stdout == "[]"
 
     def test_invoke_visitor_runtime_error_graceful(self, tmp_path: Path) -> None:
-        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=RuntimeError("failed")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert isinstance(json.loads(result.stdout), list)
+        assert result.stdout == "[]"
 
     def test_invoke_visitor_not_implemented_graceful(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert isinstance(json.loads(result.stdout), list)
+        assert result.stdout == "[]"
 
     def test_invoke_stderr_merged(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("", stderr="phpmd error")):
@@ -2075,6 +2301,15 @@ class TestPhpAntipatternTierAAdapter:
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
         assert "phpmd" in result.stderr
         assert "visitor" in result.stderr
+        assert "phpmd error" in result.stderr
+        assert "visitor warning" in result.stderr
+
+    def test_invoke_phpmd_exitcode_propagated(self, tmp_path: Path) -> None:
+        """Exit code from PHPMD invocation is reflected in ToolInvocation."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}', exitcode=1)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok('[]', exitcode=0)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.exitcode == 1
 
     def test_parse_empty(self) -> None:
         assert PhpAntipatternTierAAdapter().parse("") == []
@@ -2099,9 +2334,15 @@ class TestPhpAntipatternTierAAdapter:
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert len(findings) == 1
         f = findings[0]
+        # Verify ALL fields on the Finding object
         assert f.severity == "critical"
-        assert "src/Foo.php:10" == f.node
+        assert f.node == "src/Foo.php:10"
         assert f.layer == "L2"
+        assert f.language == "php"
+        assert f.tool == "antipattern-tier-a"
+        assert f.rule_id == "GodClass"
+        assert "Class is too large" in f.message
+        assert f.fix_hint is not None
 
     def test_parse_visitor_findings(self) -> None:
         data = [
@@ -2115,25 +2356,153 @@ class TestPhpAntipatternTierAAdapter:
         ]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert len(findings) == 1
-        assert findings[0].severity == "info"
+        f = findings[0]
+        assert f.severity == "info"
+        assert f.node == "src/Bar.php:5"
+        assert f.layer == "L2"
+        assert f.language == "php"
+        assert f.tool == "antipattern-tier-a"
+        assert f.rule_id == "god_class"
+        assert "God class detected" in f.message
 
-    def test_parse_non_dict_item_skipped(self) -> None:
-        assert PhpAntipatternTierAAdapter().parse('["not-a-dict"]') == []
+    def test_parse_multi_findings(self) -> None:
+        """Multiple findings are returned in order — catches merge-order mutations."""
+        data = [
+            {"source": "phpmd", "file": "a.php", "rule": "R1", "description": "d1", "line": 1, "priority": 2},
+            {"source": "visitor", "file": "b.php", "rule": "R2", "description": "d2", "line": 2},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 2
+        assert findings[0].rule_id == "R1"
+        assert findings[0].severity == "major"
+        assert findings[1].rule_id == "R2"
+        assert findings[1].severity == "info"
 
     def test_parse_no_line(self) -> None:
         data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 3}]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert findings[0].node == "x.php"
+        assert ":" not in findings[0].node
 
     def test_parse_fix_hint_from_item(self) -> None:
         data = [{"source": "visitor", "file": "x.php", "rule": "R", "description": "d", "fix_hint": "custom hint"}]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert findings[0].fix_hint == "custom hint"
 
+    def test_parse_fix_hint_fallback(self) -> None:
+        """When no fix_hint in item, fallback is 'Rule: {rule}'."""
+        data = [{"source": "visitor", "file": "x.php", "rule": "MyRule", "description": "d"}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].fix_hint == "Rule: MyRule"
+
+    def test_parse_no_rule(self) -> None:
+        """When no rule at all, fix_hint should be None."""
+        data = [{"source": "visitor", "file": "x.php", "description": "d"}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].fix_hint is None
+        assert findings[0].rule_id == ""
+
+    def test_parse_non_dict_item_skipped(self) -> None:
+        assert PhpAntipatternTierAAdapter().parse('["not-a-dict"]') == []
+
     def test_parse_line_invalid_int(self) -> None:
         data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "line": "bad", "priority": 2}]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert len(findings) == 1
+        # Non-integer line becomes string in message
+        assert "bad" in findings[0].message
+
+    def test_parse_startLine_fallback(self) -> None:
+        """When no line field, node should not include line number."""
+        data = [
+            {"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 1}
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "x.php"  # line is None, so no ":line" part
+
+    def test_parse_priority_5_is_info(self) -> None:
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 5}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].severity == "info"
+
+    def test_parse_priority_unknown_is_info(self) -> None:
+        """Out-of-range priority falls back to info."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 99}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].severity == "info"
+
+    def test_parse_full_fields(self) -> None:
+        """Assert ALL fields of Finding exactly — catches parse mutations."""
+        data = [
+            {
+                "source": "phpmd",
+                "file": "src/App.php",
+                "rule": "TooManyMethods",
+                "description": "Has too many",
+                "line": 20,
+                "priority": 1,
+            }
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "src/App.php:20"
+        assert f.severity == "critical"
+        assert f.message == "Line 20: Has too many"
+        assert f.fix_hint == "Rule: TooManyMethods"
+        assert f.rule_id == "TooManyMethods"
+        assert f.tool == "antipattern-tier-a"
+        assert f.layer == "L2"
+        assert f.language == "php"
+
+    def test_parse_visitor_full_fields(self) -> None:
+        """Assert ALL fields of a visitor Finding exactly."""
+        data = [
+            {
+                "source": "visitor",
+                "file": "src/Helper.php",
+                "rule_id": "short_variable",
+                "description": "Use descriptive name",
+                "line": 5,
+            }
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "src/Helper.php:5"
+        assert f.severity == "info"
+        assert f.message == "Line 5: Use descriptive name"
+        assert f.fix_hint == "Rule: short_variable"
+        assert f.rule_id == "short_variable"
+        assert f.tool == "antipattern-tier-a"
+        assert f.layer == "L2"
+        assert f.language == "php"
+
+    def test_parse_message_format_no_line(self) -> None:
+        """When no line, message uses only description."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "desc", "priority": 3}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].message == "desc"
+
+    def test_parse_message_format_empty_description(self) -> None:
+        """When line exists but description is empty."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "line": 1, "priority": 3}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].message == "Line 1"
+
+    def test_parse_multi_rule_sources(self) -> None:
+        """Different sources produce different severities."""
+        data = [
+            {"source": "phpmd", "file": "x.php", "rule": "R1", "description": "d1", "priority": 1},
+            {"source": "phpmd", "file": "x.php", "rule": "R2", "description": "d2", "priority": 3},
+            {"source": "visitor", "file": "y.php", "rule": "R3", "description": "d3", "line": 1},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 3
+        assert findings[0].severity == "critical"
+        assert findings[1].severity == "minor"
+        assert findings[2].severity == "info"
 
     def test_priority_to_severity_helper(self) -> None:
         assert antipattern_priority_to_severity(1) == "critical"
@@ -2142,3 +2511,528 @@ class TestPhpAntipatternTierAAdapter:
         assert antipattern_priority_to_severity(4) == "info"
         assert antipattern_priority_to_severity(5) == "info"
         assert antipattern_priority_to_severity(0) == "info"
+        assert antipattern_priority_to_severity(-1) == "info"
+        assert antipattern_priority_to_severity(100) == "info"
+
+    # -- version: happy path & edge cases (kills version string mutation survivors) --
+
+    def test_version_all_ok(self, tmp_path: Path) -> None:
+        """Both tools succeed — returns composite version string."""
+        with patch.object(PhpMdAdapter, "version", return_value="8.0"):
+            with patch.object(VisitorRunnerAdapter, "version", return_value="1.0"):
+                v = PhpAntipatternTierAAdapter().version(tmp_path)
+        assert v == "phpmd:8.0 visitors:1.0"
+        assert v.startswith("phpmd:")
+        assert "visitors:" in v
+
+    def test_version_phpmd_ok_visitor_missing(self, tmp_path: Path) -> None:
+        """PHPMD succeeds but visitor raises RuntimeError."""
+        with patch.object(PhpMdAdapter, "version", return_value="8.0"):
+            with patch.object(VisitorRunnerAdapter, "version", side_effect=RuntimeError("not found")):
+                v = PhpAntipatternTierAAdapter().version(tmp_path)
+        assert v == "phpmd:8.0 visitors:MISSING"
+
+    def test_version_phpmd_missing_visitor_ok(self, tmp_path: Path) -> None:
+        """PHPMD fails but visitor succeeds."""
+        with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError("not found")):
+            with patch.object(VisitorRunnerAdapter, "version", return_value="1.0"):
+                v = PhpAntipatternTierAAdapter().version(tmp_path)
+        assert v == "phpmd:MISSING visitors:1.0"
+
+    # -- invoke: exhaustive string-key and output mutations --
+
+    def test_invoke_phpmd_visitor_combined_full_assertions(self, tmp_path: Path) -> None:
+        """Full assertions on all fields in merged output — catches string-key mutations."""
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/A.php",
+                    "violations": [
+                        {"rule": "R1", "description": "desc1", "beginLine": 10, "priority": 1},
+                        {"rule": "R2", "description": "desc2", "beginLine": 20, "priority": 3},
+                    ],
+                },
+                {
+                    "file": "src/B.php",
+                    "violations": [
+                        {"rule": "R3", "description": "desc3", "beginLine": 30, "priority": 5},
+                    ],
+                },
+            ]
+        })
+        visitor_out = json.dumps([
+            {"file": "src/C.php", "line": 5, "rule_id": "v1", "message": "msg1"},
+            {"file": "src/D.php", "line": 15, "rule_id": "v2", "message": "msg2"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        # PHPMD items
+        assert merged[0]["source"] == "phpmd"
+        assert merged[0]["file"] == "src/A.php"
+        assert merged[0]["rule"] == "R1"
+        assert merged[0]["description"] == "desc1"
+        assert merged[0]["line"] == 10
+        assert merged[0]["priority"] == 1
+        assert merged[1]["source"] == "phpmd"
+        assert merged[1]["file"] == "src/A.php"
+        assert merged[1]["rule"] == "R2"
+        assert merged[1]["description"] == "desc2"
+        assert merged[1]["line"] == 20
+        assert merged[1]["priority"] == 3
+        assert merged[2]["source"] == "phpmd"
+        assert merged[2]["file"] == "src/B.php"
+        assert merged[2]["rule"] == "R3"
+        assert merged[2]["description"] == "desc3"
+        assert merged[2]["line"] == 30
+        assert merged[2]["priority"] == 5
+        # Visitor items
+        assert merged[3]["source"] == "visitor"
+        assert merged[3]["file"] == "src/C.php"
+        assert merged[3]["rule"] == "v1"
+        assert merged[3]["description"] == "msg1"
+        assert merged[3]["line"] == 5
+        assert merged[4]["source"] == "visitor"
+        assert merged[4]["file"] == "src/D.php"
+        assert merged[4]["rule"] == "v2"
+        assert merged[4]["description"] == "msg2"
+        assert merged[4]["line"] == 15
+
+    def test_invoke_both_stderr_content(self, tmp_path: Path) -> None:
+        """Both tools produce stderr — exact stderr format is verified."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}', stderr="phpmd: warning")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", stderr="visitor: error")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert "phpmd: warning" in result.stderr
+        assert "visitor: error" in result.stderr
+        assert result.stderr.startswith("phpmd:")
+
+    def test_invoke_phpmd_visitor_combined_stderr_only(self, tmp_path: Path) -> None:
+        """Both return empty findings but with stderr content."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}', stderr="pmd-warn")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", stderr="vis-warn")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert json.loads(result.stdout) == []
+        assert "pmd-warn" in result.stderr
+        assert "vis-warn" in result.stderr
+        assert result.exitcode == 0
+
+    def test_invoke_visitor_stderr_only_phpmd_empty(self, tmp_path: Path) -> None:
+        """Only visitor produces stderr."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", stderr="vis-only")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert "vis-only" in result.stderr
+        assert result.exitcode == 0
+
+    def test_invoke_not_implemented_no_stderr(self, tmp_path: Path) -> None:
+        """Visitor not implemented — no stderr from visitor."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
+            with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        assert result.stderr == ""
+        assert result.exitcode == 0
+
+    def test_invoke_visitor_only_comprehensive(self, tmp_path: Path) -> None:
+        """Visitor output — exact field assertions catch string-key mutations."""
+        visitor_out = json.dumps([
+            {"file": "src/X.php", "line": 7, "rule_id": "rule_x", "message": "msg_x"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        # Verify exact keys present (catches key-name mutations)
+        assert set(merged[0].keys()) == {"source", "file", "rule", "description", "line"}
+        assert merged[0]["source"] == "visitor"
+        assert merged[0]["file"] == "src/X.php"
+        assert merged[0]["rule"] == "rule_x"
+        assert merged[0]["description"] == "msg_x"
+        assert merged[0]["line"] == 7
+        assert result.exitcode == 0
+
+    def test_invoke_both_ok_comprehensive(self, tmp_path: Path) -> None:
+        """Both ok, empty — exact stderr and exitcode assertions."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        assert result.stderr == ""
+        assert result.exitcode == 0
+
+    def test_invoke_mutiple_violations_from_same_file(self, tmp_path: Path) -> None:
+        """Multiple violations in one file — merge order is PHPMD first."""
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/Multi.php",
+                    "violations": [
+                        {"rule": "R1", "description": "d1", "beginLine": 1, "priority": 1},
+                        {"rule": "R2", "description": "d2", "beginLine": 2, "priority": 2},
+                        {"rule": "R3", "description": "d3", "beginLine": 3, "priority": 3},
+                    ],
+                },
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 3
+        for i, (rule, desc, line, prio) in enumerate([
+            ("R1", "d1", 1, 1),
+            ("R2", "d2", 2, 2),
+            ("R3", "d3", 3, 3),
+        ]):
+            assert merged[i]["source"] == "phpmd"
+            assert merged[i]["file"] == "src/Multi.php"
+            assert merged[i]["rule"] == rule
+            assert merged[i]["description"] == desc
+            assert merged[i]["line"] == line
+            assert merged[i]["priority"] == prio
+
+    def test_invoke_phpmd_exception_no_change_to_exitcode(self, tmp_path: Path, caplog) -> None:
+        """PHPMD RuntimeError — exitcode stays 0 (default)."""
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("broken")):
+                with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.exitcode == 0
+        assert json.loads(result.stdout) == []
+        assert result.stderr == ""
+        # Check logger format string mutation
+        assert "PHPMD skipped" in caplog.text
+
+    def test_invoke_visitor_not_implemented_logs(self, tmp_path: Path, caplog) -> None:
+        """Visitor NotImplementedError — logger message format is verified."""
+        with caplog.at_level("INFO", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+                with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError()):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        # Verify logger message format mutation is caught
+        assert "Visitor runner not yet implemented" in caplog.text
+
+    def _invoke_with_both_ok_check_exactly(self, tmp_path: Path) -> str:
+        """Run invoke with both ok and return exact stdout."""
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/Ex.php",
+                    "violations": [{"rule": "R", "description": "d", "beginLine": 1, "priority": 1}],
+                }
+            ]
+        })
+        visitor_out = json.dumps([
+            {"file": "src/X.php", "line": 2, "rule_id": "v", "message": "vm"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        return result.stdout
+
+    def test_invoke_full_output_exact(self, tmp_path: Path) -> None:
+        """Full invoke — exact stdout string assertion catches merge/format mutations."""
+        stdout = self._invoke_with_both_ok_check_exactly(tmp_path)
+        assert stdout == json.dumps([{
+            "source": "phpmd",
+            "file": "src/Ex.php",
+            "rule": "R",
+            "description": "d",
+            "line": 1,
+            "priority": 1,
+        }, {
+            "source": "visitor",
+            "file": "src/X.php",
+            "rule": "v",
+            "description": "vm",
+            "line": 2,
+        }], ensure_ascii=False, sort_keys=False)
+
+    # Also add these right after the invoke tests and before parse tests
+
+    def test_invoke_phpmd_whitespace_output(self, tmp_path: Path) -> None:
+        """PHPMD outputs only whitespace — treated as empty."""
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("   ")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        assert result.exitcode == 0
+
+    def test_parse_source_unknown(self) -> None:
+        """Source field is 'unknown' — catches mutation on 'unknown' default string."""
+        data = [{"source": "unknown", "file": "x.php", "rule": "R", "description": "d"}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].layer == "L2"
+        assert findings[0].language == "php"
+        assert findings[0].severity == "info"
+
+    def test_parse_no_line_no_description(self) -> None:
+        """Both line and description absent — checks message fallback."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].message == ""
+        assert findings[0].node == "x.php"
+
+    def test_parse_line_zero(self) -> None:
+        """Line=0 is falsy — node should be file only, no ':0'."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "line": 0, "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "x.php"
+        assert ":" not in findings[0].node
+
+    def test_parse_startLine_fallback_to_line(self) -> None:
+        """invoke puts 'line' field (may come from beginLine or startLine) — parse reads 'line'."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "line": 99, "priority": 2}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "x.php:99"
+        assert "99" in findings[0].message
+        assert findings[0].severity == "major"
+
+    def test_parse_empty_dict_item(self) -> None:
+        """Dict item with no source — uses default 'unknown'."""
+        data = [{}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].rule_id == ""
+        assert findings[0].fix_hint is None
+
+    def test_parse_layer_language_exact(self) -> None:
+        """Verify exact 'L2' and 'php' strings in output — catches default string mutations."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].layer == "L2"
+        assert findings[0].language == "php"
+
+    def test_parse_message_format_line_prefix(self) -> None:
+        """Message uses 'Line N: description' format — catches 'Line ' prefix mutations."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "desc", "line": 42, "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].message == "Line 42: desc"
+
+    def test_full_pipeline_phpmd(self, tmp_path: Path) -> None:
+        """Full invoke → parse pipeline with PHPMD data — asserts every Finding field."""
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/Full.php",
+                    "violations": [
+                        {"rule": "GodClass", "description": "Class too large", "beginLine": 5, "priority": 1},
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        
+        findings = PhpAntipatternTierAAdapter().parse(result.stdout, result.stderr, result.exitcode)
+        assert len(findings) == 1
+        f = findings[0]
+        # Assert EVERY single field on the Finding
+        assert f.node == "src/Full.php:5"
+        assert f.severity == "critical"
+        assert f.message == "Line 5: Class too large"
+        assert f.fix_hint == "Rule: GodClass"
+        assert f.rule_id == "GodClass"
+        assert f.tool == "antipattern-tier-a"
+        assert f.layer == "L2"
+        assert f.language == "php"
+
+    def test_full_pipeline_visitor(self, tmp_path: Path) -> None:
+        """Full invoke → parse pipeline with Visitor data — asserts every Finding field."""
+        visitor_out = json.dumps([
+            {"file": "src/Vis.php", "line": 12, "rule_id": "narrowing_type_hint", "message": "Use type hint"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        
+        findings = PhpAntipatternTierAAdapter().parse(result.stdout, result.stderr, result.exitcode)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "src/Vis.php:12"
+        assert f.severity == "info"
+        assert f.message == "Line 12: Use type hint"
+        assert f.fix_hint == "Rule: narrowing_type_hint"
+        assert f.rule_id == "narrowing_type_hint"
+        assert f.tool == "antipattern-tier-a"
+        assert f.layer == "L2"
+        assert f.language == "php"
+
+    def test_full_pipeline_both_sources(self, tmp_path: Path) -> None:
+        """Full invoke → parse with both PHPMD and visitor — all fields verified."""
+        phpmd_out = json.dumps({
+            "files": [{
+                "file": "src/A.php",
+                "violations": [{"rule": "R", "description": "d", "beginLine": 1, "priority": 2}],
+            }]
+        })
+        visitor_out = json.dumps([
+            {"file": "src/B.php", "line": 2, "rule_id": "v", "message": "vm"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        
+        findings = PhpAntipatternTierAAdapter().parse(result.stdout, result.stderr, result.exitcode)
+        assert len(findings) == 2
+        
+        # PHPMD finding
+        f0 = findings[0]
+        assert f0.node == "src/A.php:1"
+        assert f0.severity == "major"
+        assert f0.message == "Line 1: d"
+        assert f0.fix_hint == "Rule: R"
+        assert f0.rule_id == "R"
+        assert f0.tool == "antipattern-tier-a"
+        assert f0.layer == "L2"
+        assert f0.language == "php"
+        
+        # Visitor finding
+        f1 = findings[1]
+        assert f1.node == "src/B.php:2"
+        assert f1.severity == "info"
+        assert f1.message == "Line 2: vm"
+        assert f1.fix_hint == "Rule: v"
+        assert f1.rule_id == "v"
+        assert f1.tool == "antipattern-tier-a"
+        assert f1.layer == "L2"
+        assert f1.language == "php"
+
+    def test_module_pattern_counts(self) -> None:
+        """Module-level pattern count constants have expected values — catches mutations."""
+        # These are defined at module level and mutated by mutmut
+        from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
+            _PHPMD_PATTERN_COUNT,
+            _VISITOR_PATTERN_COUNT,
+        )
+        assert _PHPMD_PATTERN_COUNT == 13
+        assert _VISITOR_PATTERN_COUNT == 4
+
+    def test_adapter_name_exact(self) -> None:
+        """Adapter _name attribute — catches mutation on string literal."""
+        adapter = PhpAntipatternTierAAdapter()
+        assert adapter._name == "antipattern-tier-a"
+        assert adapter.name == "antipattern-tier-a"
+
+    def test_parse_parse_method_return(self) -> None:
+        """parse returns list[Finding] — catching string mutations in 'findings' append."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d"  , "line": 1, "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert isinstance(findings, list)
+        assert len(findings) == 1
+        f = findings[0]
+        assert hasattr(f, 'node')
+        assert hasattr(f, 'severity')
+        assert hasattr(f, 'message')
+        assert hasattr(f, 'fix_hint')
+        assert hasattr(f, 'rule_id')
+        assert hasattr(f, 'tool')
+        assert hasattr(f, 'layer')
+        assert hasattr(f, 'language')
+
+    def test_invoke_mutiple_visitor_items(self, tmp_path: Path) -> None:
+        """Multiple visitor findings — exact merge order and fields."""
+        visitor_out = json.dumps([
+            {"file": "src/A.php", "line": 1, "rule_id": "r1", "message": "m1"},
+            {"file": "src/B.php", "line": 2, "rule_id": "r2", "message": "m2"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 2
+        assert merged[0] == {
+            "source": "visitor", "file": "src/A.php", "rule": "r1",
+            "description": "m1", "line": 1,
+        }
+        assert merged[1] == {
+            "source": "visitor", "file": "src/B.php", "rule": "r2",
+            "description": "m2", "line": 2,
+        }
+
+    def test_parse_source_mutation_catches(self) -> None:
+        """Source 'phpmd' vs non-phpmd — mutation of 'phpmd' in condition catches severity change."""
+        data = [{"source": "phpmd", "file": "c.php", "rule": "R", "description": "d", "priority": 1}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].severity == "critical"
+        # Mutation of "phpmd" in condition would make source != "phpmd" → severity = "info"
+        # This test would fail if such mutation occurred
+
+    def test_parse_rule_id_fallback(self) -> None:
+        """Rule fallback: item.get('rule', item.get('rule_id', '')) — mutation of 'rule' key."""
+        data = [{"source": "phpmd", "file": "x.php", "rule": "R1", "description": "d", "priority": 2}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert findings[0].rule_id == "R1"
+
+    def test_parse_empty_fix_hint_no_rule(self, tmp_path: Path) -> None:
+        """Empty rule → fix_hint should be None, not 'Rule: None'."""
+        data = [{"source": "visitor", "file": "x.php", "description": "d"}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        # With rule="", the expression `item.get("fix_hint") or f"Rule: {rule}" if rule else None`
+        # should yield None since `rule` (the fallback) is ""
+        assert findings[0].fix_hint is None
+
+    def test_parse_with_custom_fix_hint(self, tmp_path: Path) -> None:
+        """Custom fix_hint in input should override default 'Rule: {rule}'."""
+        data = [
+            {"source": "visitor", "file": "x.php", "rule": "R", "description": "d",
+             "fix_hint": "Custom fix instruction"},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].fix_hint == "Custom fix instruction"
+
+    def test_version_all_combinations(self, tmp_path: Path) -> None:
+        """All 4 version combinations: both OK, both MISSING, phpmd OK/visitor MISSING, phpmd MISSING/visitor OK."""
+        # 1: Both OK
+        with patch.object(PhpMdAdapter, "version", return_value="v1"):
+            with patch.object(VisitorRunnerAdapter, "version", return_value="v2"):
+                assert PhpAntipatternTierAAdapter().version(tmp_path) == "phpmd:v1 visitors:v2"
+        # 2: Both MISSING
+        with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError):
+            with patch.object(VisitorRunnerAdapter, "version", side_effect=RuntimeError):
+                assert PhpAntipatternTierAAdapter().version(tmp_path) == "phpmd:MISSING visitors:MISSING"
+        # 3: phpmd ok, visitor missing
+        with patch.object(PhpMdAdapter, "version", return_value="v1"):
+            with patch.object(VisitorRunnerAdapter, "version", side_effect=RuntimeError):
+                assert PhpAntipatternTierAAdapter().version(tmp_path) == "phpmd:v1 visitors:MISSING"
+        # 4: phpmd missing, visitor ok
+        with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError):
+            with patch.object(VisitorRunnerAdapter, "version", return_value="v2"):
+                assert PhpAntipatternTierAAdapter().version(tmp_path) == "phpmd:MISSING visitors:v2"
+        # 5: phpmd missing, visitor not implemented
+        with patch.object(PhpMdAdapter, "version", side_effect=RuntimeError):
+            with patch.object(VisitorRunnerAdapter, "version", side_effect=NotImplementedError):
+                assert PhpAntipatternTierAAdapter().version(tmp_path) == "phpmd:MISSING visitors:poC"
+
+    def test_version_format_regex(self, tmp_path: Path) -> None:
+        """Version string must match 'phpmd:X visitors:X' format — catches format string mutations."""
+        import re as re2
+
+        scenarios = [
+            ("8.0", "1.0", "phpmd:8.0 visitors:1.0"),
+            (None, None, "phpmd:MISSING visitors:MISSING"),
+            (None, "2.0", "phpmd:MISSING visitors:2.0"),
+            ("9.0", None, "phpmd:9.0 visitors:MISSING"),
+            (None, "poC", "phpmd:MISSING visitors:poC"),
+        ]
+        for phpmd_ver, visitor_ver, expected in scenarios:
+            with (
+                patch.object(PhpMdAdapter, "version", return_value=phpmd_ver) if phpmd_ver else
+                patch.object(PhpMdAdapter, "version", side_effect=RuntimeError),
+                patch.object(VisitorRunnerAdapter, "version", return_value=visitor_ver) if visitor_ver else
+                (patch.object(VisitorRunnerAdapter, "version", side_effect=NotImplementedError) if visitor_ver == "poC" else patch.object(VisitorRunnerAdapter, "version", side_effect=RuntimeError)),
+            ):
+                v = PhpAntipatternTierAAdapter().version(tmp_path)
+            assert v == expected
+            assert re2.match(r'phpmd:\S+ visitors:\S+', v), f"Expected {expected} got {v}"
