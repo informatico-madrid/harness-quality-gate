@@ -136,6 +136,86 @@ def test_parse_report_non_dict() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Missing fields in violation dicts — default values are used
+# ---------------------------------------------------------------------------
+
+
+def test_parse_violation_missing_file_key() -> None:
+    """Violation dict missing 'file' key uses default 'unknown'."""
+    a = _adapter()
+    data = {
+        "Report": {
+            "Violations": [
+                {"message": "Some violation"},
+            ]
+        }
+    }
+    findings = a.parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    # Default "unknown" is used when file key is missing
+    assert findings[0].node == "unknown"
+    assert findings[0].message == "Some violation"
+    assert findings[0].fix_hint is None
+    assert findings[0].tool == "deptrac"
+
+
+def test_parse_violation_missing_message_key() -> None:
+    """Violation dict missing 'message' key uses default 'Architecture violation'."""
+    a = _adapter()
+    data = {
+        "Report": {
+            "Violations": [
+                {"file": "src/Foo.php"},
+            ]
+        }
+    }
+    findings = a.parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].node == "src/Foo.php"
+    # Default "Architecture violation" is used when message key is missing
+    assert findings[0].message == "Architecture violation"
+    assert findings[0].fix_hint is None
+    assert findings[0].tool == "deptrac"
+
+
+def test_parse_violation_missing_both_file_and_message() -> None:
+    """Violation dict missing both 'file' and 'message' uses both defaults."""
+    a = _adapter()
+    data = {
+        "Report": {
+            "Violations": [
+                {},
+            ]
+        }
+    }
+    findings = a.parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].node == "unknown"
+    assert findings[0].message == "Architecture violation"
+    assert findings[0].fix_hint is None
+    assert findings[0].tool == "deptrac"
+
+
+def test_parse_violation_list_none_element() -> None:
+    """Non-dict elements in Violations list are safely skipped."""
+    a = _adapter()
+    data = {
+        "Report": {
+            "Violations": [
+                {"file": "good.php", "message": "ok"},
+                "not_a_dict",
+                None,
+                42,
+            ]
+        }
+    }
+    findings = a.parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].node == "good.php"
+    assert findings[0].message == "ok"
+
+
+# ---------------------------------------------------------------------------
 # Missing Violations / UncoveredClasses keys → default values
 # ---------------------------------------------------------------------------
 

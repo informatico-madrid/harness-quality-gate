@@ -546,6 +546,13 @@ class TestRunL1PcovProbeFailure:
         assert any(
             f.layer == "L1" for f in result.findings
         ), "Mut34: pcov Finding layer mutated to None"
+        # Kill mutmut_35,41,50,51: language="php" mutations
+        # 35: "php" → None | 41: remove language param | 50: "php" → "XXphpXX" | 51: "php" → "PHP"
+        pcov_f = [f for f in result.findings if f.tool == "pcov"]
+        assert len(pcov_f) >= 1
+        assert pcov_f[0].language == "php", (
+            "Mut35/41/50/51: pcov Finding language must be 'php' (not None/removed/XXphpXX/PHP)"
+        )
 
     def test_probe_fails_gate_fails(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -620,6 +627,10 @@ class TestRunL1PestPaths:
         # Kill '_pest_invoke(repo)' → '_pest_invoke(None)' mutation
         assert adapter._pest.invoke.call_args[0][0] == tmp_path
         assert adapter._pest.invoke.call_args[1]["env"] == {}
+        # Kill mutmut_54: _has_mutate_plugin(repo) → None
+        assert adapter._pest._has_mutate_plugin.called, (
+            "Mut54: _has_mutate_plugin must be called (mutant replaces call with None)"
+        )
 
     def test_pest_with_mutate_infection_called(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -677,6 +688,28 @@ class TestRunL1PestPaths:
         adapter._pest.invoke.side_effect = RuntimeError("no such file")
         result = adapter.run_l1(tmp_path, {})
         assert result.layer == "L1"
+
+    def test_pest_log_format(self, tmp_path, caplog):
+        """Kill mutmut_64: logger.info("L1 Pest tests: %d findings", ...) → logger.info(None, ...)"""
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = _make_mock_adapter(
+            pest_binary="pest",
+            pest_has_mutate=True,
+            pcov_driver="xdebug"
+        )
+        adapter._pest._pest_binary.side_effect = [
+            ["pest"],
+            ["pest"],
+        ]
+        adapter._pest.invoke.return_value = MagicMock(exitcode=0, stdout="", stderr="")
+        result = adapter.run_l1(tmp_path, {})
+        assert result.passed is True
+        # Kill mutant 64: exact log format check — mutmut replaces format string with None
+        pest_logs = [m for m in caplog.messages if m.startswith("L1 Pest tests:")]
+        assert len(pest_logs) == 1, (
+            f"Mut64: Expected 'L1 Pest tests:' log format, got: {caplog.messages}"
+        )
+        assert pest_logs[0] == "L1 Pest tests: 0 findings"
 
 
 # ===========================================================================

@@ -97,6 +97,8 @@ class DepAnalyserAdapter(ToolAdapter):
         if not stdout.strip():
             return findings
 
+        logger.debug("parse: exitcode=%d stderr=%r", exitcode, stderr)
+
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError:
@@ -108,6 +110,7 @@ class DepAnalyserAdapter(ToolAdapter):
                 if not isinstance(item, dict):
                     continue
                 vtype = item.get("type", "")
+                logger.debug("parse: vtype=%r (item=%s)", vtype, item.get("file", "?"))
                 if vtype not in VIOLATION_TYPES:
                     continue
                 findings.append(
@@ -133,6 +136,7 @@ class DepAnalyserAdapter(ToolAdapter):
                     if not isinstance(v, dict):
                         continue
                     vtype = v.get("type", "")
+                    logger.debug("parse: vtype=%r (file=%s)", vtype, filepath)
                     if vtype not in VIOLATION_TYPES:
                         continue
                     findings.append(

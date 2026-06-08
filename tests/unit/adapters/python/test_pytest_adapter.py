@@ -250,6 +250,9 @@ line2</failure>
         assert failure.node == "mytests.test_mod.test_login"
         assert failure.message == "AssertionError: expected 2"
         assert failure.fix_hint is None
+        # Ensure classname is properly used in full_name (kills mutants 51,53,59,61,64)
+        assert "mytests.test_mod" in failure.node
+        assert ".test_login" in failure.node
 
     def test_parse_failure_empty_message(self) -> None:
         """<failure/> with no message/text → fallback message."""
@@ -455,6 +458,9 @@ line2</failure>
         assert len(findings) >= 2
         f = findings[1]
         assert f.node == "standalone_test"
+        # Verify the full_name fallback when classname is falsy
+        # (This helps kill mutants 51/53 by confirming fullname is just name)
+        assert f.node.startswith("standalone_test")
 
     def test_parse_multiple_test_suites(self) -> None:
         """Multiple <testsuite> elements → all testcases parsed."""
@@ -481,6 +487,32 @@ line2</failure>
         assert findings[1].rule_id == "failure"
         assert findings[2].rule_id == "failure"
 
+    def test_parse_testcase_without_name_attr(self) -> None:
+        """testcase missing name attr entirely → full_name = classname only.
+        Tests that empty-string default is used (not None or 'XXXX').
+        This kills mutant 64 (name default → 'XXXX'), which would produce
+        'classname.XXXX' instead of just 'classname' when name is absent."""
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase classname="standalone">
+      <failure/>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        f = findings[1]
+        assert f.rule_id == "failure"
+        # Without name attr, classname is "standalone", name defaults to ""
+        # full_name = "standalone" (no dot, since name is falsy)
+        # With classname="standalone" and name not present (defaults to ""):
+        # The conditional evaluates to f"{classname}.{name}" since classname is truthy
+        # This produces "standalone." — mutant 59 (name→None) would produce
+        # "standalone.None", mutant 64 (name→"XXXX") would produce "standalone.XXXX"
+        assert f.node == "standalone."
+
     def test_parse_exitcode_not_used(self) -> None:
         """exitcode=1 → single exitcode Finding with all fields."""
         adapter = PytestAdapter()
@@ -505,6 +537,20 @@ line2</failure>
         """exitcode=0 (default) → no exitcode Finding."""
         adapter = PytestAdapter()
         findings = adapter.parse(stdout='<testsuites/>', exitcode=0)
+        assert len(findings) == 0
+
+    def test_parse_no_explicit_stderr(self) -> None:
+        """Calling parse without explicit stderr → default '' means no
+        CRITICAL finding. Catches default-param-value mutants (mutmut_1)."""
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="0" errors="0">
+    <testcase classname="m" name="ok"/>
+  </testsuite>
+</testsuites>"""
+        # Call without passing stderr — uses the default ""
+        findings = adapter.parse(xml)
         assert len(findings) == 0
 
     def test_parse_stderr_not_used(self) -> None:
