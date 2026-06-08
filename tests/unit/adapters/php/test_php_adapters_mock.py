@@ -2537,6 +2537,155 @@ class TestVisitorRunnerAdapter:
         # env should contain system vars (merged with os.environ)
         assert "PATH" in env_used or len(env_used) > 0
 
+    def test_invoke_subprocess_run_kwargs_strict(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Assert subprocess.run kwargs to kill mutmut_48/50/51/53/55.
+
+        mutmut_48:  cwd=str(repo) → cwd=None
+        mutmut_50:  capture_output=True → capture_output=None
+        mutmut_51:  text=True → text=None
+        mutmut_53:  check=False → check=None
+        mutmut_55:  cwd=str(repo) line removed entirely
+        """
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "god_class.php").touch()
+
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = '[{"file":"Foo.php","line":1,"rule_id":"R1","message":"ok"}]'
+        completed.stderr = ""
+
+        kwassert = {}
+
+        def capture_run(*args, **kwargs):
+            kwassert.update(kwargs)
+            return completed
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch("subprocess.run", side_effect=capture_run):
+                from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+
+                orig_dir = vra_mod.VISITORS_DIR
+                try:
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    VisitorRunnerAdapter().invoke(tmp_path, [])
+                finally:
+                    vra_mod.VISITORS_DIR = orig_dir
+
+        assert kwassert, "subprocess.run was never called"
+
+        # mutmut_48/55: cwd=None or cwd line removed entirely
+        assert "cwd" in kwassert, "mutmut_55: cwd kwarg missing entirely"
+        assert kwassert["cwd"] == str(tmp_path)  # mutmut_48: cwd was mutated to None
+
+        # mutmut_50: capture_output=None
+        assert kwassert["capture_output"] is True
+
+        # mutmut_51: text=None
+        assert kwassert["text"] is True
+
+        # mutmut_53: check=None
+        assert kwassert["check"] is False
+
+    def test_invoke_continue_after_missing_visitor(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Kill mutmut_45: continue→break in missing-visitor loop.
+
+        Two visitors discovered: 'b_missing' (file doesn't exist) and
+        'a_good' (file exists).  Sorted order: [a_good, b_missing].
+        'a_good' runs and collects findings.  'b_missing' triggers the
+        missing-visitor check → continue (original) vs break (mutant).
+
+        Break would stop the loop after b_missing, but since b_missing
+        is the *last* item in sorted order, we need a 3rd visitor to
+        make it matter.  With [a_good, b_missing, c_another]:
+
+          continue → a_good runs, b_missing skipped, c_another runs
+          break    → a_good runs, b_missing skips AND c_another never runs
+
+        Kills mutmut_45 by asserting findings from ALL visitors appear.
+        """
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "a_good.php").touch()
+        (visitors_dir / "c_another.php").touch()
+        # b_missing.php intentionally NOT created
+
+        # Return in non-alphabetical order so break matters
+        # but _discover_visitors uses sorted() so order is deterministic
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["a_good", "b_missing", "c_another"],
+        ):
+            # Track which visitors actually get subprocess.run called
+            visitors_run = set()
+
+            php_file = tmp_path / "Foo.php"
+            php_file.touch()
+
+            def track_run(*args, **kwargs):
+                # Extract visitor name from args[0][1] (second arg is visitor_script path)
+                script_path = args[0][1]
+                visitor_name = Path(script_path).stem
+                visitors_run.add(visitor_name)
+                completed = MagicMock()
+                completed.returncode = 0
+                completed.stdout = json.dumps(
+                    [
+                        {
+                            "file": "Foo.php",
+                            "line": 1,
+                            "rule_id": visitor_name,
+                            "message": f"from {visitor_name}",
+                        }
+                    ]
+                )
+                completed.stderr = ""
+                return completed
+
+            collected_data = {}
+
+            def capture_result(*args, **kwargs):
+                result = track_run(*args, **kwargs)
+                collected_data[args[0][1]] = result.stdout
+                return result
+
+            with patch.object(
+                VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+            ):
+                with patch("subprocess.run", side_effect=capture_result):
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+
+                    orig_dir = vra_mod.VISITORS_DIR
+                    try:
+                        vra_mod.VISITORS_DIR = visitors_dir
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+            # With continue: both 'a_good' and 'c_another' ran
+            # With break: only 'a_good' ran (loop broke after 'b_missing')
+            assert "a_good" in visitors_run, "Good visitor should run"
+            assert "c_another" in visitors_run, (
+                "c_another must run – break (mutmut_45) would skip it after "
+                "missing 'b_missing'"
+            )
+
+        # Also assert findings actually merged correctly:
+        data = json.loads(result.stdout)
+        rule_ids = sorted(d["rule_id"] for d in data)
+        assert rule_ids == ["a_good", "c_another"], (
+            f"Both visitors' findings should be present. Got {rule_ids}"
+        )
+
     def test_invoke_missing_visitor_script_logs_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -303,3 +303,129 @@ class TestParseTopLevelItemMissingMessageDefault:
             f"message should be '' not {call_kwargs['message']!r} "
             f"(kills mutmut_62, mutmut_64, mutmut_67)"
         )
+
+
+# ===========================================================================
+# Kill mutmut_73, 76, 78, 82 — nested files format
+# These mutants only affect the nested {"files": {...}} parsing branch.
+# Existing tests only cover top-level array format.
+# ===========================================================================
+
+class TestParseNestedFileDataInvalid:
+    """Test nested files Format 2 — invalid file_data skipped correctly.
+
+    Kills:
+      mutmut_73  : continue→break at file_data-not-dict check
+      mutmut_76  : violations default []→None
+      mutmut_78  : violations default []→no default
+    """
+
+    def test_invalid_file_data_continue_kills_mutmut_73(self) -> None:
+        """file_data is not a dict — continue skips it, next file processed.
+
+        If mutant → break → loop exits immediately → 0 findings."""
+        adapter = DepAnalyserAdapter()
+        data = {
+            "files": {
+                "invalid.php": "not a dict",
+                "valid.php": {
+                    "violations": [
+                        {"type": "dep-class", "line": 5},
+                    ],
+                },
+            },
+        }
+        findings = adapter.parse(json.dumps(data))
+        assert len(findings) >= 1
+        assert findings[0].fix_hint == "dep-class"
+
+
+class TestParseNestedViolationsNotList:
+    """Violations as non-list value — continue skips, not break.
+
+    Kills:
+      mutmut_82  : continue→break at violations-not-list check
+    """
+
+    def test_violations_as_string_kills_mutmut_82(self) -> None:
+        """violations='string' → continue skips file, next file processed.
+
+        If mutant → break → 0 findings."""
+        adapter = DepAnalyserAdapter()
+        data = {
+            "files": {
+                "bad.php": {"violations": "string"},
+                "good.php": {
+                    "violations": [
+                        {"type": "dep-antipattern", "line": 10},
+                    ],
+                },
+            },
+        }
+        findings = adapter.parse(json.dumps(data))
+        assert len(findings) >= 1
+        assert findings[0].fix_hint == "dep-antipattern"
+
+
+class TestParseNestedViolationsInnerLoop:
+    """Mixed violations — dict and non-dict items.
+
+    Kills:
+      inner loop mutant : continue→break at v-not-dict check
+    """
+
+    def test_mixed_violations_kills_inner_mutant(self) -> None:
+        """violations: [string, dict] — continue past string, process dict.
+
+        If break → dict never processed → 0 findings."""
+        adapter = DepAnalyserAdapter()
+        data = {
+            "files": {
+                "mixed.php": {
+                    "violations": [
+                        "not a dict",
+                        {"type": "dep-class", "line": 3, "message": "class msg"},
+                    ],
+                },
+            },
+        }
+        findings = adapter.parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].fix_hint == "dep-class"
+        assert findings[0].node == "mixed.php:3"
+
+
+class TestParseNestedViolationMissingType:
+    """Violation dict without 'type' key.
+
+    Kills:
+      mutmut_87  : v.get("type", None) changes vtype from "" to None
+    """
+
+    def test_missing_type_logs_empty_string_vtype(self) -> None:
+        """Assert vtype'' from debug log — catches ''→None mutation of
+        item.get("type", "")."""
+        logger = logging.getLogger(_LOGGER_NAME)
+        adapter = DepAnalyserAdapter()
+        data = {
+            "files": {
+                "no_type.php": {
+                    "violations": [
+                        {},  # No "type" key
+                        {"type": "dep-function", "line": 7},
+                    ],
+                },
+            },
+        }
+        with patch.object(logger, "debug") as mock_debug:
+            adapter.parse(json.dumps(data))
+
+        vtype_logs = [
+            args for args, _ in mock_debug.call_args_list
+            if "vtype=" in args[0]
+        ]
+        assert len(vtype_logs) >= 1
+        assert vtype_logs[0][1] == "", (
+            f"vtype should be '' not {vtype_logs[0][1]!r} "
+            f"(kills mutmut_87 default→None)"
+        )

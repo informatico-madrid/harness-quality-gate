@@ -361,7 +361,13 @@ line2</failure>
         assert err.fix_hint is None
 
     def test_parse_error_no_message(self) -> None:
-        """<error/> with no message → fallback."""
+        """<error/> with no message and no text → fallback message.
+
+        Kills mutants 121 and 123: when error.get("message", ...) defaults
+        to None or is omitted entirely, msg.strip(None) raises AttributeError
+        but the original code's fallback is "" → fallback message string.
+        The exact fallback value is the kill criteria.
+        """
         adapter = PytestAdapter()
         xml = """<?xml version="1.0"?>
 <testsuites>
@@ -374,6 +380,15 @@ line2</failure>
         findings = adapter.parse(xml)
         e = findings[1]
         assert e.rule_id == "error"
+        assert e.severity == "error"
+        # The exact fallback message MUST match — mutants 121/123
+        # would cause None.strip() crash or wrong value
+        assert e.message == "Test error: mod.test_z"
+        # Mutant 103: fix_hint default removed; must still be None
+        assert e.fix_hint is None
+        assert e.tool == "pytest"
+        assert e.layer == "L1"
+        assert e.language == "python"
 
     # -- skipped -----------------------------------------------------------
 

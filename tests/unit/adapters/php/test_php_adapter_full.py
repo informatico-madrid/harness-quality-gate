@@ -841,6 +841,18 @@ class TestRunL1PHPUnitPaths:
         test_findings = [f for f in result.findings if f.tool == "phpunit"]
         assert len(test_findings) == 1
         assert test_findings[0].severity == "warning"
+        # Kill mutmut_92: node="test" → None, mutmut_96: layer="L1" → None,
+        # mutmut_97: language="php" → None, mutmut_102: remove layer param,
+        # mutmut_103: remove language param
+        assert test_findings[0].node == "test", (
+            "Mut92: test Finding node must be 'test' (not None)"
+        )
+        assert test_findings[0].layer == "L1", (
+            "Mut96/102: test Finding layer must be 'L1' (not None)"
+        )
+        assert test_findings[0].language == "php", (
+            "Mut97/103: test Finding language must be 'php' (not None)"
+        )
 
 
 # ===========================================================================

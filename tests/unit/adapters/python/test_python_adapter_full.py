@@ -534,6 +534,10 @@ class TestRunL3B:
         assert layer.passed is True
         # Exact log message kills string mutations 5,6,7,8
         assert "mutmut not found on PATH, returning empty stats" in caplog.text
+        # Strict exact-message assertion — kills mutmut_6 (XX...XX prefix/suffix)
+        for record in caplog.records:
+            if record.levelname == "WARNING" and "mutmut not found" in record.getMessage():
+                assert record.getMessage() == "mutmut not found on PATH, returning empty stats"
 
     def test_l3b_mutmut_raises_oserror(self, tmp_path: Path):
         """mutmut.invoke raises OSError -> empty fallback stats."""
@@ -592,8 +596,62 @@ class TestRunL3B:
                     escaped=0, untested=0, msi=0.0, covered_msi=0.0,
                 )
                 layer = a.run_l3b(tmp_path, {})
+                assert layer.layer == "L3B"
+        assert layer.language == "python"
+
+    def test_l3b_invoke_and_parse_args_strict(self, tmp_path: Path):
+        """Assert _run_mutmut calls invoke/parse with correct args.
+
+        Kills mutations on _run_mutmut:
+        - mutmut_34: repo→None         (first param of invoke)
+        - mutmut_35: []→None           (second param of invoke)
+        - mutmut_36: invoke([])        — first param missing/wrong
+        - mutmut_37: invoke(repo,)     — second arg removed
+        - mutmut_38: parse(None, …)    — stdout→None
+        Strategy: mock invoke() to return real JSON, then call REAL MutmutAdapter.parse()
+        so that mutation 38 (passing None) crashes with TypeError.
+        For mutations 34-37: assert invoke is called with correct args.
+        """
+        from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter
+
+        a = self._adapter()
+        real_adapter = MutmutAdapter()
+
+        # Create a partial mock: mock invoke to return valid data, keep real parse
+        mock_mutmut = MagicMock()
+        mutation_payload = '{"total":5,"killed":5,"survived":0,"timeout":0,"escaped":0,"untested":0}'
+        mock_mutmut.invoke.return_value = MagicMock(
+            stdout=mutation_payload,
+            stderr="",
+            exitcode=0,
+        )
+        # Replace .parse with the REAL MutmutAdapter.parse()
+        mock_mutmut.parse = real_adapter.parse
+
+        with patch.object(a, "mutmut", mock_mutmut):
+            with _all_tools_on_path():
+                layer = a.run_l3b(tmp_path, {})
+        # Layer-level correctness
+        assert layer.passed is True
         assert layer.layer == "L3B"
         assert layer.language == "python"
+        ms = layer.tool_specific["mutation_stats"]
+        # Full assertion on parsed stats (kills return-value mutations)
+        assert ms.total == 5
+        assert ms.killed == 5
+        assert ms.survived == 0
+        assert ms.timed_out == 0
+        assert ms.escaped == 0
+        assert ms.untested == 0
+        assert ms.msi == 1.0
+        assert ms.covered_msi == 1.0
+        # Kill mutmut_38: REAL parse was called — mutation 38 passes None → crashes
+        # Kill mutmut_34-37: assert invoke() received correct args
+        inv_args, inv_kwargs = mock_mutmut.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg must be the repo path"
+        assert inv_args[1] == [], "invoke() second arg must be [] (not None/removed)"
+        # After mutation 38, real parse(None) raises TypeError and we never get here
+
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +879,44 @@ def _make_versioned(name: str, version: str) -> MagicMock:
     sub.name = name
     sub.version = MagicMock(return_value=version)
     return sub
+
+
+def _assert_invoke_and_parse_args(mock_mutmut_adapter: MagicMock, expected_repo: Path) -> None:
+    """Assert _run_mutmut called invoke/parse with correct arguments.
+
+    Kills mutations on _run_mutmut:
+    - mutmut_34: repo→None  (first positional arg of invoke)
+    - mutmut_35: []→None   (second positional arg of invoke)
+    - mutmut_36: invoke([]) — first arg missing/wrong
+    - mutmut_37: invoke(repo,) — arg count mutation
+    - mutmut_38: parse(None, …) — stdout → None
+    """
+    # invoke MUST be called
+    assert mock_mutmut_adapter.invoke.called, "invoke() should have been called"
+
+    # First positional arg must be the expected repo (not None, not another type)
+    inv_args, inv_kwargs = mock_mutmut_adapter.invoke.call_args
+    assert len(inv_args) >= 1, "invoke() called with too few positional args"
+    assert inv_args[0] is expected_repo, (
+        f"invoke() first arg must be {expected_repo}, got {inv_args[0]!r}"
+    )
+
+    # Second positional arg must be [] (not None)
+    if len(inv_args) >= 2:
+        assert inv_args[1] == [], (
+            f"invoke() second arg must be [], got {inv_args[1]!r}"
+        )
+
+    # parse MUST be called (with real data, not None)
+    assert mock_mutmut_adapter.parse.called, "parse() should have been called"
+    pars_args, pars_kwargs = mock_mutmut_adapter.parse.call_args
+    assert len(pars_args) >= 1, "parse() called with too few positional args"
+    assert pars_args[0] is not None, (
+        "First arg to parse() (stdout) must not be None — kills mutmut_38"
+    )
+    assert isinstance(pars_args[0], str), (
+        f"First arg to parse() (stdout) must be str, got {type(pars_args[0])}"
+    )
 
 
 # ---------------------------------------------------------------------------

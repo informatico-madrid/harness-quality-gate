@@ -321,7 +321,55 @@ def test_visitor_runner_no_visitors_logs_warning(tmp_path: Path) -> None:
     assert str(VISITORS_DIR) in result.stderr
 
 
-# ---------------------------------------------------------------------------
+def test_visitor_runner_missing_visitor_continues_to_next(tmp_path: Path) -> None:
+    """Kill mutmut_45: continue->break in invoke visitor loop.
+
+    When a visitor script is missing the original code does `continue`
+    to process the next visitor. The mutant changes it to `break` which
+    terminates the whole loop, losing all subsequent results.
+    """
+    from harness_quality_gate.adapters.php.visitor_runner_adapter import (
+        VisitorRunnerAdapter,
+    )
+    import harness_quality_gate.adapters.php.visitor_runner_adapter as vra
+
+    # Create visitors dir - only aaa.php exists (NOT missing.php)
+    visitors_dir = tmp_path / "visitors"
+    visitors_dir.mkdir()
+    (visitors_dir / "aaa.php").touch()
+
+    (tmp_path / "a.php").write_text("<?php")
+
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='[{"file":"a.php","line":1,"rule_id":"Z","message":"zzz"}]',
+        stderr="",
+    )
+
+    with patch.object(
+        VisitorRunnerAdapter, "_collect_php_files", return_value=[tmp_path / "a.php"]
+    ):
+        with patch.object(
+            vra, "_discover_visitors", return_value=["missing", "aaa"]
+        ):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                orig_visitors_dir = vra.VISITORS_DIR
+                try:
+                    vra.VISITORS_DIR = visitors_dir
+                    result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                finally:
+                    vra.VISITORS_DIR = orig_visitors_dir
+
+    # With `continue` -> aaa runs -> 1 call.  With `break` -> aaa skipped -> 0 calls.
+    assert mock_run.call_count == 1, (
+        f"mutmut_45 alive: expected 1 subprocess.run, got {mock_run.call_count}"
+    )
+    data = _json.loads(result.stdout)
+    assert len(data) == 1
+    assert data[0]["rule_id"] == "Z"
+
+
 # weak_test_php — missing visitor script branches (lines 120-121, etc.)
 # ---------------------------------------------------------------------------
 
