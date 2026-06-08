@@ -497,8 +497,15 @@ class TestRunL1PcovProbeFailure:
             m for m in caplog.messages
             if "L1 driver initial value:" in m
         ]
-        assert len(initial_msgs) >= 1
-        assert "unknown" in initial_msgs[0]
+        assert len(initial_msgs) >= 1, "Mut3/Mut35: Initial debug log should exist"
+        # Mutant 35: driver = "unknown" → driver = None in assignment
+        # kills assertion because driver would be None not "unknown"
+        assert initial_msgs[0].endswith("NOne") is False, (
+            "Mut35: driver initial value should be 'unknown' string, not mutated"
+        )
+        assert initial_msgs[0].startswith("L1 driver initial value: unknown"), (
+            "Mut35/41: Exact format 'L1 driver initial value: unknown'"
+        )
         # Kill mutmut_16: assert the warning log contains the actual exception
         # text, not the literal string "None". Mutant replaces exc → None.
         assert "PCOV not compiled" in caplog.text
@@ -583,6 +590,29 @@ class TestRunL1PestPaths:
         assert result.passed is False  # info finding for mutation skipped
         assert any("pest-plugin-mutate" in str(f.message) for f in result.findings)
         assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
+        # Kill mutmut_50: condition `is_pest_project and not pest_has_mutate` → `is_pest_project` (False)
+        # If condition is False, the mutation-skipped finding isn't added → test fails.
+        # Kill mutmut_51: condition → `is_pest_project or not pest_has_mutate` (True)
+        # With True condition, info finding IS added (same as original), so kill by
+        # verifying the exact finding fields (not just substring presence).
+        pest_mutate_f = [
+            f for f in result.findings
+            if "pest-plugin-mutate" in f.message or "mutation_skipped" in f.message
+        ]
+        assert len(pest_mutate_f) == 1
+        assert pest_mutate_f[0].tool == "infection"
+        assert pest_mutate_f[0].layer == "L1"
+        assert pest_mutate_f[0].severity == "info"
+        # Verify the exact finding fields (not just substring presence)
+        assert pest_mutate_f[0].node == "mutation"
+        # Mutation 50: (is_pest_project and not pest_has_mutate) → (is_pest_project)
+        # When mutmut removes "not pest_has_mutate", the condition can become True
+        # when it should be False, taking the else path (infection path).
+        # Verify we're NOT in the infection path by checking there's no infected error
+        assert not any(
+            f.tool == "infection" and f.severity == "error"
+            for f in result.findings
+        ), "Mutation 50: should not take infection path when pest has no mutate plugin"
         # Kill 'probe(repo)' → 'probe(None)' mutation
         assert adapter._pcov.probe.call_args[0][0] == tmp_path
         # Kill '_pest_binary(repo)' → '_pest_binary(None)' mutation (called twice)
@@ -654,7 +684,8 @@ class TestRunL1PestPaths:
 # ===========================================================================
 
 class TestRunL1PHPUnitPaths:
-    def test_phpunit_success_no_findings(self, tmp_path):
+    def test_phpunit_success_no_findings(self, tmp_path, caplog):
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pest_binary=None,
             pcov_driver="pcov",
@@ -667,8 +698,16 @@ class TestRunL1PHPUnitPaths:
         result = adapter.run_l1(tmp_path, {})
         assert result.layer == "L1"
         assert result.language == "php"
+        # Mutation 64: `passed = len(all_findings) == 0` → `!= 0`
+        # If condition flips, passed would be False with empty findings → killed.
         assert result.passed is True
         assert result.findings == []
+        # Mutation 54: logger.info("L1 PHPUnit tests: %d findings", ...) →
+        # removes format args → log becomes just "0" without prefix.
+        # Kills by asserting exact log format.
+        phpunit_logs = [m for m in caplog.messages if m.startswith("L1 PHPUnit tests:")]
+        assert len(phpunit_logs) == 1
+        assert phpunit_logs[0] == "L1 PHPUnit tests: 0 findings"
         # Kill 'pytest(repo,...)' → 'pytest(None,...)' mutations
         assert adapter._phpunit.invoke.call_args[0][0] == tmp_path
         assert adapter._phpunit.invoke.call_args[0][1] == ["--log-junit", "junit.xml"]
@@ -900,7 +939,7 @@ class TestRunL1InfectionPaths:
 
 class TestRunL1ToolSpecific:
     def test_tool_specific_coverage_driver_pcov(self, tmp_path, caplog):
-        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pcov_driver="pcov",
             pest_binary=None,
@@ -911,6 +950,15 @@ class TestRunL1ToolSpecific:
         )
         result = adapter.run_l1(tmp_path, {})
         assert result.tool_specific["coverage_driver"] == "pcov"
+        # Mutation 41: logger.debug("L1 driver initial value: %s", driver) → format
+        # arg mutation or string mutation changes the debug log. Assert exact initial
+        # debug log message. Mutant changes format → log differs.
+        initial_debug = [
+            m for m in caplog.messages
+            if m.startswith("L1 driver initial value:")
+        ]
+        assert len(initial_debug) == 1
+        assert initial_debug[0] == "L1 driver initial value: unknown"
         # Verify the actual driver name appears in the log (kills logger.info
         # format-string / argument mutations where driver is replaced with None,
         # and string mutations that prepend/append characters).

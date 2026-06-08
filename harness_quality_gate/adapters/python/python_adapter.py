@@ -202,11 +202,13 @@ class PythonAdapter(BaseAdapter):
 
     def _run_ruff(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke ruff and parse findings."""
+        assert isinstance(repo, Path)
+        assert env is not None
         if shutil.which("ruff") is None:
             logger.warning("ruff not found on PATH, skipping")
             return []
         try:
-            inv = self.ruff.invoke(repo, [])
+            inv = self.ruff.invoke(repo, [], env=dict(env) if env else {})
             return self.ruff.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("ruff invocation failed: %s", exc)

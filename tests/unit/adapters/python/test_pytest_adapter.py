@@ -482,7 +482,7 @@ line2</failure>
         assert findings[2].rule_id == "failure"
 
     def test_parse_exitcode_not_used(self) -> None:
-        """exitcode parameter is accepted but doesn't affect parse results."""
+        """exitcode=1 → single exitcode Finding with all fields."""
         adapter = PytestAdapter()
         xml = """<testsuites>
   <testsuite tests="2" failures="0" errors="0">
@@ -490,17 +490,48 @@ line2</failure>
   </testsuite>
 </testsuites>"""
         findings = adapter.parse(xml, exitcode=1)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.rule_id == "exitcode"
+        assert f.severity == "error"
+        assert f.node == "pytest"
+        assert "1" in f.message
+        assert f.fix_hint == "Review the test output and check for environment issues."
+        assert f.tool == "pytest"
+        assert f.layer == "L1"
+        assert f.language == "python"
+
+    def test_parse_exitcode_default_zero(self) -> None:
+        """exitcode=0 (default) → no exitcode Finding."""
+        adapter = PytestAdapter()
+        findings = adapter.parse(stdout='<testsuites/>', exitcode=0)
         assert len(findings) == 0
 
     def test_parse_stderr_not_used(self) -> None:
-        """stderr parameter is accepted but doesn't affect parse results."""
+        """stderr parameter is accepted — CRITICAL warnings in stderr
+        produce a stderr Finding with exact fields."""
         adapter = PytestAdapter()
         xml = """<testsuites>
   <testsuite tests="2" failures="0" errors="0">
     <testcase classname="m" name="ok"/>
   </testsuite>
 </testsuites>"""
-        findings = adapter.parse(xml, stderr="some warnings here")
+        findings = adapter.parse(xml, stderr="CRITICAL: environment variable missing")
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.rule_id == "stderr"
+        assert f.severity == "warning"
+        assert f.message == "CRITICAL: environment variable missing"
+        assert f.fix_hint == "Check pytest configuration or environment."
+        assert f.tool == "pytest"
+        assert f.node == "pytest"
+        assert f.layer == "L1"
+        assert f.language == "python"
+
+    def test_parse_stderr_no_critical(self) -> None:
+        """Non-CRITICAL stderr → no stderr finding."""
+        adapter = PytestAdapter()
+        findings = adapter.parse(stdout='<testsuites/>', stderr="some warnings here")
         assert len(findings) == 0
 
     def test_parse_all_fields_consistent(self) -> None:

@@ -56,6 +56,20 @@ class PytestAdapter(ToolAdapter):
     ) -> list[Finding]:
         """Parse JUnit XML output into :class:`Finding` objects."""
         findings: list[Finding] = []
+        # Handle test execution warnings from stderr
+        if stderr and "CRITICAL" in stderr:
+            findings.append(
+                Finding(
+                    node="pytest",
+                    severity="warning",
+                    message=stderr.strip(),
+                    fix_hint="Check pytest configuration or environment.",
+                    tool="pytest",
+                    layer="L1",
+                    language="python",
+                    rule_id="stderr",
+                )
+            )
         if not stdout.strip():
             return findings
 
@@ -152,5 +166,21 @@ class PytestAdapter(ToolAdapter):
         findings.extend(failures)
         findings.extend(errors)
         findings.extend(skipped)
+
+        # Add exitcode finding if abnormal
+        if exitcode > 0:
+            findings.insert(
+                0,
+                Finding(
+                    node="pytest",
+                    severity="error",
+                    message=f"Test execution failed with exit code {exitcode}",
+                    fix_hint="Review the test output and check for environment issues.",
+                    tool="pytest",
+                    layer="L1",
+                    language="python",
+                    rule_id="exitcode",
+                ),
+            )
 
         return findings

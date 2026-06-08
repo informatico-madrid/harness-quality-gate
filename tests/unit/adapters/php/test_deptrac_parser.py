@@ -55,8 +55,12 @@ def test_parse_violations_list() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.node == "src/Controller.php"
+    assert f.severity == "error"
     assert f.message == "Controller calls Repository"
     assert f.fix_hint == "Use Service instead"
+    assert f.tool == "deptrac"
+    assert f.layer == "L4"
+    assert f.language == "php"
     # Violations is a list, so violations_count = the list itself
     assert isinstance(a.architecture.get("violations"), list)
     assert a.architecture.get("uncovered_classes") == 0
@@ -75,6 +79,11 @@ def test_parse_violations_list_multiple() -> None:
     }
     findings = a.parse(json.dumps(data), "", 1)
     assert len(findings) == 2
+    for f in findings:
+        assert f.severity == "error"
+        assert f.tool == "deptrac"
+        assert f.layer == "L4"
+        assert f.language == "php"
     assert findings[0].message == "V1"
     assert findings[1].message == "V2"
     # Violations is a list → violations_count = the list

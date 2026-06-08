@@ -283,29 +283,54 @@ class TestRunL2:
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
 
-    def test_l2_all_pass(self, tmp_path: Path):
-        """All tools return 0 findings -> passed=True."""
+    def test_l2_all_pass(self, tmp_path: Path, caplog):
+        """All tools return 0 findings -> passed=True.
+
+        Kills: mutmut_9 (format string → None), mutmut_10 (count → None),
+        mutmut_11 (format string removed), mutmut_12 (len → None).
+        Verifies logger.info called with exact format string and numeric count.
+        """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
         a.vulture = _mock_subadapter(findings=[])
         a.deptry = _mock_subadapter(findings=[])
         with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
+            with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
+                layer = a.run_l2(tmp_path, {})
         assert layer.layer == "L2"
-        assert layer.passed is True
+        assert layer.passed is True            # kills mutmut_12: passed = None == 0
         assert layer.findings == []
+        assert isinstance(layer.duration_sec, float)
+        # Kills: mutmut_9 (format string → None), mutmut_10 (count → None), mutmut_11 (no format)
+        assert "ruff (L2)" in caplog.text
+        assert "vulture" in caplog.text
+        assert "deptry" in caplog.text
+        # Verify log messages contain numeric count values (kills count → None mutations)
+        for line in caplog.messages:
+            if "ruff (L2)" in line:
+                # Message is "ruff (L2): %d findings" % count — count must be numeric
+                assert isinstance(int(str(line.split(":")[1].split()[0])), int)
 
     def test_l2_ruff_findings(self, tmp_path: Path):
-        """Ruff returns findings -> included."""
+        """Ruff returns findings -> included.
+
+        Kills: mutmut_4 (repo → None in _run_ruff call), mutmut_5 (env → None
+        in _run_ruff call). Verifies invoke is called with correct (repo, env) args.
+        """
         a = self._adapter()
+        env_arg: dict[str, str] = {}
         a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
         a.vulture = _mock_subadapter(findings=[])
         a.deptry = _mock_subadapter(findings=[])
         with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
+            layer = a.run_l2(tmp_path, env_arg)
         assert layer.passed is False
         assert len(layer.findings) == 1
         assert layer.findings[0].tool == "ruff"
+        # Kills mutmut_4 (repo→None): first positional arg must be tmp_path
+        assert a.ruff.invoke.call_args[0][0] is tmp_path
+        # Kills mutmut_5 (env→None): env keyword arg must be actual env dict (not None)
+        assert a.ruff.invoke.call_args.kwargs.get("env") == env_arg
 
     def test_l2_vulture_findings(self, tmp_path: Path):
         """Vulture returns findings -> included."""

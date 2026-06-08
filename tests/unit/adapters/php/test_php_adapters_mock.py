@@ -3350,13 +3350,15 @@ class TestPhpAntipatternTierAAdapter:
         assert result.exitcode == 0
         assert json.loads(result.stdout) == []
         assert result.stderr == ""
-        # Check logger format string mutation
-        assert "PHPMD skipped" in caplog.text
+        # Check logger format string mutation — exact format to kill string mutants (31).
+        # Mutant 31: "PHPMD skipped: %s" → "XXPHPMD skipped: %sXX"
+        # Original logs: "PHPMD skipped: broken"
+        # Mutant 31 logs: "XXPHPMD skipped: brokenXX" — exact format check kills it.
         # Kill mutmut_28: exc→None in logger(arg). Mutant produces "PHPMD skipped: None"
         # Kill mutmut_30: removed logger(arg) → log differs
         # Original logs: "PHPMD skipped: broken"
         # Mutant 28 logs: "PHPMD skipped: None"
-        assert "broken" in caplog.text
+        assert caplog.messages == ["PHPMD skipped: broken"]
 
     def test_invoke_visitor_not_implemented_logs(self, tmp_path: Path, caplog) -> None:
         """Visitor NotImplementedError — sentinel default produces marker finding."""
@@ -3367,10 +3369,45 @@ class TestPhpAntipatternTierAAdapter:
         parsed = json.loads(result.stdout)
         assert len(parsed) == 1
         assert parsed[0]["source"] == "visitor"
-        # Verify logger message format mutation is caught
-        assert "Visitor runner not yet implemented" in caplog.text
+        # Verify logger message format mutation is caught — exact to kill string mutant 46.
+        # Mutant 46: "Visitor runner not yet implemented for version()" →
+        #            "XXVisitor runner not yet implemented for version()XX"
+        # Original: "Visitor runner not yet implemented for version()"
+        # Mutant 46: "XXVisitor runner not yet implemented for version()XX"
+        assert caplog.messages == ["Visitor runner not yet implemented for version()"]
         # Verify sentinel marker key — catches mutation of _DEFAULT_MARKER string
         assert parsed[0]["____DEFAULT__"] is True
+
+    def test_invoke_visitor_runtime_error_logs_skip(self, tmp_path: Path, caplog) -> None:
+        """VisitorRunnerAdapter RuntimeError — logs skip message with exact format.
+
+        This test covers the `except RuntimeError as exc: logger.warning(...)` path
+        for the visitor runner, which is currently uncovered by any test.
+
+        Kills mutants on the `logger.warning("Visitor runner skipped: %s", exc)` call:
+        - mutmut_50: exc→None → "Visitor runner skipped: None" (different message)
+        - mutmut_51: removed format string → logger.warning(exc) (different log)
+        - mutmut_52: removed argument → "Visitor runner skipped: " (trailing space, no exc)
+        - mutmut_53: string "XXVisitor runner skipped: %sXX" (exact message check kills it)
+        """
+        visitor_error = RuntimeError("visitor not found")
+        phpmd_out = json.dumps({"files": []})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out)):
+                with patch.object(VisitorRunnerAdapter, "invoke", side_effect=visitor_error):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        # Original logs: "Visitor runner skipped: visitor not found"
+        # Mutant 50 logs: "Visitor runner skipped: None"
+        # Mutant 51 logs: "RuntimeError('visitor not found')" (just exc str)
+        # Mutant 52 logs: "Visitor runner skipped: " (empty after colon+space)
+        # Mutant 53 logs: "XXVisitor runner skipped: visitor not foundXX"
+        assert result.exitcode == 0
+        # When visitor raises RuntimeError, sentinel marker is still used → 1 finding
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
+        # Exact message assertion kills mutants 50, 52, 53 — only original produces this exact string
+        assert caplog.messages == ["Visitor runner skipped: visitor not found"]
         # Verify rule defaults to empty string when rule_id absent — catches
         # mutation of default "" → None in item.get("rule_id", "")
         assert parsed[0]["rule"] == ""

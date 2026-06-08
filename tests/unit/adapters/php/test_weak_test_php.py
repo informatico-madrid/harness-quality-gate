@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import logging
 
 import pytest
 
@@ -293,6 +294,63 @@ class TestRunL3bWithRealFiles:
         assert len(result.findings) == 0
 
 
+class TestInvokeBreakVsContinue:
+    """Tests that verify continue vs break behavior in the invoke method.
+
+    These tests are specifically designed to kill the mutmut_42 mutant
+    which changes 'continue' to 'break' when a visitor script is missing.
+    """
+
+    def test_invoke_missing_visitors_continues_through_all_8_visitors(self, tmp_path: Path, caplog) -> None:
+        """When visitor scripts are missing, invoke continues past each one.
+
+        If 'break' were used instead, only the first visitor's warning would be logged.
+        With 'continue', ALL 8 visitors log warnings.
+
+        This directly tests mutmut_42 which changes continue → break.
+        """
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+
+        # Create a test file that _collect_test_files will find
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        # Create a Path subclass that always returns False for is_file()
+        # This simulates missing visitor scripts, triggering the continue/break branch
+        class FakeVisitorsPath(Path):
+            def is_file(self):
+                return False
+
+        original_path = wt_module.Path
+        wt_module.Path = FakeVisitorsPath
+
+        try:
+            # Set log level to capture WARNING messages
+            logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+            logger.setLevel(logging.WARNING)
+            caplog.set_level(logging.WARNING, "harness_quality_gate.adapters.php.weak_test_php")
+
+            with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        finally:
+            wt_module.Path = original_path
+
+        # Count visitor missing warnings
+        visitor_missing_count = sum(
+            1 for r in caplog.records
+            if "Weak-test visitor missing" in r.getMessage()
+        )
+
+        # With 'continue' → all 8 visitors log warnings (count = 8)
+        # With 'break' → only 1 visitor logs warning (count = 1)
+        assert visitor_missing_count == 8, (
+            f"Expected 8 visitor warnings (continue), got {visitor_missing_count} (possible break). "
+            f"Messages: {[r.getMessage() for r in caplog.records]}"
+        )
+
+
 class TestRunL3bEdgeCases:
     """Edge cases and error paths in run_l3b."""
 
@@ -494,13 +552,22 @@ class TestInvokeDirect:
         real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
 
         with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
-            with patch("subprocess.run", return_value=completed):
+            with patch("subprocess.run", return_value=completed) as mock_run:
                 result = PhpWeakTestAdapter().invoke(tmp_path, [])
 
         assert result.exitcode == 1
         assert "visitor=" in result.stderr
         assert "exit=42" in result.stderr
         assert "fatal parse error" in result.stderr
+
+        # Assert subprocess.run was called with correct file args (not mutated to None).
+        # This kills mutmut_61 which changes str(php_file) to str(None).
+        for call in mock_run.call_args_list:
+            args = call[0]
+            cmd = args[0]  # The command list passed to subprocess.run
+            assert len(cmd) == 3, f"Expected 3 args in command, got {cmd}"
+            assert cmd[2] != "None", f"File arg should not be 'None', got: {cmd[2]}"
+            assert cmd[2] == str(test_file), f"File arg should be {test_file}, got: {cmd[2]}"
 
     def test_invoke_visitor_success_tags_rule_id(self, tmp_path: Path) -> None:
         """When a visitor succeeds, the findings are tagged with the correct rule_id."""
@@ -789,6 +856,62 @@ class TestInvokeDirect:
             for f in findings:
                 assert "rule_id" in f, "Finding must have 'rule_id' key (not mutated key)"
 
+    def test_invoke_subprocess_failure_calls_debug_log_with_correct_visitor_name(self, tmp_path: Path, caplog) -> None:
+        """Subprocess failure triggers logger.debug with actual visitor_name (not None).
+
+        Catches mutmut_61 (str(php_file) → str(None)) via subprocess args check,
+        and mutmut_70/71 (visitor_name → None in log.debug) via captured debug log.
+
+        Mutmut_70 would crash (TypeError: 'NoneType' object is not callable).
+        Mutmut_71 would log "Weak-test visitor None failed on ..." instead of real name.
+        """
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        completed = MagicMock()
+        completed.returncode = 1
+        completed.stdout = ""
+        completed.stderr = "some error"
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        # Skip if no visitors
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            pytest.skip("No visitor scripts to test debug log path")
+
+        # Set DEBUG level to capture the logger.debug calls that the mutations affect
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.weak_test_php")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        assert result.exitcode == 1
+
+        # Subprocess must be called with correct file args (not mutated to None).
+        # This kills mutmut_61 which changes str(php_file) to str(None).
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            assert cmd[2] != "None", f"File path must not be 'None' in subprocess call: {cmd}"
+            assert str(test_file) in cmd[2], f"Subprocess command must include test file path: {cmd}"
+
+        # Capture logged messages to catch mutmut_70/71 mutations
+        # mutmut_70 replaces format string with None → would crash (no test reaches here)
+        # mutmut_71 replaces visitor_name with None → logs "Weak-test visitor None failed..."
+        failed_visitor_logs = [
+            r.getMessage() for r in caplog.records
+            if r.levelno == logging.DEBUG and "Weak-test visitor" in r.getMessage()
+        ]
+        for log_msg in failed_visitor_logs:
+            assert "None" not in log_msg, (
+                f"Debug log should not contain 'None' as visitor name (mutmut_71). "
+                f"Got: {log_msg}"
+            )
+
     def test_invoke_missing_visitor_logs_correct_visitor_path(self, tmp_path: Path, caplog) -> None:
         """Verify that the logged warning message contains the specific visitor_script path
         (not None), which would fail when mutated (mutmut_35).
@@ -850,6 +973,11 @@ class TestInvokeDirect:
                 )
                 assert "/fake" in record.message, (
                     f"Log should contain fake visitors path, got: {record.message}"
+                )
+                # Kill mutmut_39: asserts exact log message format
+                # (not mutated to "XXWeak-test visitor missing: XX")
+                assert "XX" not in record.message, (
+                    f"Log message must not contain 'XX' mutation, got: {record.message}"
                 )
                 break
 
