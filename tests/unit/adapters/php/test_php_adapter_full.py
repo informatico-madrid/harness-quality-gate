@@ -1083,7 +1083,7 @@ class TestRunL3a:
         assert result.passed is False
         assert any(f.tool == "phpstan" for f in result.findings)
 
-    def test_l3a_phpmd_finds(self, tmp_path):
+    def test_l3a_phpmd_finds(self, tmp_path, caplog):
         adapter = PhpAdapter()
         adapter._phpstan = MagicMock()
         adapter._phpstan.run_l3a.return_value = []
@@ -1097,8 +1097,47 @@ class TestRunL3a:
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.INFO)
         result = adapter.run_l3a(tmp_path, {})
         assert any(f.tool == "phpmd" for f in result.findings)
+        # Kill logger mutations 44 & 45 on PHPMD logger.info line:
+        #   Mutant 44: removes format string -> logger.info(len(phpmd_findings))
+        #   Mutant 45: removes arg -> logger.info("L3A PHPMD: %d findings", )
+        # Both change the logged string format. Exact-match assertion kills them.
+        phpmd_logs = [m for m in caplog.messages if m.startswith("L3A PHPMD:")]
+        assert (
+            len(phpmd_logs) == 1
+        ), f"Expected exactly one PHPMD log record, got: {phpmd_logs}"
+        # Original: "L3A PHPMD: 1 findings"
+        # Mutated 44: "1" (just the count, no prefix)
+        # Mutated 45: "%d" or similar invalid output
+        assert phpmd_logs[0] == "L3A PHPMD: 1 findings"
+
+    def test_l3a_phpmd_zero_findings_log(self, tmp_path, caplog):
+        """Kill mutants 44 & 45 with zero-findings path (log message still has %d format).
+
+        Mutant 44: logger.info(len([])) -> logger.info(0)
+        Mutant 45: logger.info("L3A PHPMD: %d findings", ) -> syntax error / TypeError
+
+        Assert exact log message to detect format-string and argument mutations.
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        phpmd_logs = [m for m in caplog.messages if m.startswith("L3A PHPMD:")]
+        assert len(phpmd_logs) == 1, f"Expected exactly one PHPMD log record, got: {phpmd_logs}"
+        assert phpmd_logs[0] == "L3A PHPMD: 0 findings"
 
     def test_l3a_cs_fixer_finds(self, tmp_path):
         adapter = PhpAdapter()

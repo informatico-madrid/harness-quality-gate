@@ -113,7 +113,12 @@ class PhpWeakTestAdapter(ToolAdapter):
 
         if not php_files:
             logger.warning("No PHP test files found in %s", repo)
-            return ToolInvocation(stdout="[]", stderr="no PHP test files found", exitcode=0)
+            exitcode = 0  # exitcode: 0 for "no files found" (no actual error)
+            return ToolInvocation(
+                stdout="[]",
+                stderr="no PHP test files found",
+                exitcode=exitcode,
+            )
 
 # 
         for visitor_name in _WEAK_TEST_VISITORS:

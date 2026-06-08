@@ -1722,12 +1722,30 @@ class TestVisitorRunnerAdapter:
         # The message must contain the actual visitors directory (catches mutmut_11: removing visitors_dir arg leaves literal %s)
         assert "/visitors" in warn.message
 
-    def test_invoke_no_php_files_returns_empty(self, tmp_path: Path) -> None:
-        with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["god_class"]):
-            with patch.object(VisitorRunnerAdapter, "_collect_php_files", return_value=[]):
-                result = VisitorRunnerAdapter().invoke(tmp_path, [])
+    def test_invoke_no_php_files_returns_empty(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Ensure the warning message format is exact (catches logging mutations).
+
+        Mutants:
+          - mutmut_24:   repo_dir arg replaced with None in logger.warning
+          - mutmut_25:   format string removed, repo_dir passed as bare message
+        """
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php.visitor_runner_adapter"):
+            with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["god_class"]):
+                with patch.object(VisitorRunnerAdapter, "_collect_php_files", return_value=[]):
+                    result = VisitorRunnerAdapter().invoke(tmp_path, [])
+
         assert result.stdout == "[]"
         assert "no PHP files" in result.stderr
+
+        # Must have exactly one WARNING record
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+        warn = [r for r in caplog.records if r.levelno == logging.WARNING][0]
+        # The message must contain the formatted path prefix (catches mutmut_25: bare string)
+        assert warn.message.startswith("No PHP files found in")
+        # The message must NOT contain "None" (catches mutmut_24: repo_dir → None)
+        assert "None" not in warn.message
 
     def test_discover_visitors_empty_dir(self, tmp_path: Path) -> None:
         """_discover_visitors on empty directory returns empty list."""
@@ -3231,6 +3249,11 @@ class TestPhpAntipatternTierAAdapter:
         assert parsed[0]["source"] == "visitor"
         # Verify logger message format mutation is caught
         assert "Visitor runner not yet implemented" in caplog.text
+        # Verify sentinel marker key — catches mutation of _DEFAULT_MARKER string
+        assert parsed[0]["____DEFAULT__"] is True
+        # Verify rule defaults to empty string when rule_id absent — catches
+        # mutation of default "" → None in item.get("rule_id", "")
+        assert parsed[0]["rule"] == ""
 
     def _invoke_with_both_ok_check_exactly(self, tmp_path: Path) -> str:
         """Run invoke with both ok and return exact stdout."""
@@ -3571,6 +3594,9 @@ class TestPhpAntipatternTierAAdapter:
         assert phpmd_kwargs["timeout"] == 300.0
         visitor_kwargs = visitor_mock.call_args.kwargs
         assert visitor_kwargs["timeout"] == 300.0
+        # Verify repo is actually passed as positional arg — catches mutation of repo→None
+        assert phpmd_mock.call_args.args[0] is tmp_path
+        assert visitor_mock.call_args.args[0] is tmp_path
 
     def test_invoke_phpmd_failure_json_decode_warning(self, tmp_path: Path, caplog) -> None:
         """When PHPMD fails, mutated phpmd_stdout='XXXX' triggers JSON decode warning.

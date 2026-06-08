@@ -788,3 +788,74 @@ class TestInvokeDirect:
             findings = json.loads(result.stdout)
             for f in findings:
                 assert "rule_id" in f, "Finding must have 'rule_id' key (not mutated key)"
+
+    def test_invoke_missing_visitor_logs_correct_visitor_path(self, tmp_path: Path, caplog) -> None:
+        """Verify that the logged warning message contains the specific visitor_script path
+        (not None), which would fail when mutated (mutmut_35).
+
+        Creates a scenario where test files exist (php_files found) but the visitors
+        directory does not contain the expected visitor script. The warning log must
+        include the actual visitor_script path, not None.
+        """
+        # Create test files that _collect_test_files will find
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        # Custom Path class that always returns is_file=False
+        # to simulate missing visitor scripts, while delegating
+        # other Path operations to the real pathlib.Path
+        class FakeVisitorsPath(Path):
+            """Path that looks like a visitors directory with missing files."""
+            def is_file(self):
+                return False
+
+            def __truediv__(self, other):
+                return self
+
+        fake_visitors_path = FakeVisitorsPath("/fake/visitors")
+
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+        original_path = wt_module.Path
+
+        def patched_Path(*args, **kwargs):
+            # When constructing from this module's __file__, return the fake path
+            # that simulates missing visitor scripts
+            if args and "weak_test_php" in str(args[0]):
+                return fake_visitors_path
+            return original_path(*args, **kwargs)
+
+        try:
+            wt_module.Path = patched_Path
+
+            # Mock _collect_test_files to find our test file
+            with patch.object(
+                PhpWeakTestAdapter, "_collect_test_files",
+                return_value=[tests_dir / "FooTest.php"],
+            ):
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        finally:
+            wt_module.Path = original_path
+
+        # Assert the warning log message contains the actual visitor_script path,
+        # not None. If mutmut_35 mutated visitor_script to None, the log would say
+        # "Weak-test visitor missing: None" and this assertion would catch it.
+        found_warning = False
+        for record in caplog.records:
+            if "Weak-test visitor missing" in record.message:
+                found_warning = True
+                assert ": None" not in record.message, (
+                    f"Log should not contain 'None' in path position, got: {record.message}"
+                )
+                assert "/fake" in record.message, (
+                    f"Log should contain fake visitors path, got: {record.message}"
+                )
+                break
+
+        assert found_warning, (
+            f"Missing 'Weak-test visitor missing' log. Records: {[r.message for r in caplog.records]}"
+        )
+
+        assert result.exitcode == 0
+        assert json.loads(result.stdout) == []

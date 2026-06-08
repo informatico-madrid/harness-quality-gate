@@ -196,15 +196,21 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                 if isinstance(visitor_items, list):
                     for item in visitor_items:
                         if isinstance(item, dict):
-                            merged_findings.append(
-                                {
-                                    "source": "visitor",
-                                    "file": item.get("file", ""),
-                                    "rule": item.get("rule_id", ""),
-                                    "description": item.get("message", ""),
-                                    "line": item.get("line"),
-                                }
-                            )
+                            finding = {
+                                "source": "visitor",
+                                "file": item.get("file", ""),
+                                "rule": item.get("rule_id", ""),
+                                "description": item.get("message", ""),
+                                "line": item.get("line"),
+                            }
+                            # Include sentinel marker in output only when present
+                            # (visitor default / NotImplementedError path). This
+                            # allows tests to assert on its exact key/value to
+                            # catch _DEFAULT_MARKER string mutations.
+                            marker_val = item.get("____DEFAULT__")
+                            if marker_val is not None:
+                                finding["____DEFAULT__"] = marker_val
+                            merged_findings.append(finding)
             except json.JSONDecodeError:
                 logger.warning(
                     "Visitor output is not valid JSON: %r",

@@ -82,7 +82,7 @@ def test_parse_nested_files_tainted_sql() -> None:
     findings = _adapter().parse(json.dumps(data), "", 1)
     assert len(findings) == 1
     assert findings[0].node == "src/Query.php:5"
-    assert findings[0].message.startswith("TaintedSql:")
+    assert findings[0].message == "TaintedSql: User input reaches SQL"
 
 
 def test_parse_nested_files_multiple() -> None:
@@ -179,18 +179,30 @@ def test_parse_array_missing_type_key() -> None:
 
 
 def test_parse_array_non_taint_then_taint() -> None:
-    """Non-taint item followed by taint item → both must be inspected.
+    """Non-taint item followed by taint item with explicit message → both inspected.
 
     The non-taint item (empty type) is skipped by _extract_type_valid,
     and the valid taint item is still processed.
+
+    Asserts exact message value: when the input item has message="injection possible",
+    desc should be "TaintedSql: injection possible". A message mutation that changes
+    item.get("message", "") to None would produce desc="TaintedSql" (no colon), killing
+    this assertion. This test also kills type mutations via the rule_id assertion.
     """
     data = [
         {"file_name": "src/x.php"},  # no type key → empty → skip
-        {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
+        {
+            "type": "TaintedSql",
+            "file_name": "src/Query.php",
+            "line_from": 42,
+            "message": "injection possible",
+        },
     ]
     findings = _adapter().parse(json.dumps(data), "", 1)
     assert len(findings) == 1
     assert findings[0].node == "src/Query.php:42"
+    assert findings[0].message == "TaintedSql: injection possible"
+    assert findings[0].rule_id == "TaintedSql"
 
 
 def test_parse_nested_files_missing_type_key() -> None:
