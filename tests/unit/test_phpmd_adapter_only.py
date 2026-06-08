@@ -250,3 +250,52 @@ class TestPhpMdAdapter:
             with patch.object(PhpMdAdapter, "_run", return_value=_ok(json.dumps(data))):
                 findings = PhpMdAdapter().run_l3a(tmp_path, {})
         assert findings == []
+
+    # -- _run_phpmd invocation assertions (kill mutants 2,3,4,8,9,12) ----------
+
+    def test_run_phpmd_invokes_with_correct_args(self, tmp_path: Path) -> None:
+        """Verify _run_phpmd calls invoke(repo, [repo, json, rulesets]).
+
+        Catches mutants 2 (str(repo)→None), 3 ("json"→"XXjsonXX"), 4 ("json"→"JSON").
+        """
+        adapter = PhpMdAdapter()
+        rulesets = "cleancode,codesize"
+        with patch.object(adapter, "invoke", return_value=_ok("{}")) as mock_invoke:
+            adapter._run_phpmd(tmp_path, rulesets, {}, timeout=30.0)
+
+        mock_invoke.assert_called_once()
+        call_args = mock_invoke.call_args
+        # First positional: repo
+        assert call_args[0][0] is tmp_path
+        # Second positional: args list must start with str(repo)
+        args_list = call_args[0][1]
+        assert str(tmp_path) == args_list[0]
+        assert "json" == args_list[1]
+        assert rulesets == args_list[2]
+
+    def test_run_phpmd_passes_env_to_invoke(self, tmp_path: Path) -> None:
+        """Verify _run_phpmd passes env dict to invoke(env=env).
+
+        Catches mutants 8 (env=env→env=None) and 12 (env=env kwarg removed).
+        """
+        adapter = PhpMdAdapter()
+        test_env = {"APP_ENV": "test"}
+        with patch.object(adapter, "invoke", return_value=_ok("{}")) as mock_invoke:
+            adapter._run_phpmd(tmp_path, "cleancode", test_env, timeout=10.0)
+
+        mock_invoke.assert_called_once()
+        call_kwargs = mock_invoke.call_args.kwargs
+        assert call_kwargs["env"] is test_env
+
+    def test_run_phpmd_passes_timeout_to_invoke(self, tmp_path: Path) -> None:
+        """Verify _run_phpmd passes timeout to invoke(timeout=timeout).
+
+        Catches mutant 9 (timeout=timeout→timeout=None).
+        """
+        adapter = PhpMdAdapter()
+        with patch.object(adapter, "invoke", return_value=_ok("{}")) as mock_invoke:
+            adapter._run_phpmd(tmp_path, "cleancode", {}, timeout=42.5)
+
+        mock_invoke.assert_called_once()
+        call_kwargs = mock_invoke.call_args.kwargs
+        assert call_kwargs["timeout"] == 42.5

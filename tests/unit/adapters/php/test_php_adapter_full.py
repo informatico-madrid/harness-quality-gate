@@ -991,7 +991,46 @@ class TestRunL1InfectionPaths:
         env = {"HARNESS_INFECTION_REQUIRED": "1"}
         result = adapter.run_l1(tmp_path, env)
         assert result.passed is False
+        # Kill mutmut_174/178/179/184: field mutations on the HARNESS_INFECTION_REQUIRED Finding
         assert any("HARNESS_INFECTION_REQUIRED" in f.message for f in result.findings)
+        inf_findings = [
+            f for f in result.findings if "HARNESS_INFECTION_REQUIRED" in f.message
+        ]
+        assert len(inf_findings) == 1
+        # mutmut_174: node="infection" → None in Finding constructor
+        assert inf_findings[0].node == "infection"
+        # mutmut_178: layer="L1" → None in Finding constructor
+        assert inf_findings[0].layer == "L1"
+        # mutmut_179: language="php" → None in Finding constructor
+        assert inf_findings[0].language == "php"
+        # mutmut_184: layer param removed from Finding constructor
+        assert "layer" in result.findings[0].__dict__, (
+            "Mut184: layer param removed from Finding — must have layer field"
+        )
+
+    def test_infection_required_runtime_error(self, tmp_path):
+        """Kill mutmut_114 via RuntimeError path from _run_infection.
+
+        Mutant 114: mutation_stats: MutationStats | None = "" (empty str instead of None).
+        When _run_infection raises RuntimeError, the except handler catches it and
+        logs a warning — but mutation_stats remains at its initial "" value (never
+        overwritten by assignment). The guard `if mutation_stats is None and ...`:
+          - Original:  None is None → True → Finding added
+          - Mutant 114: "" is None → False → NO Finding added ← killed
+        Also kills mutmut_174/178/179/184 with field assertions on the Finding.
+        """
+        adapter = _make_mock_adapter()
+        # Make _run_infection raise RuntimeError to exercise the except handler
+        adapter._infection.invoke.side_effect = RuntimeError("infection not installed")
+        env = {"HARNESS_INFECTION_REQUIRED": "1"}
+        result = adapter.run_l1(tmp_path, env)
+        assert result.layer == "L1"
+        assert any("HARNESS_INFECTION_REQUIRED" in f.message for f in result.findings)
+        inf_f = [f for f in result.findings if "HARNESS_INFECTION_REQUIRED" in f.message]
+        assert len(inf_f) == 1
+        assert inf_f[0].node == "infection"
+        assert inf_f[0].layer == "L1"
+        assert inf_f[0].language == "php"
 
     def test_infection_not_required_when_missing(self, tmp_path, caplog):
         """Kill logger mutations (mutmut_21-24) on _run_infection unavailable path.
@@ -1567,7 +1606,7 @@ class TestRunL3a:
         assert len(warnings) == 1, f"Expected exactly one PHPMD skip warning, got: {warnings}"
         assert warnings[0] == "L3A PHPMD skipped: phpmd not found"
 
-    def test_l3a_cs_fixer_runtime_error_skipped(self, tmp_path):
+    def test_l3a_cs_fixer_runtime_error_skipped(self, tmp_path, caplog):
         adapter = PhpAdapter()
         adapter._phpstan = MagicMock()
         adapter._phpstan.run_l3a.return_value = []
@@ -1578,8 +1617,47 @@ class TestRunL3a:
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
         result = adapter.run_l3a(tmp_path, {})
         assert result.passed is True
+        # Kill logger argument/string mutations 92 & 93:
+        #   Mutant 92: logger.warning("...", exc) → logger.warning("...", None)
+        #     → log becomes "L3A php-cs-fixer skipped: None" instead of "L3A php-cs-fixer skipped: cs-fixer not found"
+        #   Mutant 93: logger.warning("...", exc) → logger.warning(exc)
+        #     → format-arg removal changes log structure entirely
+        # Exact-match assertion kills both at once.
+        warnings = [m for m in caplog.messages if "L3A php-cs-fixer skipped" in m]
+        assert len(warnings) == 1, f"Expected exactly one cs-fixer skip warning, got: {warnings}"
+        assert warnings[0] == "L3A php-cs-fixer skipped: cs-fixer not found"
+
+    def test_l3a_cs_fixer_success_log_message(self, tmp_path, caplog):
+        """Kill logger.info mutations 86-89 on php-cs-fixer success path.
+
+        Mutations target: logger.info("L3A php-cs-fixer: %d findings", len(cs_findings))
+          Mutant 86: removes format string → logger.info(len(cs_findings))
+          Mutant 87: removes arg → logger.info("L3A php-cs-fixer: %d findings", )
+          Mutant 88: string prefix/suffix → "XXL3A php-cs-fixer: %d findingsXX"
+          Mutant 89: case mutation → "l3a php-cs-fixer: %d findings"
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        # Exact-match kills all 4 logger.info mutations at once:
+        # Mut86 → "0" (no prefix) | Mut87 → error | Mut88 → "XX...XX" | Mut89 → "l3a ..."
+        cs_logs = [m for m in caplog.messages if m.startswith("L3A php-cs-fixer:")]
+        assert len(cs_logs) == 1, f"Expected exactly one cs-fixer log, got: {cs_logs}"
+        assert cs_logs[0] == "L3A php-cs-fixer: 0 findings"
 
     def test_l3a_tier_a_visitor_runtime_error_skipped(self, tmp_path):
         adapter = PhpAdapter()

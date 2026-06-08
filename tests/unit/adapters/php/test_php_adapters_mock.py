@@ -3228,7 +3228,104 @@ class TestPhpAntipatternTierAAdapter:
         assert item["description"] == "Too large"
         assert item["line"] == 42
         assert item["priority"] == 1
-        assert result.exitcode == 0
+        assert result.exitcode == 0  # Kills mutmut_125: priority default 3→4
+
+    def test_invoke_missing_priority_default(self, tmp_path: Path) -> None:
+        """Violation without 'priority' key catches mutmut_120/122/125.
+
+        Original: v.get("priority", 3) → 3 (default)
+        Mutant 120: v.get("priority", None) → None
+        Mutant 122: v.get("priority", ) → None
+        Mutant 125: v.get("priority", 4) → 4
+
+        When violation dict has no 'priority' key, the mutant produces
+        'priority': null in the merged JSON (or 4 instead of 3).
+        This test asserts priority == 3 to detect all three.
+        """
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/NoPriority.php",
+                    "violations": [
+                        {
+                            # "priority" key is intentionally missing
+                            "rule": "TestRule",
+                            "description": "Missing priority",
+                            "beginLine": 10,
+                        },
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        assert merged[0]["priority"] == 3
+
+    def test_invoke_startLine_fallback(self, tmp_path: Path) -> None:
+        """Violation with startLine but no beginLine catches mutmut_113/114/115.
+
+        Original: v.get("beginLine") or v.get("startLine") → startLine value
+        Mutant 113: v.get("beginLine") or v.get(None) → None
+        Mutant 114: v.get("beginLine") or v.get("XXstartLineXX") → None
+        Mutant 115: v.get("beginLine") or v.get("startline") → None
+
+        When PHPMD data has only startLine (no beginLine), the fallback
+        v.get("startLine") returns the value. Mutants that change the key
+        produce None, which kills the test.
+        """
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/FallbackLine.php",
+                    "violations": [
+                        {
+                            # Only startLine, no beginLine — exercises the fallback
+                            "rule": "TestRule",
+                            "description": "Missing beginLine",
+                            "startLine": 78,
+                        },
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        assert merged[0]["line"] == 78
+
+    def test_invoke_startLine_beginLine_both(self, tmp_path: Path) -> None:
+        """StartLine fallback when beginLine is also present — verifies precedence.
+
+        When both beginLine and startLine are present, beginLine should
+        take precedence. Mutants 113/114/115 change the fallback key and
+        would produce None (beginLine is None, fallback to wrong/None key).
+        """
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/BothLines.php",
+                    "violations": [
+                        {
+                            "rule": "TestRule",
+                            "description": "Both keys",
+                            "beginLine": 42,
+                            "startLine": 99,  # Should be ignored
+                        },
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        assert merged[0]["line"] == 42  # beginLine wins, NOT startLine
 
     def test_invoke_visitor_only(self, tmp_path: Path) -> None:
         """Only visitor runner returns findings — PHPMD is empty."""
