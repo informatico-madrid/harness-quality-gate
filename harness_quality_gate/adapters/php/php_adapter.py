@@ -419,7 +419,7 @@ class PhpAdapter(BaseAdapter):
         all_findings: list[Finding] = []
 
         # --- 1. Coverage driver probe (FR-28) ----------------------------
-        driver: str | None = None
+        driver: str | None = "unknown"
         try:
             driver = self._pcov.probe(repo)
             logger.info("L1 coverage driver: %s", driver)
@@ -559,7 +559,7 @@ class PhpAdapter(BaseAdapter):
             findings=all_findings,
             duration_sec=round(duration, 3),
             tool_specific={
-                "coverage_driver": driver or "unknown",
+                "coverage_driver": driver if driver is not None else "unknown",
                 "infection_thresholds": {
                     "min_msi": _INFECTION_MIN_MSI,
                     "min_covered_msi": _INFECTION_MIN_COVERED_MSI,

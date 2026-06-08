@@ -7,6 +7,7 @@ calls. Targets near-100% coverage of all PHP adapter modules.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -565,8 +566,16 @@ class TestPhpUnitAdapter:
     def test_parse_stdout_failed(self) -> None:
         stdout = "1) Tests\\FooTest :: test_bar FAILED"
         findings = PhpUnitAdapter()._parse_stdout(stdout)
-        # regex may or may not match this exact format; at minimum returns list
-        assert isinstance(findings, list)
+        # KILL mutants 2 (early return for non-empty) and 5 (regex match → None):
+        # Both mutations return [], but original produces at least one finding.
+        assert len(findings) >= 1
+        f = findings[0]
+        assert f.severity == "error"
+        assert f.message == "test_bar failed"
+        assert f.tool == "phpunit"
+        assert f.layer == "layer1"
+        # fix_hint uses node = "class/test_name"
+        assert f.fix_hint == "Fix assertion in Tests\\FooTest/test_bar"
 
     def test_parse_stdout_empty(self) -> None:
         assert PhpUnitAdapter()._parse_stdout("") == []
@@ -709,10 +718,17 @@ class TestPhpUnitAdapter:
         """Parse PHPUnit text output with full Class::method format.
 
         Asserts exact node to kill regex/text mutation 284.
+        Also kills mutants 2 (early return) and 5 (regex match → None) on this path.
         """
         stdout = "1) Tests\\FooTest::test_bar FAILED\n"
         findings = PhpUnitAdapter()._parse_stdout(stdout)
-        assert isinstance(findings, list)
+        assert len(findings) >= 1
+        f = findings[0]
+        # When class group fails to match (no space before ::), test_name = full match
+        assert f.message == "Tests\\FooTest::test_bar failed"
+        assert f.severity == "error"
+        assert f.tool == "phpunit"
+        assert f.layer == "layer1"
 
     def test_parse_junit_xml_failure_details_no_newlines(self, tmp_path: Path) -> None:
         """Failure with multi-line text — details should be collapsed to single line.
@@ -1680,6 +1696,29 @@ class TestVisitorRunnerAdapter:
             result = VisitorRunnerAdapter().invoke(tmp_path, [])
         assert result.stdout == "[]"
         assert "no visitors" in result.stderr
+
+    def test_invoke_no_visitors_logs_exact_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Ensure the warning message format is exact (catches logging mutations).
+
+        Mutants:
+          - mutmut_9:   visitors_dir arg replaced with None in logger.warning
+          - mutmut_10:  format string removed, visitors_dir passed as bare message
+        """
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php.visitor_runner_adapter"):
+            with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=[]):
+                result = VisitorRunnerAdapter().invoke(tmp_path, [])
+
+        # Must have exactly one WARNING record
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+        warn = [r for r in caplog.records if r.levelno == logging.WARNING][0]
+        # The message must contain the formatted visitors directory path
+        assert warn.message.startswith("No visitor scripts found in")
+        # The message must NOT contain "None" (catches mutmut_9)
+        assert "None" not in warn.message
+        # The message must NOT be the raw path without format prefix (catches mutmut_10)
+        assert warn.message != "No visitor scripts found in"
 
     def test_invoke_no_php_files_returns_empty(self, tmp_path: Path) -> None:
         with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["god_class"]):
@@ -2751,6 +2790,23 @@ class TestPhpAntipatternTierAAdapter:
             with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok('[]', exitcode=0)):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
         assert result.exitcode == 1
+
+    def test_invoke_both_runtime_error_graceful(self, tmp_path: Path) -> None:
+        """Both PHPMD and visitor runner fail — all defaults used, merged output empty.
+
+        This test exercises the code path where both invocations raise RuntimeError,
+        forcing the method to use all default values (phpmd_stdout="", phpmd_stderr="",
+        phpmd_exitcode=0, visitor_stdout="[]", visitor_stderr=""). Mutations on these
+        default values (e.g.: visitor_stdout → "XX[]XX", visitor_stderr → None) are
+        masked by existing try/except and falsy checks, so this test asserts the overall
+        observable behavior: empty stdout, empty stderr, exitcode=0.
+        """
+        with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("phpmd broken")):
+            with patch.object(VisitorRunnerAdapter, "invoke", side_effect=RuntimeError("vis broken")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        assert result.stderr == ""
+        assert result.exitcode == 0
 
     def test_parse_empty(self) -> None:
         assert PhpAntipatternTierAAdapter().parse("") == []

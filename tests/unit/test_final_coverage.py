@@ -166,8 +166,17 @@ def test_phpunit_parse_stdout_skipped() -> None:
         "2) CalculatorTest :: testRisky INCOMPLETE\n"
     )
     findings = adapter._parse_stdout(stdout)
-    # parse_stdout may return 0 findings if format doesn't match regex — that's ok
-    assert isinstance(findings, list)
+    # KILL mutants 2 (early return for non-empty) and 5 (regex → None):
+    # Both mutations would return [], but we expect 2 findings
+    assert len(findings) == 2
+    f1, f2 = findings
+    assert f1.message == "testAdd skipped"
+    assert f1.severity == "info"
+    assert f1.tool == "phpunit"
+    assert f1.layer == "layer1"
+    assert f1.fix_hint == "Review skip reason in CalculatorTest/testAdd"
+    assert f2.message == "testRisky incomplete"
+    assert f2.severity == "warning"
 
 
 # ---------------------------------------------------------------------------
@@ -496,14 +505,22 @@ def test_pest_version_no_digit_parts(tmp_path: Path) -> None:
 
 
 def test_phpunit_parse_stdout_error_status() -> None:
-    """Lines 292-293: ERROR status branch."""
+    """Lines 292-293: ERROR status branch.
+
+    Also KILL mutants 2 (early return for non-empty) and 5 (regex → None):
+    both mutations would return [], but we expect 1 finding with severity=error.
+    """
     from harness_quality_gate.adapters.php.phpunit_adapter import PhpUnitAdapter
     adapter = PhpUnitAdapter()
     stdout = "1) MyTest :: testSomething ERROR\n"
     findings = adapter._parse_stdout(stdout)
-    assert isinstance(findings, list)
-    if findings:
-        assert any(f.severity == "error" for f in findings)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.message == "testSomething error"
+    assert f.severity == "error"
+    assert f.tool == "phpunit"
+    assert f.layer == "layer1"
+    assert f.fix_hint == "Fix error in MyTest/testSomething"
 
 
 # ---------------------------------------------------------------------------

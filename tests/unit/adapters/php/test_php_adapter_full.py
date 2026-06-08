@@ -485,6 +485,9 @@ class TestRunL1PcovProbeFailure:
         pcov_findings = [f for f in result.findings if f.tool == "pcov"]
         assert pcov_findings[0].severity == "error"
         assert "probe failed" in pcov_findings[0].message.lower()
+        # Verify coverage_driver falls back to 'unknown' when probe fails
+        # (kills assignment mutation where initial value is changed to "")
+        assert result.tool_specific["coverage_driver"] == "unknown"
         # Kill 'probe(repo)' → 'probe(None)' mutation
         assert adapter._pcov.probe.call_args[0][0] == tmp_path
 
@@ -860,8 +863,17 @@ class TestRunL1ToolSpecific:
         result = adapter.run_l1(tmp_path, {})
         assert result.tool_specific["coverage_driver"] == "pcov"
         # Verify the actual driver name appears in the log (kills logger.info
-        # format-string / argument mutations where driver is replaced with None)
+        # format-string / argument mutations where driver is replaced with None,
+        # and string mutations that prepend/append characters).
         assert any("L1 coverage driver: pcov" in m for m in caplog.messages)
+        # Stronger format assertion: catches string-mutation survivors that
+        # change the logger format prefix (e.g. "XX" prefix mutations that
+        # produce "XXL1 coverage driver: ..." which would pass substring
+        # checks but have a different prefix).
+        assert any(
+            m for m in caplog.messages
+            if m.startswith("L1 coverage driver:") and "XX" not in m
+        )
 
     def test_tool_specific_coverage_driver_unknown(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -1212,13 +1224,13 @@ class TestRunL3a:
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
 
-    def test_l3a_with_frameworks_log_message(self, tmp_path, caplog):
-        """Kill mutant 15: ', '.join(injection_packages) -> 'XX, XX'.join()
+    def test_l3a_with_single_framework_log_message(self, tmp_path, caplog):
+        """Kill mutant 15 with single framework (package name check).
 
-        When a composer.json declares symfony/framework-bundle, run_l3a calls
-        detect_frameworks, gets frameworks, builds injection_packages like
-        ['phpstan-symfony'], and logs the join'd list.  Mutated join delimiter
-        would produce 'XX, XX' instead of the actual package names.
+        Mutant 15: ', '.join(injection_packages) -> 'XX, XX'.join()
+        The format string and join produce the log message.  Mutated join would
+        replace the separator 'XX, XX' — visible only with 2+ items, but the
+        package name check still validates the format string itself.
         """
         # Write a composer.json that triggers symfony detection
         composer = tmp_path / "composer.json"
@@ -1240,15 +1252,55 @@ class TestRunL3a:
             for m in caplog.messages
         ), "Log must contain the actual injected package name"
 
+    def test_l3a_with_multiple_frameworks_log_message(self, tmp_path, caplog):
+        """Kill mutant 15: join delimiter visible with 2+ frameworks.
+
+        Mutant 15: ', '.join(injection_packages) -> 'XX, XX'.join()
+        With multiple frameworks, the separator becomes observable.
+        Original: "L3A PHPStan framework packs: larastan, phpstan-symfony"
+        Mutated:  "L3A PHPStan framework packs: larastanXX, XXphpstan-symfony"
+        (frameworks sorted alphabetically: laravel → larastan before symfony → phpstan-symfony)
+        """
+        composer = tmp_path / "composer.json"
+        composer.write_text(
+            json.dumps({
+                "require": {
+                    "symfony/framework-bundle": "^6.0",
+                    "laravel/framework": "^10.0",
+                }
+            }),
+            encoding="utf-8",
+        )
+        adapter = PhpAdapter()
+        self._all_mocked_l3a(adapter)
+
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.layer == "L3A"
+        # The framework packs log must contain both package names separated
+        # by ', ' — the mutated join would replace ', ' with 'XX, XX'
+        framework_logs = [
+            m for m in caplog.messages if "L3A PHPStan framework packs" in m
+        ]
+        assert len(framework_logs) == 1, "Expected exactly one framework packs log"
+        # Verify the separator is ', ' not 'XX, XX'
+        assert (
+            "larastan, phpstan-symfony" in framework_logs[0]
+        ), f"Log should use ', ' separator, got: {framework_logs[0]}"
+        # Verify exact message format to catch all format string mutations
+        assert framework_logs[0] == "L3A PHPStan framework packs: larastan, phpstan-symfony"
+
     def test_l3a_phpstan_zero_findings_log_message(self, tmp_path, caplog):
         """Kill mutants 24 & 25 on PHPStan logger.info.
 
         Mutant 24: removes format string → logger.info(len(phpstan_findings))
         Mutant 25: removes len() arg → logger.info("L3A PHPStan: %d findings", )
 
-        Both change the resulting logged string.  We assert the message
-        contains the full format prefix AND the zero count so the mutated
-        versions fail.
+        Both change the resulting logged string.  We assert the exact message
+        format (not just substring) so mutations that remove args produce
+        different output.  Original: "L3A PHPStan: 0 findings"
+        Mutated:                    "0" (just the number, no prefix format)
         """
         adapter = PhpAdapter()
         self._all_mocked_l3a(adapter)
@@ -1256,12 +1308,11 @@ class TestRunL3a:
         caplog.set_level(logging.INFO)
         result = adapter.run_l3a(tmp_path, {})
 
-        # With zero findings the log should be:
-        #   "L3A PHPStan: 0 findings"
-        assert any(
-            "L3A PHPStan: 0 findings" in m
-            for m in caplog.messages
-        ), "Log must contain the full formatted PHPStan message"
+        # Extract the exact PHPStan log record
+        phpstan_log = [m for m in caplog.messages if m.startswith("L3A PHPStan:")]
+        assert len(phpstan_log) == 1, f"Expected exactly one PHPStan log, got: {phpstan_log}"
+        # Verify exact message — mutated versions would produce "0" only
+        assert phpstan_log[0] == "L3A PHPStan: 0 findings"
 
     def test_l3a_phpstan_findings_log_message(self, tmp_path, caplog):
         """Reinforce mutants 24 & 25 with actual findings count.
@@ -1280,10 +1331,11 @@ class TestRunL3a:
         caplog.set_level(logging.INFO)
         result = adapter.run_l3a(tmp_path, {})
 
-        assert any(
-            "L3A PHPStan: 3 findings" in m
-            for m in caplog.messages
-        ), "Log must contain formatted PHPStan count message"
+        # Extract exact log record for PHPStan (not substring, exact match)
+        phpstan_log = [m for m in caplog.messages if m.startswith("L3A PHPStan:")]
+        assert len(phpstan_log) == 1
+        # Mutated versions would produce "3" only (no "L3A PHPStan: ... findings" prefix)
+        assert phpstan_log[0] == "L3A PHPStan: 3 findings"
 
 
 # ===========================================================================
