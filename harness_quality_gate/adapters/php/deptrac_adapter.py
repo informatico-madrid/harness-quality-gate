@@ -158,7 +158,7 @@ class DeptracAdapter(ToolAdapter):
                             node=v.get("file", "unknown"),
                             severity="error",
                             message=v.get("message", "Architecture violation"),
-                            fix_hint=v.get("fix", None),
+                            fix_hint=v.get("fix"),
                             tool=self._name,
                             layer="L4",
                             language="php",
