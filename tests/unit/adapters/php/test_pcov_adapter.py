@@ -6,6 +6,7 @@ Design: each public method exercised with granular separate asserts.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -103,13 +104,14 @@ class TestProbe:
       - final raise (line 127)
     """
 
-    def test_probe_php_not_on_path_raises(self) -> None:
+    def test_probe_php_not_on_path_raises_exact_message(self, caplog: pytest.LogCaptureFixture) -> None:
         adapter = PcovAdapter()
         with patch("harness_quality_gate.adapters.php.pcov_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError) as exc_ctx:
-                adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "php not found" in msg
+            with caplog.at_level(logging.WARNING):
+                with pytest.raises(RuntimeError) as exc_ctx:
+                    adapter.probe()
+        # Exact message kills mutants 7 ("XX...XX" wrapping) and 8 (lowercase "path")
+        assert str(exc_ctx.value) == "php not found on PATH"
 
     def test_probe_php_found_path(self) -> None:
         adapter = PcovAdapter()
@@ -121,7 +123,19 @@ class TestProbe:
                 mock.return_value = completed
                 with patch("glob.glob", return_value=["/tmp/pcov-extract/usr/lib/php/20210902/pcov.so"]):
                     adapter.probe()
-        mock.assert_called_once()
+        # Exact subprocess.run args kills mutant 11 (first arg mutated to None)
+        mock.assert_called_once_with(["/usr/bin/php", "-m"], capture_output=True, text=True, timeout=10)
+
+    def test_probe_uses_real_which_and_subprocess(self) -> None:
+        """Test without patching shutil.which or subprocess.run.
+        Relies on: php IS installed, but PCOV/Xdebug NOT installed.
+        This kills mutants 2,3,4 (shutil.which arg mutations) and
+        partially mutant 11 (subprocess.run with actual args).
+        """
+        adapter = PcovAdapter()
+        with pytest.raises(RuntimeError) as exc_ctx:
+            adapter.probe()
+        assert str(exc_ctx.value) == "No coverage driver found — neither PCOV nor Xdebug is loaded"
 
     def test_probe_subprocess_oserror_raises(self) -> None:
         adapter = PcovAdapter()

@@ -46,18 +46,26 @@ class TestVersion:
 
 class TestInvoke:
     def test_invoke_local_php_security_checker_not_found(self, tmp_path):
-        """Neither name on PATH → RuntimeError."""
+        """Neither name on PATH → RuntimeError with exact message."""
         with patch("shutil.which", return_value=None):
             adapter = _adapter()
-            with pytest.raises(RuntimeError, match="not found on PATH"):
+            with pytest.raises(RuntimeError) as exc_info:
                 adapter.invoke(tmp_path)
+            exc_msg = str(exc_info.value)
+            # KILL mutmut_13: error string "XX...not found on PATHXX" mutation.
+            assert "XX" not in exc_msg, f"Expected clean message, got: {exc_msg}"
+            # Also check exact message to catch any wrapper string mutation
+            assert exc_msg == "local-php-security-checker not found on PATH"
 
     def test_invoke_php_security_checker_not_found(self, tmp_path):
-        """'local-php-security-checker' missing but 'php-security-checker' absent too."""
+        """'local-php-...' missing but 'php-security-checker' absent too."""
         with patch("shutil.which", return_value=None):
             adapter = _adapter()
-            with pytest.raises(RuntimeError, match="not found on PATH"):
+            with pytest.raises(RuntimeError) as exc_info:
                 adapter.invoke(tmp_path)
+            exc_msg = str(exc_info.value)
+            # KILL mutmut_13: same error string mutation.
+            assert "XX" not in exc_msg, f"Expected clean message, got: {exc_msg}"
 
     def test_invoke_prefers_local_php_security_checker(self, tmp_path):
         """When 'local-php-security-checker' exists it is used (second call returns None)."""
@@ -76,7 +84,7 @@ class TestInvoke:
                 adapter = _adapter()
                 result = adapter.invoke(tmp_path)
                 assert result.exitcode == 0
-                assert isinstance(result.duration_seconds, int) or isinstance(result.duration_seconds, float)
+                assert result.stderr == ""
 
     def test_invoke_falls_back_to_php_security_checker(self, tmp_path):
         """'local-php-...' missing → falls back to 'php-security-checker'."""
@@ -91,6 +99,7 @@ class TestInvoke:
                 adapter = _adapter()
                 result = adapter.invoke(tmp_path)
                 assert result.exitcode == 0
+                assert result.stderr == ""
                 cmd = mock_run.call_args[0][0]
                 assert "/usr/bin/php-security-checker" in cmd[0]
 
@@ -113,6 +122,11 @@ class TestInvoke:
                 adapter.invoke(tmp_path, args=["--ignore-unmapped"])
                 cmd = mock_run.call_args[0][0]
                 assert "--ignore-unmapped" in cmd
+                # KILL mutmut_15: 'env or {}' → 'env and {}'.
+                # With the mutation, subprocess.run receives env=None instead of empty dict.
+                sub_env = mock_run.call_args[1]["env"]
+                assert isinstance(sub_env, dict)
+                assert "PATH" in sub_env
 
     def test_invoke_sets_cwd_to_repo(self, tmp_path):
         """subprocess.run is called with cwd=repo path."""

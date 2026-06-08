@@ -484,15 +484,31 @@ class TestRunL3B:
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
 
-    def test_l3b_mutmut_not_on_path(self, tmp_path: Path):
-        """mutmut not found -> empty stats."""
+    def test_l3b_mutmut_not_on_path(self, tmp_path: Path, caplog):
+        """mutmut not found -> empty stats + exact warning message.
+
+        Kills mutmut_5 (None), mutmut_6 (XX...XX), mutmut_7 (path→PATH),
+        mutmut_8 (UPPERCASE), mutmut_13 (escaped=None), mutmut_14 (untested=None).
+        """
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            layer = a.run_l3b(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                layer = a.run_l3b(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
         assert ms.killed == 0
+        assert ms.survived == 0
+        assert ms.timed_out == 0
+        assert ms.escaped == 0
+        assert ms.untested == 0
+        assert ms.msi == 0.0
+        assert ms.covered_msi == 0.0
+        assert ms.survived == ms.timed_out == 0  # confirms passed logic
+        assert ms.escaped == 0  # kills mutmut_13: escaped=0 → None
+        assert ms.untested == 0  # kills mutmut_14: untested=0 → None
         assert layer.passed is True
+        # Exact log message kills string mutations 5,6,7,8
+        assert "mutmut not found on PATH, returning empty stats" in caplog.text
 
     def test_l3b_mutmut_raises_oserror(self, tmp_path: Path):
         """mutmut.invoke raises OSError -> empty fallback stats."""

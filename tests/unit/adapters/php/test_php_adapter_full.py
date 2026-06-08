@@ -502,6 +502,43 @@ class TestRunL1PcovProbeFailure:
         # Kill mutmut_16: assert the warning log contains the actual exception
         # text, not the literal string "None". Mutant replaces exc → None.
         assert "PCOV not compiled" in caplog.text
+        # --- Mutant-killing assertions (mutmut_10, 24, 26, 27, 30, 34) ---
+        # mutmut_10: debug log format string "XX" prefix → assert starts with
+        # original prefix and no XX decoration
+        assert any(
+            m.startswith("L1 driver initial value:")
+            and "XX" not in m
+            for m in caplog.messages
+        ), "Mut10: debug log format string mutated"
+        # mutmut_24: logger.warning(exc) removes format args → the log text
+        #             still contains <RuntimeError('...')> but the log MESSAGE
+        #             (for formatted calls) has prefix "L1 coverage driver..."
+        # mutmut_26: "XXL1 coverage driver probe failed: %s" → assert exact
+        #             prefix without XX decoration
+        # mutmut_27: "l1 coverage driver probe failed: %s" → assert exact case
+        #             prefix (lowercase l1 is mutant)
+        pcov_warnings = [
+            m for m in caplog.messages
+            if "L1 coverage driver probe failed:" in m
+        ]
+        assert len(pcov_warnings) == 1, (
+            f"Expected exactly one pcov warning with format 'L1 coverage "
+            f"driver probe failed: ...', got: {pcov_warnings}"
+        )
+        assert pcov_warnings[0].startswith("L1 coverage driver probe failed:"), (
+            "Mut26/27: pcov warning format string mutated"
+        )
+        assert "PCOV not compiled" in pcov_warnings[0], (
+            "Mut24: exception text missing from pcov warning"
+        )
+        # mutmut_30: node="pcov" → node=None → check the Finding node field
+        assert any(
+            f.node == "pcov" for f in result.findings
+        ), "Mut30: pcov Finding node mutated to None"
+        # mutmut_34: layer="L1" → layer=None → check the Finding layer field
+        assert any(
+            f.layer == "L1" for f in result.findings
+        ), "Mut34: pcov Finding layer mutated to None"
 
     def test_probe_fails_gate_fails(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -1616,16 +1653,41 @@ class TestRunL4:
         result = adapter.run_l4(tmp_path, {})
         assert any(f.tool == "deptrac" for f in result.findings)
 
-    def test_l4_all_tools_error_skipped(self, tmp_path):
+    def test_l4_all_tools_error_skipped(self, tmp_path, caplog):
         adapter = self._make_l4_mock_adapter()
         for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
                       "_dead_code", "_dep_analyser", "_deptrac"):
-            setattr(adapter, attr, MagicMock())
-            setattr(adapter, attr + ".invoke", MagicMock(side_effect=RuntimeError("not found")))
-        result = adapter.run_l4(tmp_path, {})
-        assert result.layer == "L4"
-        assert result.language == "php"
-        assert result.passed is True
+            mock_invoke = MagicMock(side_effect=RuntimeError("not found"))
+            setattr(getattr(adapter, attr), "invoke", mock_invoke)
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php"):
+            result = adapter.run_l4(tmp_path, {})
+            assert result.layer == "L4"
+            assert result.language == "php"
+            assert result.passed is True
+            # Strong log assertions to kill logger argument/parameter/string mutations.
+            # mutmut_33: exc→None → message ends "...: None" instead of "...: not found"
+            # mutmut_34: logger.warning(exc) removes format string → logged msg is just "not found"
+            # mutmut_35: removes format arg → TypeError, kills itself
+            # mutmut_36: strings get "XX" prefix/suffix → msg starts "XXL4..." not "L4 Psalm"
+            # mutmut_37: string case → "l4 psalm..." not "L4 Psalm..."
+            # mutmut_69: composer audit exc→None → message ends "...: None"
+            all_msgs = list(caplog.messages)
+            psalm_warn = [m for m in all_msgs if m.startswith("L4 Psalm taint skipped:")]
+            assert len(psalm_warn) == 1, (
+                f'Expected exactly 1 psalm skip warning starting with "L4 Psalm taint skipped: ", '
+                f'got: {all_msgs}'
+            )
+            assert psalm_warn[0] == "L4 Psalm taint skipped: not found", (
+                f"Psalm skip warning content mutated. Got: {psalm_warn[0]}"
+            )
+            composer_warn = [m for m in all_msgs if m.startswith("L4 composer-audit skipped:")]
+            assert len(composer_warn) == 1, (
+                f'Expected exactly 1 composer-audit skip warning starting with "L4 composer-audit skipped: ", '
+                f'got: {all_msgs}'
+            )
+            assert composer_warn[0] == "L4 composer-audit skipped: not found", (
+                f"Composer-audit skip warning content mutated. Got: {composer_warn[0]}"
+            )
 
     def test_l4_duration_non_negative(self, tmp_path):
         adapter = self._make_l4_mock_adapter()

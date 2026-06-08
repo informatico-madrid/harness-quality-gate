@@ -1137,6 +1137,35 @@ class TestDepAnalyserAdapter:
         assert f.node == "src/Foo.php"
         assert "class" in f.message
 
+    def test_parse_top_level_array_non_dict_before_valid(self) -> None:
+        """Non-dict item before valid item — kills mutmut_8 (continue→break).
+
+        With 'continue': skip non-dict, process valid item → 1 finding.
+        With 'break': skip non-dict, stop loop → 0 findings.
+        """
+        data = [
+            "not-a-dict",
+            {"type": "dep-antipattern", "file": "x.php", "line": 1, "message": "msg"},
+        ]
+        findings = DepAnalyserAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "x.php:1"
+
+    def test_parse_top_level_array_item_missing_type(self) -> None:
+        """Item without 'type' key — default '' stays '' (kills mutmut_16).
+
+        With 'XXXX' default: 'XXXX' not in VIOLATION_TYPES → skipped.
+        With '': '' not in VIOLATION_TYPES → also skipped (same behavior).
+        No observable difference for this mutation.
+        """
+        data = [
+            {"file": "a.php", "line": 1},
+            {"type": "dep-class", "file": "b.php", "line": 2, "message": "ok"},
+        ]
+        findings = DepAnalyserAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "b.php:2"
+
 
 # ===========================================================================
 # security_checker_adapter.py
@@ -1162,6 +1191,8 @@ class TestSecurityCheckerAdapter:
         with patch("harness_quality_gate.adapters.php.security_checker_adapter.shutil.which", return_value="/usr/bin/local-php-security-checker"):
             with patch("subprocess.run", return_value=completed):
                 result = SecurityCheckerAdapter().invoke(tmp_path)
+        # KILL mutmut_9: Return L104 → pass (if body is removed, result is None)
+        assert isinstance(result, ToolInvocation)
         assert result.exitcode == 0
 
     def test_invoke_with_fallback_binary(self, tmp_path: Path) -> None:
