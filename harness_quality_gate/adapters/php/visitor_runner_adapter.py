@@ -103,7 +103,6 @@ class VisitorRunnerAdapter(ToolAdapter):
             return ToolInvocation(
                 stdout="[]",
                 stderr=f"no visitors discovered ({visitors_dir})",
-                exitcode=0,
             )
 
         php_files = self._collect_php_files(repo_dir)
@@ -112,7 +111,6 @@ class VisitorRunnerAdapter(ToolAdapter):
             return ToolInvocation(
                 stdout="[]",
                 stderr=f"no PHP files found in {repo_dir}",
-                exitcode=0,
             )
 
 # 

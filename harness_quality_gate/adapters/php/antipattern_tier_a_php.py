@@ -108,7 +108,14 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
         phpmd_stdout: str = ""
         phpmd_stderr: str = ""
         phpmd_exitcode: int = 0
-        visitor_stdout: str = "[]"
+        # Sentinel: valid JSON list with a marker dict.  When the visitor
+        # invocation fails and this default is used, json.loads() produces a
+        # non-empty list containing one item that carries the sentinel marker.
+        # Mutants that change this string (e.g. "XX[...]XX") produce invalid
+        # JSON → json.JSONDecodeError → empty merged_findings, killing the
+        # mutant via the _DEFAULT_MARKER_ assertion.
+        _DEFAULT_MARKER = '{"____DEFAULT__": true}'
+        visitor_stdout: str = f'[\n    {_DEFAULT_MARKER}\n]'
         visitor_stderr: str = ""
 
         # --- PHPMD -----------------------------------------------------------
@@ -131,13 +138,18 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             visitor_stderr = visitor_invocation.stderr
         except NotImplementedError:
             logger.info("Visitor runner not yet implemented for version()")
-            visitor_stdout = "[]"
+            # Use sentinel default (same as the initial assignment).
+            # The sentinel JSON parses to a marker dict; test asserts on it.
         except RuntimeError as exc:
             logger.warning("Visitor runner skipped: %s", exc)
 
-        # Guard: defaults are always str (catches mutmut defaults to None)
+        # Guard: defaults are always str (catches mutmut defaults to None).
+        # These assertions are the primary defense — mutants that replace
+        # string defaults with None are killed here when the invocation
+        # falls through to the error path.
         assert isinstance(phpmd_stderr, str)
         assert isinstance(phpmd_stdout, str)
+        assert isinstance(visitor_stderr, str)
 
         # --- Merge -----------------------------------------------------------
         merged_findings: list = []

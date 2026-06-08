@@ -419,10 +419,13 @@ class TestInvokeDirect:
         assert result.exitcode == 0
         assert result.duration_seconds >= 0
 
-        # Assert log message format contains both the expected prefix and the repo path.
-        # This kills mutations 14 (None replaces repo) and 15 (entire format string removed).
+        # Assert log message format: starts with exact prefix (kills mutant 17 which
+        # adds "XX" prefix), contains full message, and contains the repo path.
         assert len(caplog.records) >= 1
         log_msg = caplog.messages[0]
+        assert log_msg.startswith("No PHP test files found in"), (
+            f"Log message should start with exact prefix (not XX-prefixed), got: {log_msg}"
+        )
         assert "No PHP test files found in" in log_msg, (
             f"Log message should contain expected prefix, got: {log_msg}"
         )

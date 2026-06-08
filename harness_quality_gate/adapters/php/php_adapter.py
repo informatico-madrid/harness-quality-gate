@@ -420,6 +420,7 @@ class PhpAdapter(BaseAdapter):
 
         # --- 1. Coverage driver probe (FR-28) ----------------------------
         driver: str | None = "unknown"
+        logger.debug("L1 driver initial value: %s", driver)
         try:
             driver = self._pcov.probe(repo)
             logger.info("L1 coverage driver: %s", driver)

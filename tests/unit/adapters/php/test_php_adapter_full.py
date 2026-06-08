@@ -474,7 +474,8 @@ class TestValidateInfectionStats:
 # ===========================================================================
 
 class TestRunL1PcovProbeFailure:
-    def test_probe_fails_error_finding(self, tmp_path):
+    def test_probe_fails_error_finding(self, tmp_path, caplog):
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pcov_probe_side_effect=RuntimeError("PCOV not compiled")
         )
@@ -490,6 +491,17 @@ class TestRunL1PcovProbeFailure:
         assert result.tool_specific["coverage_driver"] == "unknown"
         # Kill 'probe(repo)' → 'probe(None)' mutation
         assert adapter._pcov.probe.call_args[0][0] == tmp_path
+        # Kill mutmut_3: assert initial driver value is "unknown" (not None) by
+        # checking the debug log. Mutant changes "unknown" → None, so log differs.
+        initial_msgs = [
+            m for m in caplog.messages
+            if "L1 driver initial value:" in m
+        ]
+        assert len(initial_msgs) >= 1
+        assert "unknown" in initial_msgs[0]
+        # Kill mutmut_16: assert the warning log contains the actual exception
+        # text, not the literal string "None". Mutant replaces exc → None.
+        assert "PCOV not compiled" in caplog.text
 
     def test_probe_fails_gate_fails(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -875,7 +887,8 @@ class TestRunL1ToolSpecific:
             if m.startswith("L1 coverage driver:") and "XX" not in m
         )
 
-    def test_tool_specific_coverage_driver_unknown(self, tmp_path):
+    def test_tool_specific_coverage_driver_unknown(self, tmp_path, caplog):
+        caplog.set_level(logging.DEBUG, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pcov_driver=None,
             pest_binary=None,
@@ -883,6 +896,14 @@ class TestRunL1ToolSpecific:
         )
         result = adapter.run_l1(tmp_path, {})
         assert result.tool_specific["coverage_driver"] == "unknown"
+        # Kill mutmut_3 via initial-value debug log: the log fires BEFORE probe(),
+        # so it captures the true initial value ("unknown" original vs None mutant).
+        initial_msgs = [
+            m for m in caplog.messages
+            if "L1 driver initial value:" in m
+        ]
+        assert len(initial_msgs) >= 1
+        assert "unknown" in initial_msgs[0]
 
     def test_tool_specific_mutation_killed_survived(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -1114,7 +1135,7 @@ class TestRunL3a:
         result = adapter.run_l3a(tmp_path, {})
         assert any(f.tool == "antipattern" for f in result.findings)
 
-    def test_l3a_phpstan_runtime_error_skipped(self, tmp_path):
+    def test_l3a_phpstan_runtime_error_skipped(self, tmp_path, caplog):
         adapter = PhpAdapter()
         adapter._phpstan = MagicMock()
         adapter._phpstan.run_l3a.side_effect = RuntimeError("phpstan not found")
@@ -1126,8 +1147,16 @@ class TestRunL3a:
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
         result = adapter.run_l3a(tmp_path, {})
         assert result.layer == "L3A"
+        # Verify warning message format — kills logger.arg mutations:
+        #   mutant 30: "%s", exc → "%s", None  (output becomes "L3A PHPStan skipped: None")
+        #   mutant 31: "L3A ...%s", exc → "L3A ..."(exc)  (output changes entirely)
+        warnings = [m for m in caplog.messages if "L3A PHPStan skipped" in m]
+        assert len(warnings) == 1, f"Expected exactly one skip warning, got: {warnings}"
+        # Exact match kills both string-format AND argument mutations
+        assert warnings[0] == "L3A PHPStan skipped: phpstan not found"
 
     def test_l3a_phpmd_runtime_error_skipped(self, tmp_path):
         adapter = PhpAdapter()

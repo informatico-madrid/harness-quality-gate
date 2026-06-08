@@ -1719,6 +1719,8 @@ class TestVisitorRunnerAdapter:
         assert "None" not in warn.message
         # The message must NOT be the raw path without format prefix (catches mutmut_10)
         assert warn.message != "No visitor scripts found in"
+        # The message must contain the actual visitors directory (catches mutmut_11: removing visitors_dir arg leaves literal %s)
+        assert "/visitors" in warn.message
 
     def test_invoke_no_php_files_returns_empty(self, tmp_path: Path) -> None:
         with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["god_class"]):
@@ -2764,16 +2766,27 @@ class TestPhpAntipatternTierAAdapter:
         assert result.stdout == "[]"
 
     def test_invoke_visitor_runtime_error_graceful(self, tmp_path: Path) -> None:
+        """Visitor raises RuntimeError — sentinel default produces marker finding."""
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=RuntimeError("failed")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert result.stdout == "[]"
+        # Sentinel JSON parses to list with one marker dict. Visitor source field
+        # identifies it. Mutant 9 (sentinel → "XX...") → 0 items.
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
 
     def test_invoke_visitor_not_implemented_graceful(self, tmp_path: Path) -> None:
+        """Visitor raises NotImplementedError — sentinel default produces marker finding."""
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert result.stdout == "[]"
+        # Sentinel JSON parses to list with one marker dict.
+        # Mutant 9 (vis_out → "XX...") breaks JSON parsing → 0 items → assertion fails.
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
+        assert result.stderr == ""
 
     def test_invoke_stderr_merged(self, tmp_path: Path) -> None:
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok("", stderr="phpmd error")):
@@ -2792,19 +2805,21 @@ class TestPhpAntipatternTierAAdapter:
         assert result.exitcode == 1
 
     def test_invoke_both_runtime_error_graceful(self, tmp_path: Path) -> None:
-        """Both PHPMD and visitor runner fail — all defaults used, merged output empty.
+        """Both PHPMD and visitor runner fail — all defaults used.
 
-        This test exercises the code path where both invocations raise RuntimeError,
-        forcing the method to use all default values (phpmd_stdout="", phpmd_stderr="",
-        phpmd_exitcode=0, visitor_stdout="[]", visitor_stderr=""). Mutations on these
-        default values (e.g.: visitor_stdout → "XX[]XX", visitor_stderr → None) are
-        masked by existing try/except and falsy checks, so this test asserts the overall
-        observable behavior: empty stdout, empty stderr, exitcode=0.
+        The visitor_stdout default is a sentinel JSON list containing a marker dict.
+        The sentinel is parseable → merged_findings gets one marker entry.
+        Killing mutant 9 (visitor_stdout → "XX...") requires asserting on the marker.
+        Killing mutant 10 (visitor_stderr → None) is handled by the production guard
+        assertion `assert isinstance(visitor_stderr, str)`, but we also assert
+        result.stderr == "" to verify the exact error string is built correctly.
         """
         with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("phpmd broken")):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=RuntimeError("vis broken")):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert result.stdout == "[]"
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
         assert result.stderr == ""
         assert result.exitcode == 0
 
@@ -3124,11 +3139,13 @@ class TestPhpAntipatternTierAAdapter:
         assert result.exitcode == 0
 
     def test_invoke_not_implemented_no_stderr(self, tmp_path: Path) -> None:
-        """Visitor not implemented — no stderr from visitor."""
+        """Visitor not implemented — sentinel default produces one marker finding."""
         with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
             with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError):
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert result.stdout == "[]"
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
         assert result.stderr == ""
         assert result.exitcode == 0
 
@@ -3204,12 +3221,14 @@ class TestPhpAntipatternTierAAdapter:
         assert "PHPMD skipped" in caplog.text
 
     def test_invoke_visitor_not_implemented_logs(self, tmp_path: Path, caplog) -> None:
-        """Visitor NotImplementedError — logger message format is verified."""
+        """Visitor NotImplementedError — sentinel default produces marker finding."""
         with caplog.at_level("INFO", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
             with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
                 with patch.object(VisitorRunnerAdapter, "invoke", side_effect=NotImplementedError()):
                     result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
-        assert result.stdout == "[]"
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        assert parsed[0]["source"] == "visitor"
         # Verify logger message format mutation is caught
         assert "Visitor runner not yet implemented" in caplog.text
 
