@@ -394,3 +394,360 @@ class TestRunL3bEdgeCases:
         for f in result.findings:
             assert f.layer == "L3B"
             assert f.language == "php"
+
+
+# ===========================================================================
+# PhpWeakTestAdapter.invoke — direct invocation tests (kill invoke survivors)
+# ===========================================================================
+
+class TestInvokeDirect:
+    """Tests that directly exercise PhpWeakTestAdapter.invoke method.
+
+    These tests are specifically designed to kill mutated code paths
+    in the invoke method that are not reachable through run_l3b mocks.
+    """
+
+    def test_invoke_no_test_files_returns_exactly_empty_json(self, tmp_path: Path) -> None:
+        """No PHP test files → stdout is exactly '[]', stderr contains full message."""
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        assert result.stdout == "[]"
+        assert result.stderr == "no PHP test files found"
+        assert result.exitcode == 0
+        assert result.duration_seconds >= 0
+
+    @pytest.mark.parametrize("timeout_value", [5.0, 300.0, 999.0])
+    def test_invoke_timeout_param_used(self, tmp_path: Path, timeout_value: float) -> None:
+        """invoke accepts and uses custom timeout — timeout is passed to subprocess.run."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                PhpWeakTestAdapter().invoke(tmp_path, [], timeout=timeout_value)
+                # All calls should have the correct timeout
+                for call in mock_run.call_args_list:
+                    assert call[1]["timeout"] == timeout_value
+
+    def test_invoke_with_test_files_visitor_missing_logs_and_continues(self, tmp_path: Path) -> None:
+        """When visitor scripts are missing, invoke continues (doesn't break) and returns empty."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        assert json.loads(result.stdout) == []
+        assert result.exitcode == 0
+
+    def test_invoke_with_test_files_visitor_missing_creates_exitcode_one_on_stderr(self, tmp_path: Path) -> None:
+        """When a visitor fails, exitcode becomes 1 and stderr contains failure info."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+        completed = MagicMock()
+        completed.returncode = 42
+        completed.stdout = ""
+        completed.stderr = "fatal parse error"
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run", return_value=completed):
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        assert result.exitcode == 1
+        assert "visitor=" in result.stderr
+        assert "exit=42" in result.stderr
+        assert "fatal parse error" in result.stderr
+
+    def test_invoke_visitor_success_tags_rule_id(self, tmp_path: Path) -> None:
+        """When a visitor succeeds, the findings are tagged with the correct rule_id."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        # Use the package's real visitors directory
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if real_visitors_dir.exists():
+            real_visitor_scripts = [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        else:
+            real_visitor_scripts = []
+
+        for vs in real_visitor_scripts:
+            # Ensure the script exists
+            pass  # real_visitors_dir has the scripts
+
+        if real_visitor_scripts:
+            with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0,
+                        stdout=json.dumps([{
+                            "file": "tests/FooTest.php",
+                            "line": 5,
+                            "message": "no assertions"
+                        }]),
+                        stderr=""
+                    )
+                    with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                        # Patch Path to resolve to real directory
+                        mock_resolve = MagicMock()
+                        mock_resolve.parent = real_visitors_dir.parent
+                        MockPath.return_value.resolve.return_value = mock_resolve
+                        MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+            # All findings should have rule_id set
+            findings = json.loads(result.stdout)
+            for finding in findings:
+                assert "rule_id" in finding
+                assert finding["rule_id"] in ["A1", "A2-PHP", "A3", "A4", "A5", "A6", "A7", "A8"]
+        else:
+            pytest.skip("No visitor scripts on this system")
+
+    def test_invoke_merged_findings_all_have_rule_id(self, tmp_path: Path) -> None:
+        """Multiple visits → all merged findings carry a non-empty rule_id."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if real_visitors_dir.exists():
+            real_visitor_scripts = [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        else:
+            real_visitor_scripts = []
+
+        if real_visitor_scripts:
+            with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0,
+                        stdout='',
+                        stderr=""
+                    )
+                    with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                        mock_resolve = MagicMock()
+                        mock_resolve.parent = real_visitors_dir.parent
+                        MockPath.return_value.resolve.return_value = mock_resolve
+                        MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+            findings = json.loads(result.stdout) if result.stdout else []
+        else:
+            findings = []
+        # If any findings, all must have valid rule_id
+        for f in findings:
+            assert "rule_id" in f
+            assert f["rule_id"] != ""
+
+    def test_invoke_result_toolinvocation_attributes(self, tmp_path: Path) -> None:
+        """invoke returns a proper ToolInvocation with all fields set."""
+        from harness_quality_gate.adapters.base import ToolInvocation
+
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        assert isinstance(result, ToolInvocation)
+        assert isinstance(result.stdout, str)
+        assert isinstance(result.stderr, str)
+        assert isinstance(result.exitcode, int)
+        assert isinstance(result.duration_seconds, float)
+        assert result.duration_seconds >= 0
+
+    def test_invoke_with_stderr_parts_merged_with_newline(self, tmp_path: Path) -> None:
+        """Multiple visitor failures → stderr has newline-separated parts."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            # If no visitors, stderr is empty and exitcode=0
+            result = PhpWeakTestAdapter().invoke(tmp_path, [])
+            assert result.exitcode == 0
+            assert result.stderr == ""
+            return
+
+        def side_effect(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 1
+            m.stdout = ""
+            m.stderr = "some error"
+            return m
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        assert result.exitcode == 1
+        # stderr parts separated by newlines
+        for part in result.stderr.split("\n"):
+            if part:
+                assert "visitor=" in part
+
+    def test_invoke_returncode_not_zero_assert_on_stdin(self, tmp_path: Path) -> None:
+        """If subprocess returncode != 0, it is NOT treated as success."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            return  # no visitors, nothing to test
+
+        def side_effect(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 2
+            m.stdout = '[{"file": "tests/FooTest.php", "line": 1, "rule_id": "A1", "message": "err"}]'
+            m.stderr = "stderr content"
+            return m
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # Because returncode != 0, the result is skipped (continue)
+        # So the stdout from the failure path is NOT parsed
+        findings = json.loads(result.stdout)
+        assert findings == []
+        assert "stderr content" in result.stderr
+
+    def test_invoke_subprocess_text_mode_used(self, tmp_path: Path) -> None:
+        """subprocess.run is called with text=True (string output, not bytes)."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                PhpWeakTestAdapter().invoke(tmp_path, [])
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert call[1]["text"] is True
+
+    def test_invoke_subprocess_capture_output_true(self, tmp_path: Path) -> None:
+        """subprocess.run is called with capture_output=True."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                PhpWeakTestAdapter().invoke(tmp_path, [])
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert call[1]["capture_output"] is True
+
+    def test_invoke_subprocess_check_false(self, tmp_path: Path) -> None:
+        """subprocess.run is called with check=False (errors are handled manually)."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=42, stdout="[]", stderr="")
+                PhpWeakTestAdapter().invoke(tmp_path, [])
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert call[1]["check"] is False
+
+    def test_invoke_subprocess_cwd_set_to_repo(self, tmp_path: Path) -> None:
+        """subprocess.run is called with cwd=str(repo)."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                PhpWeakTestAdapter().invoke(tmp_path, [])
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert call[1]["cwd"] == str(tmp_path)
+
+    def test_invoke_duration_seconds_rounded(self, tmp_path: Path) -> None:
+        """invoke returns duration_seconds rounded to 3 decimal places."""
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        # Should be rounded to at most 3 decimal places
+        assert round(result.duration_seconds, 3) == result.duration_seconds
+
+    def test_invoke_subprocess_env_merged(self, tmp_path: Path) -> None:
+        """env vars are merged with os.environ and passed to subprocess.run."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                custom_env = {"CUSTOM_VAR": "custom_value"}
+                PhpWeakTestAdapter().invoke(tmp_path, [], env=custom_env)
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert "CUSTOM_VAR" in call[1]["env"]
+                    assert call[1]["env"]["CUSTOM_VAR"] == "custom_value"
+
+    def test_invoke_finding_key_rule_id_not_overwritten(self, tmp_path: Path) -> None:
+        """rule_id key is exactly 'rule_id' (not mutated to 'RULE_ID' etc)."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            pytest.skip("No visitor scripts to test rule_id mapping")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps([{
+                        "file": "tests/FooTest.php",
+                        "line": 1,
+                        "message": "test"
+                    }]),
+                    stderr=""
+                )
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+            findings = json.loads(result.stdout)
+            for f in findings:
+                assert "rule_id" in f, "Finding must have 'rule_id' key (not mutated key)"

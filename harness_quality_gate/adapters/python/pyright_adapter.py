@@ -16,6 +16,12 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
+_SEV_MAP = {
+    "error": "error",
+    "warning": "warning",
+    "information": "info",
+}
+
 
 class PyrightAdapter(ToolAdapter):
     """Wraps ``pyright`` and parses JSON output into findings."""
@@ -50,12 +56,23 @@ class PyrightAdapter(ToolAdapter):
         cmd.append(str(repo))
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
-        self,
-        stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
-    ) -> list[Finding]:
+    @staticmethod
+    def _map_severity(severity: str) -> str:
+        """Map pyright severity string to internal severity string."""
+        return _SEV_MAP.get(severity, "warning")
+
+    def _build_detail(self, filename: str, message: str, rule: str,
+                      line: int, char: int) -> str:
+        """Build the diagnostic detail string."""
+        detail = message
+        if line:
+            detail = f"{filename}:{line}"
+            if char:
+                detail += f":{char}"
+            detail += f" [{rule}]: {message}"
+        return detail
+
+    def parse(self, stdout: str) -> list[Finding]:
         """Parse pyright JSON output into :class:`Finding` objects."""
         findings: list[Finding] = []
         if not stdout.strip():
@@ -66,28 +83,24 @@ class PyrightAdapter(ToolAdapter):
         except json.JSONDecodeError:
             return findings
 
-        for diag in data.get("generalDiagnostics", []):
+        diagnostics = data.get("generalDiagnostics")
+        if not diagnostics:
+            return findings
+
+        _DEFAULT = ""
+        for diag in diagnostics:
             if not isinstance(diag, dict):
                 continue
-            filename = diag.get("file", "")
-            severity = diag.get("severity", "")
-            message = diag.get("message", "")
-            rule = diag.get("rule") or ""
-            start = diag.get("range", {}).get("start", {})
-            line = start.get("line", 0)
-            char = start.get("character", 0)
-            detail = message
-            if line:
-                detail = f"{filename}:{line}"
-                if char:
-                    detail += f":{char}"
-                detail += f" [{rule}]: {message}"
-            sev_map = {
-                "error": "error",
-                "warning": "warning",
-                "information": "info",
-            }
-            severity_str = sev_map.get(severity, "warning")
+            filename = diag.get("file") or _DEFAULT
+            severity = diag.get("severity") or _DEFAULT
+            message = diag.get("message") or _DEFAULT
+            rule = diag.get("rule") or _DEFAULT
+            range_info = diag.get("range") or {}
+            start = range_info.get("start") or {}
+            line = start.get("line") or 0
+            char = start.get("character") or 0
+            detail = self._build_detail(filename, message, rule, line, char)
+            severity_str = self._map_severity(severity)
             findings.append(
                 Finding(
                     node=filename,

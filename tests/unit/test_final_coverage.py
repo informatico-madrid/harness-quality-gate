@@ -750,8 +750,10 @@ def test_pyright_adapter_parse_non_dict_diag() -> None:
     data = {"generalDiagnostics": ["not-a-dict", 42, {"file": "f.py", "severity": "error",
                                                         "message": "err", "rule": "r",
                                                         "range": {"start": {"line": 1, "character": 0}}}]}
-    findings = a.parse(_json.dumps(data), "", 1)
+    findings = a.parse(_json.dumps(data))
     assert isinstance(findings, list)
+    # Should have 1 finding (the dict diag, non-dicts are skipped)
+    assert len(findings) == 1
 
 
 # ---------------------------------------------------------------------------
