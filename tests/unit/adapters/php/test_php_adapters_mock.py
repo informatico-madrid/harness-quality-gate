@@ -3007,6 +3007,42 @@ class TestPhpAntipatternTierAAdapter:
         assert len(parsed) == 1
         assert parsed[0]["rule"] == ""
 
+    def test_invoke_phpmd_missing_description_field(self, tmp_path: Path) -> None:
+        """Violation without 'description' key catches mutmut_99/101.
+
+        Original: v.get("description", "") → ""
+        Mutant 99: v.get("description", None) → None
+        Mutant 101: v.get("description", ) → None
+
+        When violation dict has no "description" key, the mutant returns
+        None which fails isinstance(None, str) assert in the invoke method.
+        """
+        phpmd_out = json.dumps({
+            "files": [
+                {
+                    "file": "src/NoDesc.php",
+                    "violations": [
+                        {
+                            # "description" key is missing — only rule and priority
+                            "rule": "TestRule",
+                            "beginLine": 5,
+                            "priority": 3,
+                        }
+                    ],
+                }
+            ]
+        })
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_out, exitcode=0)):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        parsed = json.loads(result.stdout)
+        assert len(parsed) == 1
+        # Description must be empty string (original default), not null/None
+        assert parsed[0]["description"] == ""
+        assert isinstance(parsed[0]["description"], str)
+        # No "null" string in JSON output
+        assert "null" not in result.stdout
+
     def test_invoke_phpmd_missing_files_key(self, tmp_path: Path) -> None:
         """PHPMD data without 'files' key catches mutmut_61/63.
 

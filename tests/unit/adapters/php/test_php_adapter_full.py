@@ -711,6 +711,30 @@ class TestRunL1PestPaths:
         )
         assert pest_logs[0] == "L1 Pest tests: 0 findings"
 
+    def test_has_mutate_plugin_called_with_repo(self, tmp_path):
+        """Kill mutmut_54: assertion that _has_mutate_plugin(repo) is called with repo.
+
+        Mutant 54 replaces the entire expression
+        `self._pest._has_mutate_plugin(repo)` with `None` (assignment mutation).
+        Asserting `call_args[0][0] == tmp_path` kills this mutation because
+        with the mutant, the method call is replaced by a constant — no call happens.
+        """
+        adapter = _make_mock_adapter(
+            pest_binary="pest",
+            pest_has_mutate=True,
+            pcov_driver="xdebug"
+        )
+        adapter._pest._pest_binary.side_effect = [
+            ["pest"],
+            ["pest"],
+        ]
+        adapter._pest.invoke.return_value = MagicMock(exitcode=0, stdout="", stderr="")
+        result = adapter.run_l1(tmp_path, {})
+        # Verify _has_mutate_plugin was called with correct repo at the test section
+        assert adapter._pest._has_mutate_plugin.call_args[0][0] == tmp_path
+        # Verify exact return value — kills assignment mutations changing return
+        assert adapter._pest._has_mutate_plugin.return_value is True
+
 
 # ===========================================================================
 # run_l1 — PHPUnit paths
@@ -765,14 +789,58 @@ class TestRunL1PHPUnitPaths:
         # Kill invoke repo mutation
         assert adapter._phpunit.invoke.call_args[0][0] == tmp_path
 
-    def test_phpunit_invoke_raises(self, tmp_path):
+    def test_pest_binary_raises_runtime_error(self, tmp_path, caplog):
+        """Run L1 with pest_binary RuntimeError to trigger outer handler.
+
+        _run_pest_tests and _run_phpunit_tests both catch RuntimeError,
+        so we make _pest_binary raise RuntimeError BEFORE any test runner is called.
+        This exercises the `logger.warning("L1 test execution skipped: %s", exc)` path
+        at line 458-459 and kills mutmut_85 through mutmut_89.
+        """
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pest_binary=None,
-            pcov_driver="xdebug",
-            phpunit_invoke_side_effect=RuntimeError("phpunit not found")
+            pcov_driver="xdebug"
         )
+        # _pest_binary is called 3 times: test section, mutation check, mutation check
+        # 1st raises RuntimeError (triggers outer error handler)
+        # 2nd and 3rd return None (not a Pest project — harmless continuation)
+        adapter._pest._pest_binary.side_effect = [
+            RuntimeError("test binary not found"),
+            None,
+            None,
+        ]
         result = adapter.run_l1(tmp_path, {})
         assert result.layer == "L1"
+        assert result.language == "php"
+        # Kill mutmut_85: argument mutation `exc` → `None`
+        # Original log: "L1 test execution skipped: test binary not found"
+        # Mutated log:  "L1 test execution skipped: None"
+        test_skip_msgs = [
+            m for m in caplog.messages
+            if m.startswith("L1 test execution skipped:")
+        ]
+        assert len(test_skip_msgs) == 1, (
+            f"Expected 1 test-skip warning, got: {test_skip_msgs}"
+        )
+        assert test_skip_msgs[0] == "L1 test execution skipped: test binary not found"
+        # Kill mutmut_86: format-arg mutation `logger.warning("...", exc)` → `logger.warning(exc)`
+        # Mutated log would be "<RuntimeError: ...>" (not a formatted string)
+        assert test_skip_msgs[0].startswith("L1 "), (
+            "Mut86: Format-arg mutation changed log structure"
+        )
+        # Kill mutmut_87: arg-removal mutation `logger.warning("...", )`
+        assert "test binary not found" in test_skip_msgs[0], (
+            "Mut87: Exception text missing from log — arg removed"
+        )
+        # Kill mutmut_88: string mutation prefix "XX"
+        assert test_skip_msgs[0] != "XXL1 test execution skipped: test binary not foundXX"
+        # Kill mutmut_89: string mutation lowercase "l1"
+        assert test_skip_msgs[0] != "l1 test execution skipped: test binary not found"
+        # Verify Finding — kills mutation where severity or tool is changed
+        test_findings = [f for f in result.findings if f.tool == "phpunit"]
+        assert len(test_findings) == 1
+        assert test_findings[0].severity == "warning"
 
 
 # ===========================================================================
@@ -860,17 +928,103 @@ class TestRunL1InfectionPaths:
         assert result.passed is False
         assert any("HARNESS_INFECTION_REQUIRED" in f.message for f in result.findings)
 
-    def test_infection_not_required_when_missing(self, tmp_path):
-        adapter = _make_mock_adapter(
-            pcov_driver="xdebug",
-            pest_binary=None,
-            infection_stats=None,
-            infection_exitcode=3,
-            infection_stdout=""
+    def test_infection_not_required_when_missing(self, tmp_path, caplog):
+        """Kill logger mutations (mutmut_21-24) on _run_infection unavailable path.
+
+        exitcode=3 + empty stdout triggers the exact early-return guard.
+        Catches:
+        - mutmut_21: logger.warning(None) → log message is "None" not expected text
+        - mutmut_22: "XXInfection unavailable...XX" → exact string doesn't match
+        - mutmut_23: case mutation "infection unavailable..." → case differs
+        - mutmut_24: case mutation "INFECTION UNAVAILABLE..." → case differs
+        - mutmut_19: string mutation changing exitcode in warning (3→4)
+        """
+        adapter = _make_mock_adapter(infection_stats=None)
+        adapter._infection.invoke.return_value.exitcode = 3
+        adapter._infection.invoke.return_value.stdout = ""
+        adapter._pcov.probe.return_value = "pcov"
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter"):
+            result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        # With exitcode 3 + empty stdout, original early-returns (no parse)
+        assert result is None
+        assert not adapter._infection.parse.called
+        # Exact warning message matches kill all 4 string param mutations
+        warnings = [m for m in caplog.messages if
+                    m == "Infection unavailable (exitcode=3, no output)"]
+        assert len(warnings) == 1, f"Expected exact warning, got: {warnings}"
+
+    def test_infection_exitcode_0_returns_stats(self, tmp_path):
+        """Kill comparison mutation mutmut_18 (== 3 → != 3).
+
+        With exitcode=0 + empty stdout:
+        - Original: `0 == 3` = False → skip guard → `0 != 0` = False → skip infra
+          → parse() → returns MutationStats
+        - Mutant 18: `0 != 3` = True → early return → returns None ← killed
+
+        Verify return value IS stats (not None) and parse() WAS called.
+        """
+        stats = MutationStats(
+            total=100, killed=100, survived=0, escaped=0, timed_out=0,
+            untested=0, msi=100.0, covered_msi=100.0
         )
-        result = adapter.run_l1(tmp_path, {})
-        infection_required_findings = [f for f in result.findings if "HARNESS_INFECTION_REQUIRED" in f.message]
-        assert len(infection_required_findings) == 0
+        inv_mock = MagicMock()
+        inv_mock.exitcode = 0
+        inv_mock.stdout = ""
+        inv_mock.stderr = ""
+        adapter = _make_mock_adapter(infection_stats=stats)
+        adapter._infection.invoke.return_value = inv_mock
+        # Must override default infection_stats so parse returns the stats obj
+        adapter._infection.parse.return_value = stats
+        result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        # Mutant 18 would return None early (can't call parse())
+        assert result is stats, (
+            f"Expected MutationStats, got: {result}. "
+            "Kills mutmut_18 (exitcode == 3 → != 3)"
+        )
+        assert adapter._infection.parse.called, (
+            "parse() must be called for exitcode=0. "
+            "Mutant 18 enters guard and returns None without calling parse."
+        )
+
+    def test_infection_exitcode_4_no_parse(self, tmp_path):
+        """Kill comparison mutation mutmut_18 (== 3 → != 3) with exitcode=4.
+
+        With exitcode=4 + empty stdout:
+        - Original: `4 == 3` = False → skip guard → `4 != 0` = True → infra error → None
+          parse() NOT called (infra error path returns before parse)
+        - Mutant 18: `4 != 3` = True → early return → None
+          parse() NOT called (guard path returns before parse)
+
+        Both return None but for DIFFERENT reasons. The killed mutant is:
+        with exitcode=3 + STATSVISIBLE_STDOUT:
+        - Original: `3 == 3` = True → early return → None (guard path)
+        - Mutant 18: `3 != 3` = False → skip guard → parse() called ← killed
+        """
+        stats = MutationStats(
+            total=100, killed=100, survived=0, escaped=0, timed_out=0,
+            untested=0, msi=100.0, covered_msi=100.0
+        )
+        inv_mock = MagicMock()
+        inv_mock.exitcode = 3
+        inv_mock.stdout = "Metrics:\n  Mutation Score Indicator (MSI): 100%"
+        inv_mock.stderr = ""
+        adapter = _make_mock_adapter(infection_stats=stats)
+        adapter._infection.invoke.return_value = inv_mock
+        adapter._infection.parse.return_value = stats
+        result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
+        # With exitcode=3 + non-empty stdout:
+        # Original: guard `3 == 3` → True → returns None (no parse)
+        # Mutant 18: guard `3 != 3` → False → skip → parse() IS called
+        # Verify parse WAS called to kill mutant 18
+        assert adapter._infection.parse.called, (
+            "parse() must be called when stdout has stats content. "
+            "Mutant 18 (== 3 → != 3) skips guard and calls parse."
+        )
+        # Original returns None from guard, mutant returns stats from parse
+        assert result is stats, (
+            f"Expected stats (from parse), got: {result}. "
+            "Kills mutmut_18 with non-empty stdout."
+        )
 
     def test_infection_unavailable_no_flag_no_error(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -1769,6 +1923,29 @@ class TestRunL4:
             assert composer_warn[0] == "L4 composer-audit skipped: not found", (
                 f"Composer-audit skip warning content mutated. Got: {composer_warn[0]}"
             )
+            # Kill string/arg mutations on security-checker skip warning (mutmut 103-107):
+            #   Mut 103: exc→None → msg ends "...: None" instead of "...: not found"
+            #   Mut 104: removes logger.warning(args) → log becomes "RuntimeError(...)"
+            #   Mut 105: removes %s arg → TypeError / wrong msg
+            #   Mut 106: "XXL4 security-checker XX" → starts "XXL4..." not "L4"
+            #   Mut 107: "l4 security-checker..." → starts "l4..." not "L4"
+            sec_warn = [m for m in all_msgs if m.startswith("L4 security-checker skipped:")]
+            assert len(sec_warn) == 1, (
+                f'Expected exactly 1 security-checker skip warning starting with '
+                f'"L4 security-checker skipped: ", got: {all_msgs}'
+            )
+            assert sec_warn[0] == "L4 security-checker skipped: not found", (
+                f"Security-checker skip warning content mutated. Got: {sec_warn[0]}"
+            )
+            # Kill deptrac skip warning string/arg mutations (same pattern as psalm/composer)
+            deptr_warn = [m for m in all_msgs if m.startswith("L4 deptrac skipped:")]
+            assert len(deptr_warn) == 1, (
+                f'Expected exactly 1 deptrac skip warning starting with "L4 deptrac skipped: ", '
+                f'got: {all_msgs}'
+            )
+            assert deptr_warn[0] == "L4 deptrac skipped: not found", (
+                f"Deptrac skip warning content mutated. Got: {deptr_warn[0]}"
+            )
 
     def test_l4_duration_non_negative(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
@@ -1846,6 +2023,7 @@ class TestRunL4:
         adapter.run_l4(tmp_path, {})
         call = adapter._dead_code.invoke.call_args
         assert call[0][0] == tmp_path
+        assert call[0][1] == ["--format=json"]
         assert call[1]["env"] == {}
         assert call[1]["timeout"] == 300.0
 

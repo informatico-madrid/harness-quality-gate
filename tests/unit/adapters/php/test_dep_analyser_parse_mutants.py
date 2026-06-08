@@ -13,6 +13,12 @@ Kills:
   mutmut_33  : item.get("file","?") → item.get(None,"?") → killed by log args assertion
   mutmut_34  : item.get("file","?") → item.get("file",None) → killed by log args assertion
   mutmut_35  : item.get("file","?") → item.get("?") → killed by log args assertion
+  mutmut_52  : item.get("file", "") → None          → killed by node assertion
+  mutmut_54  : item.get("file", "") → (no default)  → killed by node assertion
+  mutmut_57  : item.get("file", "") → "XXXX"        → killed by node assertion
+  mutmut_62  : item.get("message", "") → None       → killed by _make_finding mock
+  mutmut_64  : item.get("message", "") → (no default) → killed by _make_finding mock
+  mutmut_67  : item.get("message", "") → "XXXX"     → killed by _make_finding mock
 """
 
 from __future__ import annotations
@@ -223,3 +229,77 @@ class TestParseTopLevelItemMissingMessage:
         assert findings[0].message == "class: bad import"
         # Mutant: message=None → falsy → desc = "class" (no ": " part)
         # This assertion fails for the mutant → kills it
+
+
+# ===========================================================================
+# Kill mutmut_52, 54, 57 (file default mutations in top-level array)
+# ===========================================================================
+
+class TestParseTopLevelItemMissingFileDefault:
+    """Item without 'file' key to kill file-default mutations.
+
+    Kills:
+      mutmut_52: .get("file", "") → None            → node="None:1" != "?:1"
+      mutmut_54: .get("file", "") → (no default)    → node="None:1" != "?:1"
+      mutmut_57: .get("file", "") → "XXXX"          → node="XXXX:1" != "?:1"
+    """
+
+    def test_item_missing_file_key_uses_empty_string_default(self) -> None:
+        """Item without 'file' key → Finding node does not contain 'None' or 'XXXX'.
+
+        Original: file_name="" → node=":1" (empty string default)
+        Mutant 52: file_name=None   → node="None:1"   → fails asserts
+        Mutant 54: file_name=None   → node="None:1"   → fails asserts
+        Mutant 57: file_name="XXXX" → node="XXXX:1"   → fails asserts
+        """
+        data = [
+            {"type": "dep-class", "line": 1},  # No "file" key
+        ]
+        findings = DepAnalyserAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        # Original node should be ":1" (empty string for file_name)
+        assert findings[0].node == ":1"
+        # Explicitly reject mutated values
+        assert findings[0].node != "None:1", "mutmut_52/54: file_name should not be None"
+        assert findings[0].node != "XXXX:1", "mutmut_57: file_name should not be 'XXXX'"
+
+
+# ===========================================================================
+# Kill mutmut_62, 64, 67 (message default mutations in top-level array)
+# ===========================================================================
+
+class TestParseTopLevelItemMissingMessageDefault:
+    """Item without 'message' key to kill message-default mutations.
+
+    Kills:
+      mutmut_62: .get("message", "") → None       → captured by mock assertion
+      mutmut_64: .get("message", "") → (no default) → captured by mock assertion
+      mutmut_67: .get("message", "") → "XXXX"     → desc="class: XXXX" ≠ "class"
+    """
+
+    def test_message_default_is_empty_string_not_none_or_XXXX(self) -> None:
+        """Item without 'message' key — verify _make_finding receives "" not None/XXXX.
+
+        Original: message="" → desc = "class"
+        Mutant 62: message=None  (both falsy → desc="class", same output)
+        Mutant 64: message=None  (same as 62)
+        Mutant 67: message="XXXX" → desc = "class: XXXX" ≠ "class"
+
+        Since 62/64 produce the same desc as original (both falsy), we mock
+        _make_finding to directly assert the message argument passed to it.
+        """
+        data = [
+            {"type": "dep-class", "file": "x.php", "line": 1},
+        ]
+        adapter = DepAnalyserAdapter()
+        with patch.object(adapter, "_make_finding", wraps=adapter._make_finding) as mock_make:
+            adapter.parse(json.dumps(data))
+
+        assert mock_make.called
+        call_kwargs = mock_make.call_args[1]
+        # Mutant 67: "XXXX" → desc = "class: XXXX" (also caught here)
+        # Mutants 62/64: None → desc = "class" (same desc but different arg)
+        assert call_kwargs["message"] == "", (
+            f"message should be '' not {call_kwargs['message']!r} "
+            f"(kills mutmut_62, mutmut_64, mutmut_67)"
+        )

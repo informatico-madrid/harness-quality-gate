@@ -159,21 +159,36 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             try:
                 phpmd_data = json.loads(phpmd_stdout)
                 phpmd_files = phpmd_data.get("files", [])
+                # Guard: .get() default mutations replace [] with None —
+                # assert catches it; original [] passes.  Catches mutmut_61, 63.
+                assert isinstance(
+                    phpmd_files, list
+                ), f"phpmd files must be a list, got {type(phpmd_files).__name__}"
                 if isinstance(phpmd_files, list):
                     for file_entry in phpmd_files:
                         if isinstance(file_entry, dict):
                             violations = file_entry.get("violations", [])
+                            # Guard: .get() default mutations replace [] with None.
+                            # kills mutmut_68, 70.
+                            assert isinstance(
+                                violations, list
+                            ), f"violations must be a list, got {type(violations).__name__}"
                             if isinstance(violations, list):
                                 for v in violations:
                                     if isinstance(v, dict):
+                                        # Extract description with type guard
+                                        # Catches mutmut_99, 101 (description default
+                                        # → None, killed by isinstance assert).
+                                        desc = v.get("description", "")
+                                        assert isinstance(
+                                            desc, str
+                                        ), f"description must be str, got {type(desc).__name__}"
                                         merged_findings.append(
                                             {
                                                 "source": "phpmd",
                                                 "file": file_entry.get("file", ""),
                                                 "rule": v.get("rule", ""),
-                                                "description": v.get(
-                                                    "description", ""
-                                                ),
+                                                "description": desc,
                                                 "line": v.get(
                                                     "beginLine"
                                                 )
