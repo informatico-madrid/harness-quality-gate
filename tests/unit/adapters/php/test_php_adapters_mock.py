@@ -1746,6 +1746,9 @@ class TestVisitorRunnerAdapter:
         assert warn.message.startswith("No PHP files found in")
         # The message must NOT contain "None" (catches mutmut_24: repo_dir → None)
         assert "None" not in warn.message
+        # The message must contain the actual repo_dir path (catches mutmut_26: removing
+        # repo_dir arg leaves literal "%s" — message stays "No PHP files found in %s")
+        assert str(tmp_path) in warn.message
 
     def test_discover_visitors_empty_dir(self, tmp_path: Path) -> None:
         """_discover_visitors on empty directory returns empty list."""
@@ -2506,6 +2509,64 @@ class TestVisitorRunnerAdapter:
         assert env_used is not None
         # env should contain system vars (merged with os.environ)
         assert "PATH" in env_used or len(env_used) > 0
+
+    def test_invoke_missing_visitor_script_logs_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that a missing visitor script logs a warning with exact format.
+
+        Creates a visitors dir with one real visitor + one discovered-but-missing,
+        then patches _discover_visitors to also return the missing name.
+
+        Kills mutants 39-43 (all logger.warning mutations):
+          - mutmut_39:  visitor_script arg replaced with None
+          - mutmut_40:  format string removed, visitor_script passed as bare message
+          - mutmut_41:  visitor_script arg removed → literal "%s" in message
+          - mutmut_42:  string case mutation ("XXVisitor...XX")
+          - mutmut_43:  string case mutation ("visitor..." lowercase)
+        """
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "valid.php").touch()
+
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "[]"
+        completed.stderr = ""
+
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php.visitor_runner_adapter"):
+            with patch("harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors", return_value=["valid", "missing"]):
+                with patch.object(VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]):
+                    with patch("subprocess.run", return_value=completed):
+                        from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                        orig_dir = vra_mod.VISITORS_DIR
+                        try:
+                            vra_mod.VISITORS_DIR = visitors_dir
+                            result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                        finally:
+                            vra_mod.VISITORS_DIR = orig_dir
+
+        # Must have exactly one WARNING record for the missing visitor
+        warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+        missing_warns = [r for r in warns if "Visitor script missing" in r.message]
+        assert len(missing_warns) == 1
+        warn = missing_warns[0]
+
+        # Original message: "Visitor script missing: {path}"
+        # Mutant 42: "XXVisitor script missing: %sXX" — wrong case for "Visitor"
+        # Mutant 43: "visitor script missing: %s" — wrong case
+        assert "Visitor script missing" in warn.message
+        # Mutant 39: replaced visitor_script with None → "Visitor script missing: None"
+        assert "None" not in warn.message
+        # Mutant 40: bare message (just path, no "Visitor script missing" prefix)
+        assert warn.message.startswith("Visitor script missing")
+        # Mutant 41: removed visitor_script arg → literal "%s" remains
+        assert "%s" not in warn.message
+        # The path must be present (original behavior)
+        assert str(tmp_path) in warn.message
 # ===========================================================================
 
 class TestPhpWeakTestAdapter:
@@ -2678,20 +2739,43 @@ class TestPhpAntipatternTierAAdapter:
     def test_invoke_both_ok_empty(self, tmp_path: Path) -> None:
         """Base case: both tools return empty — exitcode=0, empty stdout."""
         phpmd_empty = json.dumps({"files": []})
-        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_empty, exitcode=0)):
-            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", exitcode=0)):
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_empty, exitcode=0)) as mock_phpmd:
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", exitcode=0)) as mock_visitor:
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
         assert json.loads(result.stdout) == []
         assert result.exitcode == 0
         assert result.stderr == ""
+        # Kill mutmut_17: args→None, mutmut_18: env→None,
+        # mutmut_21: args-removed, mutmut_22: env-removed calls
+        mock_phpmd.assert_called_once_with(tmp_path, [], env=None, timeout=300.0)
+        mock_visitor.assert_called_once_with(tmp_path, [], env=None, timeout=300.0)
 
     def test_invoke_phpmd_not_found_graceful(self, tmp_path: Path) -> None:
-        with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("phpmd not found")):
-            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+        with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("phpmd not found")) as mock_phpmd:
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")) as mock_visitor:
                 result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        # Kill mutmut_17: args→None
+        # mutmut_21: args-removed, mutmut_22: env-removed
+        mock_phpmd.assert_called_once_with(tmp_path, [], env=None, timeout=300.0)
+        mock_visitor.assert_called_once_with(tmp_path, [], env=None, timeout=300.0)
         # PHPMD is skipped, visitor returns empty → merged list is empty
         assert result.stdout == "[]"
         assert result.exitcode == 0
+
+    def test_invoke_with_non_none_env(self, tmp_path: Path) -> None:
+        """Test with explicit env dict — kills mutmut_18 (env=env → env=None).
+
+        When env is provided, the original code passes it through; the mutation
+        replaces it with None, changing the call signature and failing this test.
+        """
+        phpmd_empty = json.dumps({"files": []})
+        env = {"FOO": "bar"}
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_empty, exitcode=0)) as mock_phpmd:
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]", exitcode=0)) as mock_visitor:
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [], env=env)
+        # The env dict must be passed through (not mutated to None)
+        mock_phpmd.assert_called_once_with(tmp_path, [], env=env, timeout=300.0)
+        mock_visitor.assert_called_once_with(tmp_path, [], env=env, timeout=300.0)
 
     def test_invoke_phpmd_only(self, tmp_path: Path) -> None:
         """Only PHPMD returns findings — visitor is empty."""
@@ -3237,6 +3321,11 @@ class TestPhpAntipatternTierAAdapter:
         assert result.stderr == ""
         # Check logger format string mutation
         assert "PHPMD skipped" in caplog.text
+        # Kill mutmut_28: exc→None in logger(arg). Mutant produces "PHPMD skipped: None"
+        # Kill mutmut_30: removed logger(arg) → log differs
+        # Original logs: "PHPMD skipped: broken"
+        # Mutant 28 logs: "PHPMD skipped: None"
+        assert "broken" in caplog.text
 
     def test_invoke_visitor_not_implemented_logs(self, tmp_path: Path, caplog) -> None:
         """Visitor NotImplementedError — sentinel default produces marker finding."""

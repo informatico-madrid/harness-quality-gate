@@ -330,3 +330,65 @@ def test_extract_type_valid_unknown_returns_false() -> None:
     raw_type, is_taint = PsalmTaintAdapter._extract_type_valid("")
     assert raw_type == ""
     assert is_taint is False
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — missing default-value keys (kills mutmut_14, 31, 33, 36, 41, 43)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_array_taint_with_no_file_name() -> None:
+    """Array item with valid taint type but no file_name or line_from.
+
+    Used for edge-case coverage of the missing-key path in parse().
+    """
+    data = [{"type": "TaintedSql"}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == ""
+    assert "TaintedSql" in findings[0].message
+
+
+def test_parse_array_taint_with_no_file_name_or_message() -> None:
+    """Array item missing file_name — kills mutants 31, 33, 36.
+
+    Mutant mutmut_14 is caught by test_parse_array_no_type_key: changing
+    default from '' to 'XXXX' would add a finding, failing the empty assertion.
+
+    Mutants 31/33 change get("file_name", "") to None.
+    Mutant 36 changes it to "XXXX".
+
+    Original: file_name="", line=5 → node=":5" (empty file_name + ":" + 5).
+    Mutated: file_name=None/None/XXXX → node="None:5" or "XXXX:5".
+    Asserting exact node value kills all three.
+    """
+    data = [{"type": "TaintedSql", "line_from": 5}]  # no file_name
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    # Original node: f"{''}:{5}" = ':5'
+    # Mutated 31/33: f"{None}:{5}" = 'None:5'  → assertion fails → killed
+    # Mutated 36:     f"XXXX:5" = 'XXXX:5' → assertion fails → killed
+    assert findings[0].node == ":5"
+
+
+def test_parse_array_item_missing_type_key() -> None:
+    """Array item with missing type key — tests parsing robustness."""
+    data = [
+        {},  # no type — skipped (not taint)
+        {"type": "TaintedSql", "file_name": "src/x.php", "line_from": 5},
+    ]
+    findings = _adapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "TaintedSql"
+
+
+def test_parse_item_with_taint_type_and_missing_message() -> None:
+    """Array item with valid taint type but no message field.
+
+    Verifies exact node and message construction.
+    """
+    data = [{"type": "TaintedSql", "file_name": "src/x.php", "line_from": 5}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == "src/x.php:5"
+    assert findings[0].message == "TaintedSql"

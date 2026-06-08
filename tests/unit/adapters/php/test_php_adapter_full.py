@@ -1156,6 +1156,13 @@ class TestRunL3a:
         adapter._antipattern.parse.return_value = []
         result = adapter.run_l3a(tmp_path, {})
         assert any(f.tool == "php-cs-fixer" for f in result.findings)
+        # Kill cs_fixer.parse() argument mutations 77 & 78:
+        #   Mut 77: invocation.stdout → None in parse() call
+        #   Mut 78: invocation.stderr → None in parse() call
+        cs_args = adapter._cs_fixer.parse.call_args[0]
+        assert cs_args[0] == adapter._cs_fixer.invoke.return_value.stdout
+        assert cs_args[1] == adapter._cs_fixer.invoke.return_value.stderr
+        assert cs_args[2] == adapter._cs_fixer.invoke.return_value.exitcode
 
     def test_l3a_tier_a_visitor_finds(self, tmp_path):
         adapter = PhpAdapter()
@@ -1197,7 +1204,7 @@ class TestRunL3a:
         # Exact match kills both string-format AND argument mutations
         assert warnings[0] == "L3A PHPStan skipped: phpstan not found"
 
-    def test_l3a_phpmd_runtime_error_skipped(self, tmp_path):
+    def test_l3a_phpmd_runtime_error_skipped(self, tmp_path, caplog):
         adapter = PhpAdapter()
         adapter._phpstan = MagicMock()
         adapter._phpstan.run_l3a.return_value = []
@@ -1209,8 +1216,19 @@ class TestRunL3a:
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
         result = adapter.run_l3a(tmp_path, {})
         assert result.passed is True
+        # Kill logger argument mutations 50, 52, 53, 54:
+        #   Mut 50: logger.warning("...", exc) → logger.warning("...", None)
+        #     → log becomes "L3A PHPMD skipped: None" instead of "L3A PHPMD skipped: phpmd not found"
+        #   Mut 52: logger.warning("...", ) — arg removed → log changes entirely
+        #   Mut 53: format "L3A PHPMD skipped: %s" → "XXL3A PHPMD skipped: %sXX"
+        #   Mut 54: format "L3A PHPMD skipped: %s" → "l3a phpmd skipped: %s"
+        # Exact-match assertion kills all four mutations at once.
+        warnings = [m for m in caplog.messages if "L3A PHPMD skipped" in m]
+        assert len(warnings) == 1, f"Expected exactly one PHPMD skip warning, got: {warnings}"
+        assert warnings[0] == "L3A PHPMD skipped: phpmd not found"
 
     def test_l3a_cs_fixer_runtime_error_skipped(self, tmp_path):
         adapter = PhpAdapter()

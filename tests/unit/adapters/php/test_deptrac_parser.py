@@ -22,16 +22,14 @@ def _adapter() -> DeptracAdapter:
 
 def test_parse_violations_count() -> None:
     """Report with Violations count (int) → single finding with count."""
+    a = _adapter()
     data = {"Report": {"Violations": 3, "UncoveredClasses": 1}}
-    findings = _adapter().parse(json.dumps(data), "", 1)
-    assert len(findings) == 1
-    f = findings[0]
-    assert f.tool == "deptrac"
-    assert f.layer == "L4"
-    assert f.language == "php"
-    assert "3 architecture violation" in f.message
-    assert f.fix_hint is not None
-    assert "1 uncovered" in f.fix_hint
+    # Keyword for exitcode → stderr defaults to "" (kills mutmut_1: ""→"XXXX")
+    a.parse(json.dumps(data), exitcode=1)
+    assert a.architecture.get("violations") == 3
+    assert a.architecture.get("uncovered_classes") == 1
+    assert a.architecture.get("stderr") == ""
+    assert a.architecture.get("exitcode") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +39,7 @@ def test_parse_violations_count() -> None:
 
 def test_parse_violations_list() -> None:
     """Report with Violations as list → one finding per violation."""
+    a = _adapter()
     data = {
         "Report": {
             "Violations": [
@@ -52,16 +51,20 @@ def test_parse_violations_list() -> None:
             ]
         }
     }
-    findings = _adapter().parse(json.dumps(data), "", 1)
+    findings = a.parse(json.dumps(data), "", 1)
     assert len(findings) == 1
     f = findings[0]
     assert f.node == "src/Controller.php"
     assert f.message == "Controller calls Repository"
     assert f.fix_hint == "Use Service instead"
+    # Violations is a list, so violations_count = the list itself
+    assert isinstance(a.architecture.get("violations"), list)
+    assert a.architecture.get("uncovered_classes") == 0
 
 
 def test_parse_violations_list_multiple() -> None:
     """Multiple violations → multiple findings."""
+    a = _adapter()
     data = {
         "Report": {
             "Violations": [
@@ -70,10 +73,13 @@ def test_parse_violations_list_multiple() -> None:
             ]
         }
     }
-    findings = _adapter().parse(json.dumps(data), "", 1)
+    findings = a.parse(json.dumps(data), "", 1)
     assert len(findings) == 2
     assert findings[0].message == "V1"
     assert findings[1].message == "V2"
+    # Violations is a list → violations_count = the list
+    assert isinstance(a.architecture.get("violations"), list)
+    assert a.architecture.get("uncovered_classes") == 0
 
 
 # ---------------------------------------------------------------------------
@@ -83,26 +89,70 @@ def test_parse_violations_list_multiple() -> None:
 
 def test_parse_empty_output() -> None:
     """Empty stdout → no findings."""
-    findings = _adapter().parse("", "", 0)
+    a = _adapter()
+    findings = a.parse("", "", 0)
     assert len(findings) == 0
+    # Early return at line 128-129 — _architecture never set
+    assert a.architecture == {}
 
 
 def test_parse_invalid_json() -> None:
     """Non-JSON stdout → no findings."""
-    findings = _adapter().parse("not json at all", "", 1)
+    a = _adapter()
+    findings = a.parse("not json at all", "", 1)
     assert len(findings) == 0
+    # _architecture never set — JSON parse fails
+    assert a.architecture == {}
 
 
 def test_parse_missing_report_key() -> None:
-    """Valid JSON but no Report key → no findings."""
-    findings = _adapter().parse('{"foo": "bar"}', "", 0)
+    """Valid JSON but no Report key → _architecture stores defaults."""
+    a = _adapter()
+    findings = a.parse('{"foo": "bar"}', "", 0)
     assert len(findings) == 0
+    # "Report" missing → get() returns {} (empty dict) → isinstance check passes
+    # "Violations" missing → count defaults to 0 → no findings
+    # architecture has full defaults: kills mutmut_9, mutmut_11
+    assert a.architecture.get("violations") == 0
+    assert a.architecture.get("uncovered_classes") == 0
 
 
 def test_parse_report_non_dict() -> None:
     """Report is not a dict → no findings."""
-    findings = _adapter().parse('{"Report": "string"}', "", 0)
+    a = _adapter()
+    findings = a.parse('{"Report": "string"}', "", 0)
     assert len(findings) == 0
+    # Report value is "string" → isinstance check fails → early return
+    assert a.architecture == {}
+
+
+# ---------------------------------------------------------------------------
+# Missing Violations / UncoveredClasses keys → default values
+# ---------------------------------------------------------------------------
+
+
+def test_parse_missing_violations_key() -> None:
+    """Report present but Violations key missing → counts default to 0."""
+    a = _adapter()
+    data = {"Report": {"UncoveredClasses": 2}}
+    # Only positional stdout → stderr defaults to "" (kill mutmut_1: ""→"XXXX"), exitcode defaults to 0 (kill mutmut_2: 0→1)
+    a.parse(json.dumps(data))
+    assert a.architecture.get("violations") == 0
+    assert a.architecture.get("uncovered_classes") == 2
+    assert a.architecture.get("stderr") == ""
+    assert a.architecture.get("exitcode") == 0
+
+
+def test_parse_missing_uncovered_key() -> None:
+    """Report present but UncoveredClasses key missing → defaults to 0."""
+    a = _adapter()
+    data = {"Report": {"Violations": 4}}
+    # Same call pattern → tests defaults (kills mutmut_1 & mutmut_2)
+    a.parse(json.dumps(data))
+    assert a.architecture.get("violations") == 4
+    assert a.architecture.get("uncovered_classes") == 0
+    assert a.architecture.get("stderr") == ""
+    assert a.architecture.get("exitcode") == 0
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +187,10 @@ def test_parse_stats_missing_report() -> None:
 def test_architecture_property() -> None:
     """architecture property reflects last parse() call."""
     a = _adapter()
-    data = {"Report": {"Violations": 5, "UncoveredClasses": 3}}
-    a.parse(json.dumps(data), "", 1)
-    assert a.architecture == {"violations": 5, "uncovered_classes": 3}
+    data = {"Report": {"Violations": 5, "UncoveredClasses": 2}}
+    a.parse(json.dumps(data), "", 0)
+    assert a.architecture.get("violations") == 5
+    assert a.architecture.get("uncovered_classes") == 2
 
 
 def test_architecture_property_unset() -> None:

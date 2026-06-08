@@ -144,6 +144,8 @@ class DeptracAdapter(ToolAdapter):
         self._architecture: dict = {
             "violations": violations_count,
             "uncovered_classes": uncovered,
+            "stderr": stderr,
+            "exitcode": exitcode,
         }
 
         # Individual violations (if present as a list)
