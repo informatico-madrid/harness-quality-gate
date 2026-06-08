@@ -64,6 +64,8 @@ class PhpMdAdapter(ToolAdapter):
 
     def _phpmd_binary(self, repo: Path) -> list[str] | None:
         """Resolve the phpmd binary: system PATH > vendor/bin."""
+        if repo is None:
+            raise RuntimeError("repository path is None")
         system = shutil.which("phpmd")
         if system:
             return [system]

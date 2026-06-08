@@ -612,18 +612,31 @@ class TestRunL1PestPaths:
         assert pest_mutate_f[0].severity == "info"
         # Verify the exact finding fields (not just substring presence)
         assert pest_mutate_f[0].node == "mutation"
-        # Mutation 50: (is_pest_project and not pest_has_mutate) → (is_pest_project)
-        # When mutmut removes "not pest_has_mutate", the condition can become True
-        # when it should be False, taking the else path (infection path).
-        # Verify we're NOT in the infection path by checking there's no infected error
+        # Kill mutmut_138: fix_hint param removed from Finding constructor
+        assert pest_mutate_f[0].fix_hint == "composer require --dev pestphp/pest-plugin-mutate"
+        # Kill mutmut_134: language → None in Finding constructor
+        assert pest_mutate_f[0].language == "php"
+        # Kill mutmut_51: condition mutation → verify exact finding content
+        # Mutant 51: `and not` → `or not`, condition still True but
+        # verify we hit the skip path (exact message check)
+        assert "Mutation testing skipped" in pest_mutate_f[0].message
+        # Kill mutmut_50: condition `and not` → `and` (condition always False when
+        # is_pest=True and pest_has_mutate mutated to truthy)
+        # With the skip finding present AND correct structure, the condition was True
+        # (skipped path taken), killing mutant 50.
         assert not any(
             f.tool == "infection" and f.severity == "error"
             for f in result.findings
         ), "Mutation 50: should not take infection path when pest has no mutate plugin"
         # Kill 'probe(repo)' → 'probe(None)' mutation
+        # Kill 'probe(repo)' → 'probe(None)' mutation
         assert adapter._pcov.probe.call_args[0][0] == tmp_path
         # Kill '_pest_binary(repo)' → '_pest_binary(None)' mutation (called twice)
         assert adapter._pest._pest_binary.call_args_list[0][0][0] == tmp_path
+        # Original assertions for passed/finding/mutation_skipped
+        assert result.passed is False  # info finding for mutation skipped
+        assert any("pest-plugin-mutate" in str(f.message) for f in result.findings)
+        assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
         # Kill '_pest_invoke(repo)' → '_pest_invoke(None)' mutation
         assert adapter._pest.invoke.call_args[0][0] == tmp_path
         assert adapter._pest.invoke.call_args[1]["env"] == {}
@@ -660,6 +673,8 @@ class TestRunL1PestPaths:
         assert "--min-covered-msi=100" in flags
         # Kill 'invoke(repo,...)' → 'invoke(None,...)' mutation
         assert adapter._infection.invoke.call_args[0][0] == tmp_path
+        # Kill mutmut_54: _has_mutate_plugin(repo) → None (call removed)
+        assert adapter._pest._has_mutate_plugin.called
 
     def test_pest_tests_fail(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -765,9 +780,15 @@ class TestRunL1PHPUnitPaths:
         phpunit_logs = [m for m in caplog.messages if m.startswith("L1 PHPUnit tests:")]
         assert len(phpunit_logs) == 1
         assert phpunit_logs[0] == "L1 PHPUnit tests: 0 findings"
+        # Kill mutmut_50: condition `passed = len(all_findings) == 0` → != 0
+        # If condition flips, passed would be False with empty findings → killed.
+        assert result.passed is True
+        assert result.findings == []
         # Kill 'pytest(repo,...)' → 'pytest(None,...)' mutations
         assert adapter._phpunit.invoke.call_args[0][0] == tmp_path
         assert adapter._phpunit.invoke.call_args[0][1] == ["--log-junit", "junit.xml"]
+
+
         call_kws = adapter._phpunit.invoke.call_args[1]
         assert call_kws["env"] == {}
         assert call_kws["timeout"] == 300.0

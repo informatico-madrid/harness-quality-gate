@@ -89,6 +89,8 @@ class PestAdapter(ToolAdapter):
 
     def _pest_binary(self, repo: Path) -> list[str] | None:
         """Resolve the pest binary: vendor/bin first, then PATH."""
+        if repo is None:
+            raise RuntimeError("repository path is None")
         vendor_bin = repo / "vendor" / "bin" / "pest"
         if vendor_bin.is_file():
             return [str(vendor_bin)]

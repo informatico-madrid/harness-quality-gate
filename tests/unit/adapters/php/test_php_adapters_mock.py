@@ -344,14 +344,25 @@ class TestPhpMdAdapter:
                         "not-a-dict",  # Non-dict violation — mutants 27, 32 (break) stop here
                     ],
                 },
+                {
+                    # E: valid file entry AFTER the non-dict violation
+                    # If mutant 27 uses break instead of continue, this entry's
+                    # violations loop stops and E's finding is missed.
+                    "file": "src/E.php",
+                    "violations": [
+                        {"rule": "R4", "description": "E desc", "priority": 2},
+                    ],
+                },
             ]
         }
         findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
-        # A has 1 finding, B (non-list violations) has 0, D has 1
-        # C (non-dict file_entry) is skipped entirely
-        assert len(findings) == 2
+        # A has 1, C skipped, D has 1, E has 1 (3 total)
+        # Mutant 27 (continue→break): if break, E's finding is lost → len < 3
+        assert len(findings) == 3
+
         assert "A desc" in findings[0].message
         assert "D desc" in findings[1].message
+        assert "E desc" in findings[2].message
 
     def test_parse_violation_no_class_no_method(self) -> None:
         data = {
@@ -400,6 +411,67 @@ class TestPhpMdAdapter:
         data = {"files": ["not-a-dict"]}
         assert PhpMdAdapter().parse(json.dumps(data), "", 0) == []
 
+    def test_parse_file_entry_missing_file_key(self) -> None:
+        """File entry is a dict but lacks the "file" key.
+
+        Kills mutmut 14, 16, 19 on file_entry.get("file", ...):
+          - 14: default "" → None
+          - 16: default "" →  (NoDefault)
+          - 19: default "" → "XXXX"
+        """
+        data = {
+            "files": [
+                {
+                    # No "file" key — .get("file", "") → ""
+                    # Mutant: .get("file", None) → None
+                    # Mutant: .get("file", ) → None
+                    # Mutant: .get("file", "XXXX") → "XXXX"
+                    "violations": [
+                        {
+                            "beginLine": 1,
+                            "rule": "TestRule",
+                            "description": "Missing-file desc",
+                            "priority": 3,
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        # node (filepath) should be "" (empty string), not None/XXXX
+        assert findings[0].node == ""
+        assert findings[0].message == "Line 1: Missing-file desc"
+
+    def test_parse_description_empty_violation(self) -> None:
+        """Violation dict missing description key.
+
+        Kills mutmut 30, 32 on v.get("description", ...):
+          - 30: default "" → None
+          - 32: default "" → (NoDefault)
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/Foo.php",
+                    "violations": [
+                        {
+                            "beginLine": 42,
+                            "rule": "Rule",
+                            # No "description" key
+                            "priority": 2,
+                            "class": "C",
+                            "method": "m",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        # description defaults to "" → message is "Line 42: C.m: "
+        assert findings[0].message == "Line 42: C.m: "
+
     def test_priority_to_severity_mapping(self) -> None:
         assert _priority_to_severity(1) == "critical"
         assert _priority_to_severity(2) == "major"
@@ -414,6 +486,55 @@ class TestPhpMdAdapter:
             with patch.object(PhpMdAdapter, "_run", return_value=_ok(json.dumps(data))):
                 findings = PhpMdAdapter().run_l3a(tmp_path, {})
         assert findings == []
+
+    # -- version method tests -------------------------------------------------
+
+    def test_version_no_binary_raises_exact_message(self, tmp_path: Path) -> None:
+        """Ensure RuntimeError message is exact (kills mutmut_5 and mutmut_6 on version).
+
+        Mutmut_5: message text gets 'XX' markers → message != 'XXphpmd not found...XX'
+        Mutmut_6: 'PATH' → 'path' in message → match='phpmd not found on PATH...' fails
+        """
+        adapter = PhpMdAdapter()
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match=r"phpmd not found on PATH or in vendor/bin"):
+                adapter.version(tmp_path)
+
+    def test_version_with_system_binary(self, tmp_path: Path) -> None:
+        """Ensure subprocess.run is called with --version flag and repo as cwd.
+
+        Catches mutmut_2: if _phpmd_binary(repo) mutated to _phpmd_binary(None),
+        the guard raises RuntimeError before subprocess.run.
+        """
+        adapter = PhpMdAdapter()
+        completed = subprocess.CompletedProcess(
+            args=["phpmd", "--version"], returncode=0, stdout="PHPMD 2.14.0\n", stderr=""
+        )
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value="/usr/bin/phpmd"):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                v = adapter.version(tmp_path)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "--version" in args
+        assert mock_run.call_args[1]["cwd"] == str(tmp_path)
+        assert v == "2.14.0"
+
+    def test_version_none_repo_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Ensure passing repo=None raises RuntimeError (kills mutmut_2).
+
+        Mutmut_2 replaces _phpmd_binary(repo) with _phpmd_binary(None).
+        The guard in _phpmd_binary catches this and raises RuntimeError.
+        """
+        adapter = PhpMdAdapter()
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value=None):
+            # Build vendor/bin/phpmd so we can exercise the version method past the guard
+            vendor_bin = tmp_path / "vendor" / "bin"
+            vendor_bin.mkdir(parents=True)
+            (vendor_bin / "phpmd").touch()
+            # The version method will call _phpmd_binary(None) due to mutmut
+            # The guard raises RuntimeError("repository path is None"), not the original message
+            with pytest.raises(RuntimeError, match=r"repository path is None"):
+                adapter.version(None)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -1348,6 +1469,47 @@ class TestPestAdapter:
     def test_has_mutate_plugin_invalid_json(self, tmp_path: Path) -> None:
         (tmp_path / "composer.json").write_text("not json")
         assert PestAdapter()._has_mutate_plugin(tmp_path) is False
+
+    # -- version method tests -------------------------------------------------
+
+    def test_version_no_binary_raises_exact_message(self, tmp_path: Path) -> None:
+        """Ensure RuntimeError message is exact (kills mutmut_5 and mutmut_6 on version).
+
+        Mutmut_5: message text gets 'XX' markers → message != 'XXpest not found...XX'
+        Mutmut_6: 'PATH' → 'path' in message → match='pest not found on PATH...' fails
+        """
+        adapter = PestAdapter()
+        with patch("harness_quality_gate.adapters.php.pest_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match=r"pest not found on PATH or in vendor/bin"):
+                adapter.version(tmp_path)
+
+    def test_version_with_system_binary(self, tmp_path: Path) -> None:
+        """Ensure subprocess.run is called with --version flag and repo as cwd.
+
+        Catches mutmut_2: if _pest_binary(repo) mutated to _pest_binary(None),
+        the guard raises RuntimeError before subprocess.run.
+        """
+        adapter = PestAdapter()
+        completed = subprocess.CompletedProcess(
+            args=["pest", "--version"], returncode=0, stdout="Pest 1.0.0\n", stderr=""
+        )
+        with patch("harness_quality_gate.adapters.php.pest_adapter.shutil.which", return_value="/usr/bin/pest"):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                v = adapter.version(tmp_path)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "--version" in args
+        assert mock_run.call_args[1]["cwd"] == str(tmp_path)
+        assert v == "1.0.0"
+
+    def test_version_none_repo_raises_runtime_error(self, tmp_path: Path) -> None:
+        """Ensure passing repo=None raises RuntimeError (kills mutmut_2).
+
+        Mutmut_2: _pest_binary(repo) → _pest_binary(None) — guard catches it.
+        """
+        adapter = PestAdapter()
+        with pytest.raises(RuntimeError, match=r"repository path is None"):
+            adapter.version(None)  # type: ignore[arg-type]
 
 
 # ===========================================================================

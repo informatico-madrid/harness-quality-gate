@@ -247,6 +247,9 @@ class TestParse:
         assert f.severity == "error"
         # Without classname, full_name = just name (not "None.name" or ".name")
         assert f.node == "standalone_test"
+        # Explicitly assert "None" is never in node — catches default-param mutations
+        # on .get("classname", "") → .get("classname", None) [mutmut_51, mutmut_53]
+        assert "None" not in f.node
         assert f.rule_id == "failure"
         # Message falls back to "Test failed: standalone_test"
         assert "Test failed:" in f.message
@@ -381,14 +384,39 @@ line2</failure>
         e = findings[1]
         assert e.rule_id == "error"
         assert e.severity == "error"
-        # The exact fallback message MUST match — mutants 121/123
-        # would cause None.strip() crash or wrong value
+        # The exact fallback message MUST match
         assert e.message == "Test error: mod.test_z"
         # Mutant 103: fix_hint default removed; must still be None
         assert e.fix_hint is None
         assert e.tool == "pytest"
         assert e.layer == "L1"
         assert e.language == "python"
+
+    def test_parse_error_empty_message_attr_fallback(self) -> None:
+        """<error message=""> with empty message attr → fallback message used.
+
+        Validates that error parsing handles message="" attr correctly.
+        When error.get("message", ...) returns "" (empty string), it falls
+        through to the fallback "Test error: {full_name}".
+        This tests the msg.strip("") path which mutants 121/123 modify.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" errors="1" failures="0">
+    <testcase classname="mod" name="test_msg_empty">
+      <error message=""></error>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        e = findings[1]
+        assert e.rule_id == "error"
+        assert e.severity == "error"
+        # With message="" attr, strip returns "" (falsy), so fallback is used
+        assert "Test error: mod.test_msg_empty" == e.message
+        assert e.fix_hint is None
 
     # -- skipped -----------------------------------------------------------
 
@@ -568,6 +596,7 @@ line2</failure>
         # The conditional evaluates to f"{classname}.{name}" since classname is truthy
         # This produces "standalone." — mutant 59 (name→None) would produce
         # "standalone.None", mutant 64 (name→"XXXX") would produce "standalone.XXXX"
+        assert "None" not in f.node, "Node must not contain 'None' — classnames are strings"
         assert f.node == "standalone."
 
     def test_parse_exitcode_not_used(self) -> None:
