@@ -579,7 +579,8 @@ class TestRunL1PcovProbeFailure:
 # ===========================================================================
 
 class TestRunL1PestPaths:
-    def test_pest_no_mutate_plugin_skips_mutation(self, tmp_path):
+    def test_pest_no_mutate_plugin_skips_mutation(self, tmp_path, caplog):
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pest_binary="pest",
             pest_has_mutate=False,
@@ -592,6 +593,25 @@ class TestRunL1PestPaths:
             ["pest"],  # mutation section
         ]
         result = adapter.run_l1(tmp_path, {})
+
+        # Kill mutant 54: _has_mutate_plugin(repo) → None (assignment mutation)
+        # _has_mutate_plugin MUST be called twice (test section + mutation section)
+        assert adapter._pest._has_mutate_plugin.called
+        assert len(adapter._pest._has_mutate_plugin.call_args_list) == 2
+        for call in adapter._pest._has_mutate_plugin.call_args_list:
+            assert call[0][0] == tmp_path
+
+        # Kill mutants 154, 155, 156: logger.info("L1 mutation skipped (TD-6): %s", mutation_skipped)
+        # Mut154: format → None → logger.info(None, msg)
+        # Mut155: arg → None → logger.info(fmt, None)
+        # Mut156: fmt removed → logger.info(msg)
+        # Exact log message assertion kills all three at once.
+        skip_logs = [m for m in caplog.messages if "L1 mutation skipped" in m]
+        assert len(skip_logs) == 1, (
+            f'Expected exactly one "L1 mutation skipped" log, got: {caplog.messages}'
+        )
+        assert skip_logs[0] == "L1 mutation skipped (TD-6): pest-plugin-mutate not installed"
+
         assert result.layer == "L1"
         assert result.language == "php"
         assert result.passed is False  # info finding for mutation skipped
@@ -644,6 +664,18 @@ class TestRunL1PestPaths:
         assert adapter._pest._has_mutate_plugin.called, (
             "Mut54: _has_mutate_plugin must be called (mutant replaces call with None)"
         )
+        # Kill mutants 114/115: mutation_stats/mutation_skipped = "" (empty str not None)
+        # Asserting exact string value kills "" → "pest-plugin-mutate..." mutations
+        assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
+        # Kill mutants 154/155/156: logger.info format/arg mutations
+        # Mut154: logger.info(None, arg) → no formatted message
+        # Mut155: logger.info(fmt, None) → "None" instead of actual value
+        # Mut156: logger.info(arg) → just the arg value, no prefix
+        mut_logs = [m for m in caplog.messages if m.startswith("L1 mutation skipped")]
+        assert len(mut_logs) == 1, (
+            f"Mut154/155/156: Expected 1 'L1 mutation skipped' log, got: {caplog.messages}"
+        )
+        assert mut_logs[0] == "L1 mutation skipped (TD-6): pest-plugin-mutate not installed"
 
     def test_pest_with_mutate_infection_called(self, tmp_path):
         adapter = _make_mock_adapter(

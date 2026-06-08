@@ -100,20 +100,48 @@ def test_phpmd_version_no_digit_parts(tmp_path: Path) -> None:
 
 
 def test_composer_audit_version_found(tmp_path: Path) -> None:
+    """Line 40-59: version() calls _composer_binary(repo), subprocess.run with correct args, extracts version.
+    Kills mutmut_2 (repo=None), mutmut_9 (cmd=None), mutmut_10 (cwd=None), mutmut_11 (env=None)."""
     from harness_quality_gate.adapters.php.composer_audit_adapter import ComposerAuditAdapter
     a = ComposerAuditAdapter()
-    with patch.object(type(a), "_composer_binary", return_value=["composer"]):
-        with patch("subprocess.run", return_value=_fake_subprocess_result("Composer version 2.8.3")):
+    # Patch _composer_binary at INSTANCE level so we can spy on the actual call argument
+    # This catches mutmut_2: if `repo` is mutated to `None`, assert_called_once_with verifies it
+    with patch.object(type(a), "_composer_binary", return_value=["/usr/bin/composer"]) as mock_cb:
+        with patch("subprocess.run", return_value=_fake_subprocess_result("Composer version 2.8.3")) as mock_run:
             v = a.version(tmp_path)
-    assert "2" in v
+    # Kill mutmut_2: _composer_binary must have been called with repo (not mutated to None)
+    mock_cb.assert_called_once_with(tmp_path)
+    # Kill mutmut_9/10/11: inspect subprocess.run call_args
+    mock_run.assert_called_once()
+    run_pos_args = mock_run.call_args[0]
+    run_kwargs = mock_run.call_args[1]
+    # mutmut_9: the command must be a list (not mutated to None)
+    assert isinstance(run_pos_args[0], list), "subprocess.run command mutated to None"
+    # mutmut_10: cwd must be the repo path string (not mutated to None)
+    assert run_kwargs.get("cwd") is not None, "cwd mutated to None"
+    assert run_kwargs["cwd"] == str(tmp_path), "cwd argument mutated"
+    # mutmut_11: env must be a dict (not mutated to None)
+    assert run_kwargs.get("env") is not None, "env mutated to None"
+    assert isinstance(run_kwargs["env"], dict), "env mutated to None"
+    assert v == "2.8.3"
+
+
+def test_composer_audit_version_binary_not_found(tmp_path: Path) -> None:
+    """Line 43-44: version() raises RuntimeError with exact message when composer binary not found."""
+    from harness_quality_gate.adapters.php.composer_audit_adapter import ComposerAuditAdapter
+    a = ComposerAuditAdapter()
+    with patch("harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which", return_value=None):
+        with pytest.raises(RuntimeError, match="composer not found on PATH"):
+            a.version(tmp_path)
 
 
 def test_composer_audit_version_failure(tmp_path: Path) -> None:
+    """Line 53-54: version() raises RuntimeError when composer --version exits non-zero."""
     from harness_quality_gate.adapters.php.composer_audit_adapter import ComposerAuditAdapter
     a = ComposerAuditAdapter()
-    with patch.object(type(a), "_composer_binary", return_value=["composer"]):
+    with patch("harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which", return_value="/usr/bin/composer"):
         with patch("subprocess.run", return_value=_fake_subprocess_result("", returncode=1)):
-            with pytest.raises(RuntimeError):
+            with pytest.raises(RuntimeError, match="composer --version failed:"):
                 a.version(tmp_path)
 
 

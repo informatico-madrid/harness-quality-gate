@@ -973,6 +973,55 @@ class TestPhpCsFixerAdapter:
         data = {"files": [{"name": "x.php", "violations": ["bad"]}]}
         assert PhpCsFixerAdapter().parse(json.dumps(data), "", 0) == []
 
+    # -- version method tests -----------------------------------------------
+
+    def test_version_no_binary_raises(self, tmp_path: Path) -> None:
+        """Ensure RuntimeError message is exact (kills mutmut_5 and mutmut_6)."""
+        adapter = PhpCsFixerAdapter()
+        with patch(
+            "harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which",
+            return_value=None,
+        ):
+            with pytest.raises(
+                RuntimeError,
+                match="^php-cs-fixer not found on PATH or in vendor/bin$",
+            ) as exc_info:
+                adapter.version(tmp_path)
+        assert exc_info.value.args[0] == "php-cs-fixer not found on PATH or in vendor/bin"
+
+    def test_version_with_binary_asserts_subprocess_call(self, tmp_path: Path) -> None:
+        """Verify subprocess.run is called with correct args and returns version.
+
+        Catches mutmut_9: [*cmd, '--version'] replaced by None.
+        Catches mutmut_10: cwd=str(repo) replaced by cwd=None.
+        Catches mutmut_11: env=... replaced by env=None.
+        """
+        adapter = PhpCsFixerAdapter()
+        completed = subprocess.CompletedProcess(
+            args=["php-cs-fixer", "--version"],
+            returncode=0,
+            stdout="3.65.0\n",
+            stderr="",
+        )
+        with patch(
+            "harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which",
+            return_value="/usr/bin/php-cs-fixer",
+        ):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                v = adapter.version(tmp_path)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "--version" in args
+        assert args[0] == "/usr/bin/php-cs-fixer"
+        kwargs = mock_run.call_args[1]
+        assert kwargs["cwd"] == str(tmp_path)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 30
+        assert isinstance(kwargs["env"], dict)
+        assert v == "3.65.0"
+        assert isinstance(v, str)
+
 
 # ===========================================================================
 # composer_audit_adapter.py
@@ -1666,9 +1715,11 @@ class TestPhpStanAdapterGaps:
         assert PhpStanAdapter().name == "phpstan"
 
     def test_version_no_binary_raises(self, tmp_path: Path) -> None:
-        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="phpstan not found"):
+        """Ensure RuntimeError message is exact (kills mutmut_5 and mutmut_6)."""
+        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value=None) as mock_which:
+            with pytest.raises(RuntimeError, match="^phpstan not found on PATH or in vendor/bin$") as exc_info:
                 PhpStanAdapter().version(tmp_path)
+        assert exc_info.value.args[0] == "phpstan not found on PATH or in vendor/bin"
 
     def test_version_with_system_binary(self, tmp_path: Path) -> None:
         completed = MagicMock()
@@ -1721,6 +1772,44 @@ class TestPhpStanAdapterGaps:
             with patch.object(PhpStanAdapter, "_run", return_value=_ok("{}")):
                 findings = PhpStanAdapter().run_l3a(tmp_path, {})
         assert findings == []
+
+    def test_version_asserts_subprocess_call_args(self, tmp_path: Path) -> None:
+        """Verify subprocess.run is called with correct args and returns version.
+
+        Catches mutmut_9: [*cmd, '--version'] replaced by None.
+        Catches mutmut_10: cwd=str(repo) replaced by cwd=None.
+        Catches mutmut_11: env=... replaced by env=None.
+        Catches mutmut_12: capture_output=True replaced by None.
+        Catches mutmut_13: text=True replaced by None.
+        Catches mutmut_14: timeout=30 replaced by None.
+        Catches mutmut_15: [*cmd, '--version'] line removed.
+        Catches mutmut_16: cwd=str(repo) line removed.
+        """
+        adapter = PhpStanAdapter()
+        completed = subprocess.CompletedProcess(
+            args=["phpstan", "--version"],
+            returncode=0,
+            stdout="PHP 2.1.34 by.neon ...\n",
+            stderr="",
+        )
+        with patch(
+            "harness_quality_gate.adapters.php.phpstan_adapter.shutil.which",
+            return_value="/usr/bin/phpstan",
+        ):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                v = adapter.version(tmp_path)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "--version" in args
+        assert args[0] == "/usr/bin/phpstan"
+        kwargs = mock_run.call_args[1]
+        assert kwargs["cwd"] == str(tmp_path)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 30
+        assert isinstance(kwargs["env"], dict)
+        assert v == "2.1.34"
+        assert isinstance(v, str)
 
 
 # ===========================================================================

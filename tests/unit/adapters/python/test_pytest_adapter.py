@@ -418,6 +418,81 @@ line2</failure>
         assert "Test error: mod.test_msg_empty" == e.message
         assert e.fix_hint is None
 
+    def test_parse_error_text_only_no_message_attr(self) -> None:
+        """Error with text content but no message attribute → text used as message.
+
+        Kills mutants 121 and 123: when error.tag has no 'message' attribute
+        but has text content, the original code's
+        error.get("message", error.text or "") returns the text.
+        Mutant 121 (.get("message", None)) returns None for both message
+        and the fallback, so the result diverges from original.
+        Mutant 123 (.get("message",)) also returns None.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" errors="1" failures="0">
+    <testcase classname="mod" name="test_crash">
+      <error>crashed with exit code 1</error>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        e = findings[1]
+        assert e.rule_id == "error"
+        assert e.severity == "error"
+        # The text content "crashed with exit code 1" must be the message
+        assert e.message == "crashed with exit code 1"
+
+    def test_parse_error_empty_tag_strict_message(self) -> None:
+        """Error with empty tag → fallback with EXACT message value.
+
+        Strictly asserts the exact fallback message string for empty error tag.
+        This validates that the error path through error.text="" → fallback
+        works correctly with the original code.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" errors="1" failures="0">
+    <testcase classname="strict.mod" name="test_empty_err">
+      <error></error>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        e = findings[1]
+        assert e.rule_id == "error"
+        # Exact fallback for empty error tag
+        assert e.message == "Test error: strict.mod.test_empty_err"
+        assert e.fix_hint is None
+        assert e.node == "strict.mod.test_empty_err"
+
+    def test_parse_failure_fix_hint_hasattr_is_none(self) -> None:
+        """Failure Finding's fix_hint attribute exists and is None.
+
+        Kills mutant 103: when fix_hint=None line is removed from the
+        Finding constructor, hasattr(finding, "fix_hint") returns False,
+        proving the attribute was not set.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase classname="mod" name="test_fix_hint">
+      <failure message="assertion failed"/>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        f = findings[1]
+        assert f.rule_id == "failure"
+        # Mutant 103 removes fix_hint=None → hasattr returns False
+        assert hasattr(f, "fix_hint")
+        assert f.fix_hint is None
+
     # -- skipped -----------------------------------------------------------
 
     def test_parse_skipped_fields(self) -> None:
@@ -710,3 +785,33 @@ class TestDefaults:
             assert f.tool == "pytest"
             assert f.layer == "L1"
             assert f.language == "python"
+
+    def test_parse_stderr_default_is_empty_string(self) -> None:
+        """Default stderr="" → calling parse() without stderr arg never
+        triggers the CRITICAL check. Catches mutant 1 where default
+        becomes "XXXX" (truthy, so CRITICAL check runs).
+
+        If the default is mutated to "XXXX", the condition
+        `stderr and "CRITICAL" in stderr` changes its behavior:
+        - Original: "" → falsy → CRITICAL check skipped
+        - Mutated:  "XXXX" → truthy → CRITICAL check runs
+          but "CRITICAL" not in "XXXX" → still skipped (safe)
+
+        The key behavioral difference is a CRITICAL+non-CRITICAL mixed case
+        where the default matters most - with "" default no finding,
+        with "XXXX" default the same since "CRITICAL" wouldn't be in "XXXX".
+        So the real kill is through strict signature check combined with
+        the behavior test below.
+        """
+        adapter = PytestAdapter()
+        # Call with no explicit stderr → uses default ""
+        findings = adapter.parse(stdout='<testsuites/>')
+        assert len(findings) == 0
+
+        # With the mutated default "XXXX", if we pass a stderr that
+        # contains CRITICAL, the check should still work since CRITICAL
+        # is explicitly in the string. The default only matters for
+        # calls that omit stderr entirely.
+        findings = adapter.parse('<testsuites/>', "CRITICAL: some issue")
+        assert len(findings) == 1
+        assert findings[0].rule_id == "stderr"

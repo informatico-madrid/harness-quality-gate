@@ -423,3 +423,80 @@ def test_parse_array_item_missing_severity() -> None:
     assert len(findings) == 1
     assert findings[0].severity == "error"
     assert findings[0].message == "TaintedSql"
+
+
+# ---------------------------------------------------------------------------
+# Mutants 41/43 — _extract_type_valid default values (message)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_array_item_missing_message_default() -> None:
+    """Array item with valid taint type but no message field.
+
+    NOTE: Mutmut_41 ("" → None) and mutmut_43 ("" → removed default → None)
+    are UNKILLABLE without modifying _make_finding. Both mutations change the
+    .get() default from "" to None, but since _make_finding uses `if message`
+    (falsy for both "" and None), the desc is computed identically ("TaintedSql").
+    This test still exercises the missing-key path for coverage.
+
+    For killability, these mutations would require asserting
+    _make_finding's taint_type parameter directly (via mock).
+    """
+    data = [{"type": "TaintedSql", "file_name": "src/x.php", "line_from": 5}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].message == "TaintedSql"
+
+
+# ---------------------------------------------------------------------------
+# Mutant 47 — _extract_type_valid severity key mutation
+# ---------------------------------------------------------------------------
+
+
+def test_parse_nested_files_severity_values() -> None:
+    """Nested files with items having explicit severity values (> or < "error").
+
+    Kills mutmut_47 (severity get "error" → get(None, "error")):
+    Mutant always returns "error" default since item.get(None, ...) returns
+    default for any item. By providing both "error" and "warning" items and
+    asserting both, the mutant (which always produces "error") fails on
+    the warning assertion.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"type": "TaintedSql", "line_from": 1, "severity": "warning"},
+                    {"type": "TaintedSql", "line_from": 5, "severity": "error"},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 2
+    assert findings[0].severity == "warning"
+    assert findings[1].severity == "error"
+
+
+# ---------------------------------------------------------------------------
+# Mutants 5/6 — Logger warning message in invoke
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_infra_incomplete_warning_logged() -> None:
+    """When psalm is not found, the exact warning message is logged.
+
+    Kills mutmut_5 (logger.warning("...") → logger.warning(None)) and
+    mutmut_6 (logger.warning("...psalm...") → logger.warning("XX...psalm...XX")).
+
+    Uses caplog to capture and assert the exact warning message.
+    """
+    from unittest.mock import patch
+
+    adapter = _adapter()
+    with patch.object(adapter, "_psalm_binary", return_value=None):
+        with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.logger") as mock:
+            result = adapter.invoke("/tmp", [])
+            assert result.exitcode == 3
+            # Assert exact warning message to catch mutmut_5 (None) and mutmut_6 ("XX...XX")
+            mock.warning.assert_called_once_with("psalm not found; returning INFRA_INCOMPLETE")
