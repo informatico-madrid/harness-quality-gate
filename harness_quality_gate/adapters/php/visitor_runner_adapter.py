@@ -94,16 +94,26 @@ class VisitorRunnerAdapter(ToolAdapter):
         """
         all_findings: list[dict] = []
         stderr_parts: list[str] = []
+        visitors_dir = VISITORS_DIR
+        repo_dir = repo
 
         visitors = _discover_visitors()
         if not visitors:
-            logger.warning("No visitor scripts found in %s", VISITORS_DIR)
-            return ToolInvocation(stdout="[]", stderr="no visitors discovered", exitcode=0)
+            logger.warning("No visitor scripts found in %s", visitors_dir)
+            return ToolInvocation(
+                stdout="[]",
+                stderr=f"no visitors discovered ({visitors_dir})",
+                exitcode=0,
+            )
 
-        php_files = self._collect_php_files(repo)
+        php_files = self._collect_php_files(repo_dir)
         if not php_files:
-            logger.warning("No PHP files found in %s", repo)
-            return ToolInvocation(stdout="[]", stderr="no PHP files found", exitcode=0)
+            logger.warning("No PHP files found in %s", repo_dir)
+            return ToolInvocation(
+                stdout="[]",
+                stderr=f"no PHP files found in {repo_dir}",
+                exitcode=0,
+            )
 
 # 
         for visitor_name in visitors:

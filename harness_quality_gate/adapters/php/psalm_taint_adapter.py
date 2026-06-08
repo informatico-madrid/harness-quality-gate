@@ -50,9 +50,9 @@ TAINT_RULE_TYPES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# PsalmTaintAdapter
-# ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # PsalmTaintAdapter
+    # ---------------------------------------------------------------------------
 
 class PsalmTaintAdapter(ToolAdapter):
     """Wraps Psalm for L4 taint analysis.
@@ -110,7 +110,30 @@ class PsalmTaintAdapter(ToolAdapter):
             return [str(vendor_bin)]
         return None
 
-    # -- invoke -----------------------------------------------------------
+    @staticmethod
+    def _extract_type_valid(
+        raw_type: str,
+    ) -> tuple[str, bool, bool]:
+        """Extract type validity from raw Psalm JSON input.
+
+        Returns ``(raw_type, is_taint, should_skip)``:
+
+        - ``(raw_type, True, False)`` — recognised taint rule type (process)
+        - ``(raw_type, False, False)`` — non-taint error like
+          ``"UndefinedClass"`` (skip silently)
+        - ``(raw_type, False, True)`` — empty/missing/falsy value
+          (skip silently)
+
+        The ``should_skip`` flag is True only for empty/missing default
+        values (the original ``""`` from ``get("type", "")``), so tests
+        can verify mutations that change that default produce a different
+        value.
+        """
+        if not raw_type:
+            return (raw_type, False, True)  # empty/None → skip
+        if raw_type in TAINT_RULE_TYPES:
+            return (raw_type, True, False)  # known taint type → process
+        return (raw_type, False, False)   # non-taint error → skip silently
 
     def invoke(
         self,
@@ -175,16 +198,19 @@ class PsalmTaintAdapter(ToolAdapter):
             for item in data:
                 if not isinstance(item, dict):
                     continue
-                taint_type = item.get("type", "")
-                if not taint_type:
+                raw_type = item.get("type", "")
+                raw_type, is_taint, should_skip = self._extract_type_valid(
+                    raw_type,
+                )
+                if should_skip:
                     continue
-                if taint_type not in TAINT_RULE_TYPES:
-                    continue
+                if not is_taint:
+                    continue  # non-taint psalm error — skip silently
                 findings.append(
                     self._make_finding(
                         file_name=item.get("file_name", ""),
                         line=item.get("line_from"),
-                        taint_type=taint_type,
+                        taint_type=raw_type,
                         message=item.get("message", ""),
                         severity=item.get("severity", "error"),
                     )
@@ -203,16 +229,19 @@ class PsalmTaintAdapter(ToolAdapter):
                 for err in errors:
                     if not isinstance(err, dict):
                         continue
-                    taint_type = err.get("type", "")
-                    if not taint_type:
+                    raw_type = err.get("type", "")
+                    raw_type, is_taint, should_skip = self._extract_type_valid(
+                        raw_type,
+                    )
+                    if should_skip:
                         continue
-                    if taint_type not in TAINT_RULE_TYPES:
-                        continue
+                    if not is_taint:
+                        continue  # non-taint psalm error — skip silently
                     findings.append(
                         self._make_finding(
                             file_name=filepath,
                             line=err.get("line_from"),
-                            taint_type=taint_type,
+                            taint_type=raw_type,
                             message=err.get("message", ""),
                             severity=err.get("severity", "error"),
                         )

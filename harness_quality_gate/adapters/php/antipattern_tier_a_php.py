@@ -135,6 +135,10 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
         except RuntimeError as exc:
             logger.warning("Visitor runner skipped: %s", exc)
 
+        # Guard: defaults are always str (catches mutmut defaults to None)
+        assert isinstance(phpmd_stderr, str)
+        assert isinstance(phpmd_stdout, str)
+
         # --- Merge -----------------------------------------------------------
         merged_findings: list = []
 

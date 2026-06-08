@@ -112,7 +112,7 @@ def test_parse_nested_files_multiple() -> None:
 
 
 def test_parse_filters_non_taint_errors() -> None:
-    """Non-taint psalmErrors are excluded."""
+    """Non-taint psalmErrors are excluded, only taint types included."""
     data = {
         "files": {
             "src/x.php": {
@@ -150,32 +150,42 @@ def test_parse_empty_array() -> None:
 
 def test_parse_no_taint_in_array() -> None:
     """Array with non-taint objects → no findings."""
-    data = [{"type": "UndefinedVariable", "file_name": "x.php"}]
+    data = [
+        {"type": "UndefinedVariable", "file_name": "x.php"},
+        {"file_name": "y.php"},  # no type key → empty → skip
+    ]
     assert _adapter().parse(json.dumps(data), "", 0) == []
 
 
 def test_parse_array_missing_type_key() -> None:
-    """Array item with no 'type' key → treated as non-taint (empty default).
+    """Array item with no 'type' key → treated as empty default.
 
-    Kills mutmut mutations that change the default value of .get("type", "")
-    to None, removed, or a different string — all should remain outside
-    TAINT_RULE_TYPES and be skipped.
+    Combined with a valid taint item, this ensures that:
+    - Items with missing-type keys are handled without error
+    - Valid taint-type items are still processed
+
+    This test kills mutations that change the default value of
+    .get("type", "") to None, removed, or a different string — all
+    result in non-taint types that are asserted as invalid.
     """
     data = [
-        {"file_name": "src/x.php", "line_from": 1},  # no "type" key at all
+        {"file_name": "src/x.php", "line_from": 1},  # no "type" key → empty
+        {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
     ]
     findings = _adapter().parse(json.dumps(data), "", 0)
-    assert len(findings) == 0
+    assert len(findings) == 1
+    assert findings[0].node == "src/Query.php:42"
+    assert findings[0].rule_id == "TaintedSql"
 
 
 def test_parse_array_non_taint_then_taint() -> None:
     """Non-taint item followed by taint item → both must be inspected.
 
-    Kills the 'continue → break' mutation in the non-taint filter loop.
-    If break fires first, the taint item is never examined.
+    The non-taint item (empty type) is skipped by _extract_type_valid,
+    and the valid taint item is still processed.
     """
     data = [
-        {"type": "UndefinedVariable", "file_name": "src/x.php"},
+        {"file_name": "src/x.php"},  # no type key → empty → skip
         {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
     ]
     findings = _adapter().parse(json.dumps(data), "", 1)
@@ -186,20 +196,24 @@ def test_parse_array_non_taint_then_taint() -> None:
 def test_parse_nested_files_missing_type_key() -> None:
     """Nested files format with item missing 'type' key.
 
-    Covers line 208 (err.get("type", "")). Items with missing type
-    are skipped by the `not taint_type` guard.
+    Combined with a valid taint item, this ensures that items with
+    missing-type keys are handled without error and valid taint items
+    are still processed. This kills mutations that change the default
+    value of .get("type", "") to a non-empty non-taint string.
     """
     data = {
         "files": {
             "src/x.php": {
                 "psalmErrors": [
-                    {"file_name": "src/x.php", "line_from": 1},  # no "type" key
+                    {"file_name": "src/x.php", "line_from": 1},  # no type
+                    {"type": "TaintedSql", "line_from": 5},
                 ]
             }
         }
     }
     findings = _adapter().parse(json.dumps(data), "", 1)
-    assert len(findings) == 0
+    assert len(findings) == 1
+    assert findings[0].node == "src/x.php:5"
 
 
 def test_parse_array_non_dict_then_taint() -> None:

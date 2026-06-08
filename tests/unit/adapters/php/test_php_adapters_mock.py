@@ -3477,3 +3477,57 @@ class TestPhpAntipatternTierAAdapter:
                 v = PhpAntipatternTierAAdapter().version(tmp_path)
             assert v == expected
             assert re2.match(r'phpmd:\S+ visitors:\S+', v), f"Expected {expected} got {v}"
+
+    def test_invoke_default_timeout_forwarded(self, tmp_path: Path) -> None:
+        """Verify timeout=300.0 default is forwarded to child invocations.
+
+        This test kills the mutmut default-arg mutant that changes
+        timeout: float = 300.0 to timeout: float = 301.0 — the assertion
+        on 300.0 would fail with 301.0.
+        """
+        with patch.object(PhpMdAdapter, "invoke") as phpmd_mock:
+            with patch.object(VisitorRunnerAdapter, "invoke") as visitor_mock:
+                phpmd_mock.return_value = _ok(json.dumps({"files": []}), exitcode=0)
+                visitor_mock.return_value = _ok("[]", exitcode=0)
+                PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+
+        # Check timeout was forwarded with default value 300.0
+        phpmd_kwargs = phpmd_mock.call_args.kwargs
+        assert phpmd_kwargs["timeout"] == 300.0
+        visitor_kwargs = visitor_mock.call_args.kwargs
+        assert visitor_kwargs["timeout"] == 300.0
+
+    def test_invoke_phpmd_failure_json_decode_warning(self, tmp_path: Path, caplog) -> None:
+        """When PHPMD fails, mutated phpmd_stdout='XXXX' triggers JSON decode warning.
+
+        This test kills mutmut_3 (phpmd_stdout='' → 'XXXX'): the mutation causes
+        the if-block to enter (truthy 'XXXX'), then json.loads('XXXX') raises
+        JSONDecodeError and logs the 'not valid JSON' warning. In the original,
+        empty string is falsy so the if-block is never entered and no warning.
+        """
+        visitor_out = json.dumps([
+            {"file": "src/Bar.php", "line": 5, "rule_id": "feature_envy", "message": "Feature envy"}
+        ])
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("broken")):
+                with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert json.loads(result.stdout) == [{"source": "visitor", "file": "src/Bar.php", "rule": "feature_envy", "description": "Feature envy", "line": 5}]
+        # Mutation: "XXXX" is truthy → enters parse block → JSON decode error → warning logged
+        # Original: "" is falsy → skip block → no warning logged
+        # This test asserts NO warning (original behavior), so mutation causes test failure.
+        assert "not valid JSON" not in caplog.text
+
+    def test_invoke_phpmd_failure_with_visitor_ok(self, tmp_path: Path, caplog) -> None:
+        """PHPMD RuntimeError with visitor OK — no assertion error on isinstance check."""
+        visitor_out = json.dumps([
+            {"file": "src/Bar.php", "line": 5, "rule_id": "feature_envy", "message": "Feature envy"}
+        ])
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", side_effect=RuntimeError("broken")):
+                with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+        assert result.exitcode == 0
+        merged = json.loads(result.stdout)
+        assert len(merged) == 1
+        assert merged[0]["source"] == "visitor"

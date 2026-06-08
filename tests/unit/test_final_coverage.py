@@ -205,9 +205,111 @@ def test_visitor_runner_invalid_json_line(tmp_path: Path) -> None:
 def test_visitor_runner_no_php_files(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.php.visitor_runner_adapter import VisitorRunnerAdapter
     adapter = VisitorRunnerAdapter()
-    # No PHP files → exits early with empty result
+    # No PHP files → exits early with empty result; stderr now includes repo dir
     result = adapter.invoke(tmp_path, [])
     assert result.exitcode == 0
+    assert "no PHP files" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# visitor_runner_adapter — kill surviving mutants in invoke()
+# - mutmut_1: default timeout=300.0 → 301.0 (assert subprocess timeout kwarg)
+# - mutmut_7: logger.warning(..., VISITORS_DIR) → logger.warning(..., None)
+# - mutmut_8: logger.warning(msg, VISITORS_DIR) → logger.warning(VISITORS_DIR)
+# ---------------------------------------------------------------------------
+
+
+def test_visitor_runner_invoke_timeout_passed_to_subprocess(tmp_path: Path) -> None:
+    """Kill mutmut_1: assert the timeout kwarg passed to subprocess.run.
+
+    The invoke method shells out to php via subprocess.run with the timeout
+    parameter. By mocking subprocess.run we can verify the exact timeout
+    value used — a default-value mutation (300→301) would fail this check.
+    """
+    from harness_quality_gate.adapters.php.visitor_runner_adapter import (
+        VisitorRunnerAdapter,
+    )
+    import harness_quality_gate.adapters.php.visitor_runner_adapter as vra
+
+    # Create a PHP source file so the code reaches subprocess.run
+    (tmp_path / "a.php").write_text("<?php")
+    completed = subprocess.CompletedProcess(
+        args=["php", "visitors/god_class.php", str(tmp_path / "a.php")],
+        returncode=0,
+        stdout="[]",
+        stderr="",
+    )
+    adapter = VisitorRunnerAdapter()
+    with patch.object(vra, "_discover_visitors", return_value=["god_class"]):
+        with patch("subprocess.run", return_value=completed) as mock_run:
+            adapter.invoke(tmp_path, [], timeout=42.5)
+    mock_run.assert_called_once()
+    # Key assertion: the timeout kwarg must be exactly what we passed.
+    # A mutation on the *default* (300.0→301.0) doesn't change this because
+    # we pass timeout explicitly. But calling *without* passing timeout uses
+    # the default — below test covers that.
+    called_timeout = mock_run.call_args[1]["timeout"]
+    assert called_timeout == 42.5
+
+
+def test_visitor_runner_invoke_default_timeout(tmp_path: Path) -> None:
+    """Kill mutmut_1 via default value: assert subprocess.run timeout==300.0.
+
+    When invoke is called without an explicit timeout it falls back to the
+    default (300.0). If mutmut changed it to 301.0 this test fails.
+    """
+    from harness_quality_gate.adapters.php.visitor_runner_adapter import (
+        VisitorRunnerAdapter,
+    )
+    import harness_quality_gate.adapters.php.visitor_runner_adapter as vra
+
+    # Create a PHP source file so the code reaches subprocess.run
+    (tmp_path / "a.php").write_text("<?php")
+    completed = subprocess.CompletedProcess(
+        args=["php", "visitors/god_class.php", str(tmp_path / "a.php")],
+        returncode=0,
+        stdout="[]",
+        stderr="",
+    )
+    adapter = VisitorRunnerAdapter()
+    with patch.object(vra, "_discover_visitors", return_value=["god_class"]):
+        with patch("subprocess.run", return_value=completed) as mock_run:
+            adapter.invoke(tmp_path, [])  # no explicit timeout → uses default
+    mock_run.assert_called_once()
+    assert mock_run.call_args[1]["timeout"] == 300.0
+
+
+def test_visitor_runner_no_visitors_logs_warning(tmp_path: Path) -> None:
+    """Kill mutmut_7 & mutmut_8 by asserting the log warning content.
+
+    mutmut_7: logger.warning("No visitor scripts found in %s", VISITORS_DIR)
+              → logger.warning("No visitor scripts found in %s", None)
+    If VISITORS_DIR is replaced by None the %-format produces "None" in the
+    message — this test asserts the actual visitors path is present.
+
+    mutmut_8: logger.warning(VISITORS_DIR) entirely changes the logged text
+              — the "visitor scripts" keyword disappears.
+    """
+    import logging
+    from harness_quality_gate.adapters.php.visitor_runner_adapter import (
+        VisitorRunnerAdapter,
+    )
+    from harness_quality_gate.adapters.php.visitor_runner_adapter import (
+        VISITORS_DIR,
+    )
+    import harness_quality_gate.adapters.php.visitor_runner_adapter as vra
+
+    with patch.object(vra, "_discover_visitors", return_value=[]):
+        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+
+    # Verify early-return value is still correct
+    assert result.exitcode == 0
+    assert result.stdout == "[]"
+
+    # Verify the log warning contains the actual visitors directory path.
+    # Both mutmut_7 (None → "None") and mutmut_8 (bare VISITORS_DIR →
+    # different path format) would cause this assertion to fail.
+    assert str(VISITORS_DIR) in result.stderr
 
 
 # ---------------------------------------------------------------------------

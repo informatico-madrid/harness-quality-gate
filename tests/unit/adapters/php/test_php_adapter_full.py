@@ -847,7 +847,8 @@ class TestRunL1InfectionPaths:
 # ===========================================================================
 
 class TestRunL1ToolSpecific:
-    def test_tool_specific_coverage_driver_pcov(self, tmp_path):
+    def test_tool_specific_coverage_driver_pcov(self, tmp_path, caplog):
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pcov_driver="pcov",
             pest_binary=None,
@@ -858,6 +859,9 @@ class TestRunL1ToolSpecific:
         )
         result = adapter.run_l1(tmp_path, {})
         assert result.tool_specific["coverage_driver"] == "pcov"
+        # Verify the actual driver name appears in the log (kills logger.info
+        # format-string / argument mutations where driver is replaced with None)
+        assert any("L1 coverage driver: pcov" in m for m in caplog.messages)
 
     def test_tool_specific_coverage_driver_unknown(self, tmp_path):
         adapter = _make_mock_adapter(
