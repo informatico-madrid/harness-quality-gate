@@ -12,6 +12,7 @@ Requirements: All L1 branches must be covered by granular asserts.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -2203,6 +2204,36 @@ class TestRunL3aFrameworkInjection:
         composer.write_text(json.dumps({"require": {"symfony/framework-bundle": "^6.0"}}))
         result = adapter.run_l3a(tmp_path, {})
         adapter._phpstan.run_l3a.assert_called_once()
+
+    def test_l3a_framework_injection_logs_info(self, tmp_path, caplog):
+        """Kill log message mutations in run_l3a framework injection logger.info call.
+
+        Mutants killed:
+        - mutmut_1: format string "L3A...%s" → removed → None
+        - mutmut_2: second arg ", ".join(...) → removed → None
+        - mutmut_3: first arg removed entirely
+        - mutmut_4: entire logger.info call removed
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        composer = tmp_path / "composer.json"
+        composer.write_text(json.dumps({"require": {"symfony/framework-bundle": "^6.0"}}))
+        with caplog.at_level(logging.INFO, logger="harness_quality_gate.adapters.php"):
+            result = adapter.run_l3a(tmp_path, {})
+        # Assert log contains framework packs info with correct format
+        framework_logs = [r for r in caplog.records if "L3A PHPStan framework packs" in r.message]
+        assert len(framework_logs) >= 1
+        assert framework_logs[0].message == "L3A PHPStan framework packs: phpstan-symfony"
+        assert framework_logs[0].levelno == logging.INFO
 
 
 # ===========================================================================

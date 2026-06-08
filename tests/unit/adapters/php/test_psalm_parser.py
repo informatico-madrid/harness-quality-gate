@@ -154,6 +154,89 @@ def test_parse_no_taint_in_array() -> None:
     assert _adapter().parse(json.dumps(data), "", 0) == []
 
 
+def test_parse_array_missing_type_key() -> None:
+    """Array item with no 'type' key → treated as non-taint (empty default).
+
+    Kills mutmut mutations that change the default value of .get("type", "")
+    to None, removed, or a different string — all should remain outside
+    TAINT_RULE_TYPES and be skipped.
+    """
+    data = [
+        {"file_name": "src/x.php", "line_from": 1},  # no "type" key at all
+    ]
+    findings = _adapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 0
+
+
+def test_parse_array_non_taint_then_taint() -> None:
+    """Non-taint item followed by taint item → both must be inspected.
+
+    Kills the 'continue → break' mutation in the non-taint filter loop.
+    If break fires first, the taint item is never examined.
+    """
+    data = [
+        {"type": "UndefinedVariable", "file_name": "src/x.php"},
+        {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
+    ]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == "src/Query.php:42"
+
+
+def test_parse_nested_files_missing_type_key() -> None:
+    """Nested files format with item missing 'type' key.
+
+    Covers line 208 (err.get("type", "")). Items with missing type
+    are skipped by the `not taint_type` guard.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"file_name": "src/x.php", "line_from": 1},  # no "type" key
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 0
+
+
+def test_parse_array_non_dict_then_taint() -> None:
+    """Non-dict item (e.g. string) followed by taint item → both processed.
+
+    Kills the 'continue → break' mutation in the isinstance item check.
+    If break fires, the taint item after the non-dict is skipped.
+    """
+    data = [
+        "not a dict",  # non-dict item
+        {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
+    ]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+
+
+def test_parse_nested_files_empty_type_then_taint() -> None:
+    """Item with empty type followed by taint item in same file.
+
+    Kills the 'continue → break' mutation in the `not taint_type` check
+    for the nested files format. If break fires, the taint item is skipped.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"type": "", "line_from": 1},  # empty type → not taint_type
+                    {"type": "TaintedSql", "line_from": 5},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == "src/x.php:5"
+
+
 def test_parse_unknown_top_level_key() -> None:
     """JSON neither array nor files dict → no findings."""
     assert _adapter().parse('{"foo": 1}', "", 0) == []

@@ -2159,9 +2159,294 @@ class TestVisitorRunnerAdapter:
         findings = VisitorRunnerAdapter().parse(json.dumps(data), "   \n  ", 0)
         assert len(findings) == 1
 
+    # -- invoke mutations: early return conditions and loop internals --------
 
-# ===========================================================================
-# weak_test_php.py
+    def test_invoke_no_visitors_assert_collect_not_called(self, tmp_path: Path) -> None:
+        """Mutation killer: assert _collect_php_files is NOT called when no visitors.
+        Kills mutant that removes early return or changes 'if not visitors' condition."""
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=[],
+        ) as mock_discover:
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+            ) as mock_collect:
+                result = VisitorRunnerAdapter().invoke(tmp_path, [])
+        # Verify the early return was taken: _collect_php_files must NOT be called
+        mock_collect.assert_not_called()
+        assert result.exitcode == 0
+        assert json.loads(result.stdout) == []
+        assert "no visitors" in result.stderr
+
+    def test_invoke_no_php_files_assert_subprocess_not_called(self, tmp_path: Path) -> None:
+        """Mutation killer: assert subprocess.run is never called when no PHP files.
+        Kills mutant that removes early return or changes 'if not php_files' condition."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "god_class.php").touch()
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["god_class"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[],
+            ):
+                with patch("subprocess.run") as mock_subprocess:
+                    result = VisitorRunnerAdapter().invoke(tmp_path, [])
+        mock_subprocess.assert_not_called()
+        assert result.exitcode == 0
+        assert json.loads(result.stdout) == []
+        assert "no PHP files" in result.stderr
+
+    def test_invoke_subprocess_success_assert_all_fields(self, tmp_path: Path) -> None:
+        """Mutation killer: thorough assertion on returned ToolInvocation fields.
+        Kills mutants in returncode check, stderr collection, findings extend,
+        and _build_invocation (stdout/stderr/exitcode construction)."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "god_class.php").touch()
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = json.dumps([
+            {"file": "Foo.php", "line": 10, "rule_id": "GOD-001", "message": "God class"}
+        ])
+        completed.stderr = ""
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["god_class"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file],
+            ):
+                with patch("subprocess.run", return_value=completed) as mock_run:
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        # Kill mutants in _build_invocation: exitcode
+        assert result.exitcode == 0
+        # Kill mutants in returncode != 0 →  == 0 (skip continue, eat stderr)
+        assert not result.stderr
+        # Kill mutants in extend (findings.extend → pass)
+        data = json.loads(result.stdout)
+        assert len(data) == 1
+        assert data[0]["rule_id"] == "GOD-001"
+
+    def test_invoke_subprocess_failure_assert_stderr_and_findings(self, tmp_path: Path) -> None:
+        """Mutation killer: assert stderr collected AND findings remain empty on failure.
+        Kills mutants: returncode != 0 → == 0 (doesn't collect stderr),
+        stderr_parts.append missing, continue → pass (extends failed findings)."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "god_class.php").touch()
+
+        failed = MagicMock()
+        failed.returncode = 2
+        failed.stdout = "some output"  # Should be ignored on failure
+        failed.stderr = "Fatal error: out of memory"
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["god_class"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file],
+            ):
+                with patch("subprocess.run", return_value=failed):
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        # Kill mutant: returncode != 0 → == 0 → would extend failed output as findings
+        data = json.loads(result.stdout)
+        assert len(data) == 0, "Failed subprocess should NOT produce findings"
+        # Kill mutant: stderr_parts.append removed
+        assert "Fatal error: out of memory" in result.stderr
+        # Kill mutant: exitcode not set to 1 when stderr exists
+        assert result.exitcode == 1
+
+    def test_invoke_visitor_missing_skips_with_warning(self, tmp_path: Path) -> None:
+        """Mutation killer: assert that missing visitor script skips the file.
+        Kills mutant where 'if not is_file' condition is removed (doesn't skip)."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        # Create visitors dir but DON'T create the script
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        # Leave it empty - simulates discover_visitors returning visitor but file missing
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["nonexistent"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file],
+            ):
+                with patch("subprocess.run") as mock_run:
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        # Kill mutant: removes 'if not visitor_script.is_file(): continue'
+        mock_run.assert_not_called()
+        data = json.loads(result.stdout)
+        assert data == []
+        assert result.exitcode == 0  # No stderr, exitcode stays 0
+
+    def test_invoke_subprocess_env_passed_correctly(self, tmp_path: Path) -> None:
+        """Mutation killer: assert subprocess.run receives correct env dict.
+        Kills mutants in env dict construction: {**os.environ, **(env or {})}.
+        Mutations like env=None → env={}; env={'X':'1'} → env=None."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "g.php").touch()
+
+        custom_env = {"MY_VAR": "my_value"}
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["g"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file],
+            ):
+                with patch(
+                    "subprocess.run",
+                    return_value=MagicMock(returncode=0, stdout="[]", stderr="")
+                ) as mock_run:
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(
+                            tmp_path, [], env=custom_env
+                        )
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        # Verify subprocess.run was called with the custom env
+        mock_run.assert_called_once()
+        call_kwargs = mock_run.call_args
+        env_used = call_kwargs.kwargs.get("env")
+        assert env_used is not None
+        assert "MY_VAR" in env_used
+        assert env_used["MY_VAR"] == "my_value"
+
+    def test_invoke_multiple_files_merged_with_findings(self, tmp_path: Path) -> None:
+        """Mutation killer: assert correct merging across multiple php files.
+        Kills mutants in loop:  for php_file in php_files:  mutations."""
+        php_file1 = tmp_path / "A.php"
+        php_file1.touch()
+        php_file2 = tmp_path / "B.php"
+        php_file2.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "v.php").touch()
+
+        def mock_run_side_effect(*args, **kwargs):
+            # subprocess.run(command_list, ...) → args[0] is the command list
+            cmd = args[0] if args else kwargs.get("args", [])
+            php_file = Path(cmd[-1]) if cmd else Path("unknown")
+            stub = MagicMock()
+            stub.returncode = 0
+            stub.stdout = json.dumps([{"file": php_file.name, "line": 1, "rule_id": "M", "message": "msg"}])
+            stub.stderr = ""
+            return stub
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["v"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file1, php_file2],
+            ):
+                with patch("subprocess.run", side_effect=mock_run_side_effect):
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [])
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        data = json.loads(result.stdout)
+        assert len(data) == 2, f"Expected 2 findings, got {len(data)}"
+        filenames = {d["file"] for d in data}
+        assert "A.php" in filenames
+        assert "B.php" in filenames
+        assert result.exitcode == 0
+
+    def test_invoke_env_none_handled_correctly(self, tmp_path: Path) -> None:
+        """Mutation killer: assert subprocess.run receives env when env=None.
+        Kills mutant where  **(env or {})  →  **{}  (env not merged with os.environ)."""
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "g.php").touch()
+
+        with patch(
+            "harness_quality_gate.adapters.php.visitor_runner_adapter._discover_visitors",
+            return_value=["g"],
+        ):
+            with patch.object(
+                VisitorRunnerAdapter,
+                "_collect_php_files",
+                return_value=[php_file],
+            ):
+                with patch(
+                    "subprocess.run",
+                    return_value=MagicMock(returncode=0, stdout="[]", stderr="")
+                ) as mock_run:
+                    from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+                    orig_dir = vra_mod.VISITORS_DIR
+                    vra_mod.VISITORS_DIR = visitors_dir
+                    try:
+                        # Explicitly pass env=None (or omit it to use default)
+                        result = VisitorRunnerAdapter().invoke(tmp_path, [], env=None)
+                    finally:
+                        vra_mod.VISITORS_DIR = orig_dir
+
+        env_used = mock_run.call_args.kwargs.get("env")
+        assert env_used is not None
+        # env should contain system vars (merged with os.environ)
+        assert "PATH" in env_used or len(env_used) > 0
 # ===========================================================================
 
 class TestPhpWeakTestAdapter:

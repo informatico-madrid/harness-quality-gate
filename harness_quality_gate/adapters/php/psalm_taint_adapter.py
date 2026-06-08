@@ -176,6 +176,8 @@ class PsalmTaintAdapter(ToolAdapter):
                 if not isinstance(item, dict):
                     continue
                 taint_type = item.get("type", "")
+                if not taint_type:
+                    continue
                 if taint_type not in TAINT_RULE_TYPES:
                     continue
                 findings.append(
@@ -202,6 +204,8 @@ class PsalmTaintAdapter(ToolAdapter):
                     if not isinstance(err, dict):
                         continue
                     taint_type = err.get("type", "")
+                    if not taint_type:
+                        continue
                     if taint_type not in TAINT_RULE_TYPES:
                         continue
                     findings.append(

@@ -124,6 +124,8 @@ class PhpStanAdapter(ToolAdapter):
         file_diagnostics = data.get("file_diagnostics")
         if isinstance(file_diagnostics, list):
             for fd in file_diagnostics:
+                if not isinstance(fd, dict):
+                    continue
                 filepath = fd.get("file", "")
                 messages = fd.get("messages", [])
                 errors = fd.get("errors", [])
