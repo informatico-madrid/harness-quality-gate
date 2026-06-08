@@ -1228,10 +1228,15 @@ class TestRunL4:
     def test_l4_all_pass(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
         result = adapter.run_l4(tmp_path, {})
+        assert isinstance(result, LayerResult)
         assert result.layer == "L4"
         assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
+        # duration_sec must be a float and >= 0
+        # This kills: round(duration, None) → int, round(3) → int,
+        #             time.monotonic() + t0 (still float), t0 = None (TypeError already killed)
+        assert isinstance(result.duration_sec, float)
         assert result.duration_sec >= 0
         # Kill mutations on each tool invoke call parameters
         for tool_name in ("_psalm_taint", "_composer_audit", "_security_checker",
@@ -1239,6 +1244,95 @@ class TestRunL4:
             call = getattr(adapter, tool_name).invoke.call_args
             assert call[0][0] == tmp_path
             assert call[1]["env"] == {}
+            # Kill mutations on invoke arguments list (args → None, remove args)
+            assert call[0][1] not in (None, [])
+        # Kill mutations on parse arguments (stdout/stderr/exitcode → None, remove args)
+        for tool_name, timeout in (
+            ("_psalm_taint", 600.0),
+            ("_composer_audit", 300.0),
+            ("_security_checker", 300.0),
+            ("_dead_code", 300.0),
+            ("_dep_analyser", 300.0),
+            ("_deptrac", 300.0),
+        ):
+            inv_call = getattr(adapter, tool_name).invoke.call_args
+            assert inv_call[1]["timeout"] == timeout
+            inv = getattr(adapter, tool_name).invoke.return_value
+            parse_call = getattr(adapter, tool_name).parse.call_args
+            # Kill mutations: parse args mutated to None, removed, or swapped
+            assert parse_call[0][0] == inv.stdout
+            assert parse_call[0][1] == inv.stderr
+            assert parse_call[0][2] == inv.exitcode
+
+    def test_l4_log_messages(self, tmp_path, caplog):
+        """Verify log messages contain tool names and finding counts to kill string/param mutations on logger calls.
+
+        Kills mutations that:
+        - Remove the len(x) arg: `logger.info("...", )` → logs literal "%d" instead of number
+        - Change log strings: `"L4 Psalm..."` → `"XXL4 PsalmXX"`
+        Each message must match the exact expected format to catch all logger mutations.
+        """
+        import logging
+        with caplog.at_level(logging.INFO, logger="harness_quality_gate.adapters.php"):
+            adapter = self._make_l4_mock_adapter()
+            result = adapter.run_l4(tmp_path, {})
+        # Each successful tool should log an info message with its name
+        log_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        log_texts = [r.message for r in log_records]
+        # 6 tools = 6 info log messages
+        assert len(log_records) == 6
+        # Check each tool logs exactly one message matching the expected pattern
+        # Each message must: contain the tool name AND contain a digit (not literal %d)
+        # This kills: arg removal (msg becomes "L4 ...: %d findings"), string mutations ("XX...XX")
+        assert any("Psalm" in t and "findings" in t and "%" not in t for t in log_texts)
+        assert any("composer-audit" in t and "findings" in t and "%" not in t for t in log_texts)
+        assert any("security-checker" in t and "findings" in t and "%" not in t for t in log_texts)
+        assert any("dead-code" in t and "findings" in t and "%" not in t for t in log_texts)
+        assert any("dep-analyser" in t and "findings" in t and "%" not in t for t in log_texts)
+        assert any("deptrac" in t and "findings" in t and "%" not in t for t in log_texts)
+        # Kill string mutations: verify exact message format for each tool
+        # The format is "L4 <tool-name>: <number> findings"
+        psalm_msg = [t for t in log_texts if "Psalm" in t and "taint" in t]
+        assert len(psalm_msg) == 1
+        assert psalm_msg[0] == "L4 Psalm taint: 0 findings"
+        audit_msg = [t for t in log_texts if "composer-audit" in t]
+        assert len(audit_msg) == 1
+        assert audit_msg[0] == "L4 composer-audit: 0 findings"
+        checker_msg = [t for t in log_texts if "security-checker" in t]
+        assert len(checker_msg) == 1
+        assert checker_msg[0] == "L4 security-checker: 0 findings"
+        dead_msg = [t for t in log_texts if "dead-code" in t]
+        assert len(dead_msg) == 1
+        assert dead_msg[0] == "L4 dead-code: 0 findings"
+        depa_msg = [t for t in log_texts if "dep-analyser" in t]
+        assert len(depa_msg) == 1
+        assert depa_msg[0] == "L4 dep-analyser: 0 findings"
+        deptr_msg = [t for t in log_texts if "deptrac" in t]
+        assert len(deptr_msg) == 1
+        assert deptr_msg[0] == "L4 deptrac: 0 findings"
+
+    def test_l4_finds_change_passed(self, tmp_path):
+        """Test that findings correctly flip passed status."""
+        adapter = self._make_l4_mock_adapter()
+        adapter._psalm_taint.parse.return_value = [Finding(
+            node="src/Secret.php", severity="error", message="Taint", tool="psalm"
+        )]
+        result = adapter.run_l4(tmp_path, {})
+        assert result.passed is False
+        # Kill mutations where psalm_invocation.exitcode → None or other non-zero value
+        # that would cause different behavior in production (e.g. exitcode=None → parse doesn't find stats)
+        assert any(f.tool == "psalm" for f in result.findings)
+
+    def test_l4_parse_arguments_verified(self, tmp_path):
+        """Kill mutations on parse arguments (exitcode → None, etc)."""
+        adapter = self._make_l4_mock_adapter()
+        adapter._psalm_taint.invoke.return_value = MagicMock(
+            stdout='[{"node":"x"}]', stderr="warn", exitcode=0
+        )
+        adapter._psalm_taint.parse.return_value = []
+        adapter.run_l4(tmp_path, {})
+        parse_call = adapter._psalm_taint.parse.call_args
+        assert parse_call[0][2] == 0  # exitcode not mutated to None
 
     def test_l4_psalm_finds(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
@@ -1303,6 +1397,7 @@ class TestRunL4:
     def test_l4_duration_non_negative(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
         result = adapter.run_l4(tmp_path, {})
+        assert isinstance(result.duration_sec, float)
         assert result.duration_sec >= 0
 
     def test_l4_psalm_args(self, tmp_path):
@@ -1395,17 +1490,6 @@ class TestRunL4:
         assert call[0][0] == tmp_path
         assert call[1]["env"] == {}
         assert call[1]["timeout"] == 300.0
-
-    def test_l4_parse_arguments_verified(self, tmp_path):
-        """Kill mutations on parse arguments (exitcode → None, etc)."""
-        adapter = self._make_l4_mock_adapter()
-        adapter._psalm_taint.invoke.return_value = MagicMock(
-            stdout='[{"node":"x"}]', stderr="warn", exitcode=0
-        )
-        adapter._psalm_taint.parse.return_value = []
-        adapter.run_l4(tmp_path, {})
-        parse_call = adapter._psalm_taint.parse.call_args
-        assert parse_call[0][2] == 0  # exitcode not mutated to None
 
     def test_l4_env_passed_to_all_invokes(self, tmp_path):
         """Kill mutations where env=env is removed or mutated to None."""

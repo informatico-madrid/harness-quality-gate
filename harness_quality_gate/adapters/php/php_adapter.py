@@ -33,9 +33,7 @@ from .psalm_taint_adapter import PsalmTaintAdapter
 from .security_checker_adapter import SecurityCheckerAdapter
 from .weak_test_php import PhpWeakTestLayerAdapter
 
-# reason: logger name mutation does not change observability; only the __name__ label differs.
-# audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 # -- Framework-conditional PHPStan extension map (FR-22) --------------------
 

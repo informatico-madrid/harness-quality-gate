@@ -200,6 +200,162 @@ class TestPhpMdAdapter:
         assert "LongVariable" in (f.fix_hint or "")
         assert "FooClass" in f.message
 
+    def test_parse_exact_message_content(self) -> None:
+        """Exact message assertions to kill .get() key mutations.
+
+        Mutants replaced with bad keys (e.g. v.get("XXdescriptionXX", ""))
+        will return the default "" instead of actual data, changing the message.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/Foo.php",
+                    "violations": [
+                        {
+                            "beginLine": 10,
+                            "rule": "LongVariable",
+                            "description": "Variable name is too long",
+                            "priority": 2,
+                            "class": "FooClass",
+                            "method": "doSomething",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        f = findings[0]
+        assert "Line 10" in f.message
+        assert "Variable name is too long" in f.message
+        assert "FooClass.doSomething" in f.message
+
+    def test_parse_violation_without_optional_keys(self) -> None:
+        """Violation dict with minimal/missing optional fields.
+
+        Kills mutants that change .get() default values when keys are absent.
+        Tests: mutants 14-16 (file default), 28-35 (description default),
+        38-40 (rule default), 56-61 (class default), 62-69 (method default),
+        81-83 (priority default).
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/x.php",
+                    "violations": [
+                        {
+                            "description": "test desc",
+                            "rule": "Bad",
+                            "priority": 2,
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "src/x.php"
+        assert "test desc" in f.message
+        assert f.severity == "major"
+        assert f.fix_hint == "Rule: Bad"
+        assert "Line" not in f.message
+        assert "::" not in f.message
+
+    def test_parse_context_with_class_and_method(self) -> None:
+        """Context built as 'Class.Method' when both are present.
+
+        Kills mutants 75-76: '.'.join → 'XX'.join, description → None.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/Foo.php",
+                    "violations": [
+                        {
+                            "beginLine": 10,
+                            "rule": "LongVariable",
+                            "description": "Desc here",
+                            "priority": 2,
+                            "class": "MyClass",
+                            "method": "myMethod",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        f = findings[0]
+        # Context is "MyClass.myMethod" — joined with "."
+        assert "MyClass.myMethod" in f.message
+        assert "::" not in f.message
+
+    def test_parse_startline_fallback(self) -> None:
+        """When beginLine is missing, fall back to startLine.
+
+        Kills mutants 44-53 on the 'line' field:
+        - mutant 45: 'or' → 'and' with both keys present changes precedence
+        - mutants 46-49: beginLine key mutation
+        - mutants 50-53: startLine key mutation
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/Foo.php",
+                    "violations": [
+                        {
+                            "beginLine": 5,
+                            "startLine": 20,
+                            "rule": "LineRule",
+                            "description": "Test",
+                            "priority": 3,
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        f = findings[0]
+        # Original: beginLine or startLine → 5 (short-circuit)
+        # Mutant 45 (and): beginLine and startLine → 20
+        assert "Line 5" in f.message
+
+    def test_parse_multiple_file_entries_with_bads(self) -> None:
+        """Multiple file entries with non-dict entries to kill continue→break mutants.
+
+        Mutant 11: continue→break in file_entry loop — non-dict dict entry breaks the loop
+        Mutant 25: continue→break in violations-type loop — non-list violations type
+        Mutant 27: continue→break in violations-item loop — non-dict item
+        Mutant 32: continue→break in violations-item check — non-dict violations list
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/A.php",
+                    "violations": [
+                        {"rule": "R1", "description": "A desc", "priority": 2}
+                    ],
+                },
+                "not-a-dict",  # Non-dict entry — mutant 11 (break) stops here
+                {
+                    "file": "src/C.php",
+                    "violations": "not-a-list",  # Non-list violations — mutant 25 (break) stops here
+                },
+                {
+                    "file": "src/D.php",
+                    "violations": [
+                        {"rule": "R3", "description": "D desc", "priority": 2},
+                        "not-a-dict",  # Non-dict violation — mutants 27, 32 (break) stop here
+                    ],
+                },
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        # A has 1 finding, B (non-list violations) has 0, D has 1
+        # C (non-dict file_entry) is skipped entirely
+        assert len(findings) == 2
+        assert "A desc" in findings[0].message
+        assert "D desc" in findings[1].message
+
     def test_parse_violation_no_class_no_method(self) -> None:
         data = {
             "files": [
