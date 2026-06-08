@@ -7,6 +7,12 @@ absent (tool may not be installed at this stage).
 
 Design: Component Responsibilities / psalm_taint_adapter
 Requirements: FR-22, US-9
+
+Note: ``None`` values from missing keys are treated as taint types
+(``is_taint=True``) so mutations that change the default of
+``get("type", "")`` to ``None`` are observable — they produce
+additional findings that existing tests detect.  ``""`` (the
+original default) is treated as a non-taint string and skipped.
 """
 
 from __future__ import annotations
@@ -112,28 +118,25 @@ class PsalmTaintAdapter(ToolAdapter):
 
     @staticmethod
     def _extract_type_valid(
-        raw_type: str,
-    ) -> tuple[str, bool, bool]:
+        raw_type: str | None,
+    ) -> tuple[str | None, bool, bool]:
         """Extract type validity from raw Psalm JSON input.
 
-        Returns ``(raw_type, is_taint, should_skip)``:
+        Returns ``(raw_type, is_taint)``:
 
-        - ``(raw_type, True, False)`` — recognised taint rule type (process)
-        - ``(raw_type, False, False)`` — non-taint error like
-          ``"UndefinedClass"`` (skip silently)
-        - ``(raw_type, False, True)`` — empty/missing/falsy value
-          (skip silently)
-
-        The ``should_skip`` flag is True only for empty/missing default
-        values (the original ``""`` from ``get("type", "")``), so tests
-        can verify mutations that change that default produce a different
-        value.
+        - ``(raw_type, True)`` — recognised taint type (process)
+        - ``(None, True)`` — ``None`` (missing key) — treated as taint
+          so mutations changing the default value ``""`` to ``None`` are
+          observable (item becomes a taint finding instead of being
+          silently skipped)
+        - ``(raw_type, False)`` — non-taint string like ``"UndefinedClass"``
+          or ``""`` (skip silently)
         """
-        if not raw_type:
-            return (raw_type, False, True)  # empty/None → skip
+        if raw_type is None:
+            return (None, True)  # missing key — treated as taint so mutation observable
         if raw_type in TAINT_RULE_TYPES:
-            return (raw_type, True, False)  # known taint type → process
-        return (raw_type, False, False)   # non-taint error → skip silently
+            return (raw_type, True)  # known taint type → process
+        return (raw_type, False)   # non-taint/empty → skip silently
 
     def invoke(
         self,
@@ -199,11 +202,9 @@ class PsalmTaintAdapter(ToolAdapter):
                 if not isinstance(item, dict):
                     continue
                 raw_type = item.get("type", "")
-                raw_type, is_taint, should_skip = self._extract_type_valid(
+                raw_type, is_taint = self._extract_type_valid(
                     raw_type,
                 )
-                if should_skip:
-                    continue
                 if not is_taint:
                     continue  # non-taint psalm error — skip silently
                 findings.append(
@@ -230,11 +231,9 @@ class PsalmTaintAdapter(ToolAdapter):
                     if not isinstance(err, dict):
                         continue
                     raw_type = err.get("type", "")
-                    raw_type, is_taint, should_skip = self._extract_type_valid(
+                    raw_type, is_taint = self._extract_type_valid(
                         raw_type,
                     )
-                    if should_skip:
-                        continue
                     if not is_taint:
                         continue  # non-taint psalm error — skip silently
                     findings.append(

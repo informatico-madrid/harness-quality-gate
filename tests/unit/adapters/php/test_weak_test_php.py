@@ -407,13 +407,29 @@ class TestInvokeDirect:
     in the invoke method that are not reachable through run_l3b mocks.
     """
 
-    def test_invoke_no_test_files_returns_exactly_empty_json(self, tmp_path: Path) -> None:
-        """No PHP test files → stdout is exactly '[]', stderr contains full message."""
+    def test_invoke_no_test_files_returns_exactly_empty_json(self, tmp_path: Path, caplog) -> None:
+        """No PHP test files → stdout is exactly '[]', stderr contains full message.
+
+        Also asserts that the logged warning message contains the actual repo path
+        (not None), which would fail when mutated.
+        """
         result = PhpWeakTestAdapter().invoke(tmp_path, [])
         assert result.stdout == "[]"
         assert result.stderr == "no PHP test files found"
         assert result.exitcode == 0
         assert result.duration_seconds >= 0
+
+        # Assert log message format contains both the expected prefix and the repo path.
+        # This kills mutations 14 (None replaces repo) and 15 (entire format string removed).
+        assert len(caplog.records) >= 1
+        log_msg = caplog.messages[0]
+        assert "No PHP test files found in" in log_msg, (
+            f"Log message should contain expected prefix, got: {log_msg}"
+        )
+        repo_msg = str(tmp_path)
+        assert repo_msg in log_msg, (
+            f"Log message should contain repo path '{repo_msg}', got: {log_msg}"
+        )
 
     @pytest.mark.parametrize("timeout_value", [5.0, 300.0, 999.0])
     def test_invoke_timeout_param_used(self, tmp_path: Path, timeout_value: float) -> None:
@@ -430,6 +446,24 @@ class TestInvokeDirect:
                 # All calls should have the correct timeout
                 for call in mock_run.call_args_list:
                     assert call[1]["timeout"] == timeout_value
+
+    def test_invoke_default_timeout_is_300(self, tmp_path: Path) -> None:
+        """When no timeout arg → subprocess.run receives timeout=300.0 (not mutated to 301.0)."""
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+                # Call without timeout — should use default of 300.0
+                PhpWeakTestAdapter().invoke(tmp_path, [])
+                assert mock_run.call_count >= 1
+                for call in mock_run.call_args_list:
+                    assert call[1]["timeout"] == 300.0, (
+                        f"Default timeout should be 300.0, got {call[1]['timeout']}"
+                    )
 
     def test_invoke_with_test_files_visitor_missing_logs_and_continues(self, tmp_path: Path) -> None:
         """When visitor scripts are missing, invoke continues (doesn't break) and returns empty."""

@@ -287,3 +287,34 @@ def test_make_finding_without_line() -> None:
     assert f.node == "src/x.php"
     assert f.message == "TaintedHtml"
     assert f.severity == "warning"
+
+
+def test_extract_type_valid_none_treated_as_taint() -> None:
+    """None raw_type must be treated as taint (kills mutmut on .get default)."""
+    from harness_quality_gate.adapters.php.psalm_taint_adapter import PsalmTaintAdapter
+
+    raw_type, is_taint = PsalmTaintAdapter._extract_type_valid(None)
+    assert raw_type is None
+    assert is_taint is True
+
+
+def test_extract_type_valid_known_taint() -> None:
+    """Known TAINT_RULE_TYPES return (type, True)."""
+    from harness_quality_gate.adapters.php.psalm_taint_adapter import PsalmTaintAdapter
+
+    raw_type, is_taint = PsalmTaintAdapter._extract_type_valid("TaintedHtml")
+    assert raw_type == "TaintedHtml"
+    assert is_taint is True
+
+
+def test_extract_type_valid_unknown_returns_false() -> None:
+    """Unknown type or empty string returns (raw, False) — skipped."""
+    from harness_quality_gate.adapters.php.psalm_taint_adapter import PsalmTaintAdapter
+
+    raw_type, is_taint = PsalmTaintAdapter._extract_type_valid("UndefinedClass")
+    assert raw_type == "UndefinedClass"
+    assert is_taint is False
+
+    raw_type, is_taint = PsalmTaintAdapter._extract_type_valid("")
+    assert raw_type == ""
+    assert is_taint is False

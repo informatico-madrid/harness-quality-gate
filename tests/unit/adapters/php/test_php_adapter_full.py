@@ -1195,6 +1195,96 @@ class TestRunL3a:
         assert "--format=json" in call_args
         assert "--no-progress" in call_args
 
+    # -----------------------------------------------------------------------
+    # Log-message assertions — kill logger.info mutations
+    # -----------------------------------------------------------------------
+
+    def _all_mocked_l3a(self, adapter: PhpAdapter):
+        """Stub all l3a tools to avoid real binaries."""
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+
+    def test_l3a_with_frameworks_log_message(self, tmp_path, caplog):
+        """Kill mutant 15: ', '.join(injection_packages) -> 'XX, XX'.join()
+
+        When a composer.json declares symfony/framework-bundle, run_l3a calls
+        detect_frameworks, gets frameworks, builds injection_packages like
+        ['phpstan-symfony'], and logs the join'd list.  Mutated join delimiter
+        would produce 'XX, XX' instead of the actual package names.
+        """
+        # Write a composer.json that triggers symfony detection
+        composer = tmp_path / "composer.json"
+        composer.write_text(
+            json.dumps({"require": {"symfony/framework-bundle": "^6.0"}}),
+            encoding="utf-8",
+        )
+        adapter = PhpAdapter()
+        self._all_mocked_l3a(adapter)
+
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.layer == "L3A"
+        # The log message must contain the actual injected package name,
+        # not the mutated 'XX, XX' placeholder
+        assert any(
+            "phpstan-symfony" in m
+            for m in caplog.messages
+        ), "Log must contain the actual injected package name"
+
+    def test_l3a_phpstan_zero_findings_log_message(self, tmp_path, caplog):
+        """Kill mutants 24 & 25 on PHPStan logger.info.
+
+        Mutant 24: removes format string → logger.info(len(phpstan_findings))
+        Mutant 25: removes len() arg → logger.info("L3A PHPStan: %d findings", )
+
+        Both change the resulting logged string.  We assert the message
+        contains the full format prefix AND the zero count so the mutated
+        versions fail.
+        """
+        adapter = PhpAdapter()
+        self._all_mocked_l3a(adapter)
+
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+
+        # With zero findings the log should be:
+        #   "L3A PHPStan: 0 findings"
+        assert any(
+            "L3A PHPStan: 0 findings" in m
+            for m in caplog.messages
+        ), "Log must contain the full formatted PHPStan message"
+
+    def test_l3a_phpstan_findings_log_message(self, tmp_path, caplog):
+        """Reinforce mutants 24 & 25 with actual findings count.
+
+        Logs 'L3A PHPStan: 3 findings' — mutated versions would produce
+        different strings and fail the assertion.
+        """
+        adapter = PhpAdapter()
+        self._all_mocked_l3a(adapter)
+        adapter._phpstan.run_l3a.return_value = [
+            Finding(node="src/A.php", severity="error", message="e1", tool="phpstan"),
+            Finding(node="src/B.php", severity="error", message="e2", tool="phpstan"),
+            Finding(node="src/C.php", severity="error", message="e3", tool="phpstan"),
+        ]
+
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert any(
+            "L3A PHPStan: 3 findings" in m
+            for m in caplog.messages
+        ), "Log must contain formatted PHPStan count message"
+
 
 # ===========================================================================
 # run_l3b
