@@ -85,6 +85,12 @@ class TestInvoke:
                 result = adapter.invoke(tmp_path)
                 assert result.exitcode == 0
                 assert result.stderr == ""
+                # KILL mutmut_1: default timeout=300.0 must be passed to subprocess.run.
+                assert mock_run.call_args[1]["timeout"] == 300.0
+                # KILL mutmut_9, mutmut_27: text=True must be passed.
+                assert mock_run.call_args[1]["text"] is True
+                # KILL mutmut_26: capture_output=True must be passed.
+                assert mock_run.call_args[1]["capture_output"] is True
 
     def test_invoke_falls_back_to_php_security_checker(self, tmp_path):
         """'local-php-...' missing → falls back to 'php-security-checker'."""
@@ -102,6 +108,11 @@ class TestInvoke:
                 assert result.stderr == ""
                 cmd = mock_run.call_args[0][0]
                 assert "/usr/bin/php-security-checker" in cmd[0]
+                # KILL mutmut_8, mutmut_10: verify the 2nd shutil.which call uses "php-security-checker".
+                which_calls = mock_which.call_args_list
+                assert len(which_calls) == 2
+                assert which_calls[0][0][0] == "local-php-security-checker"
+                assert which_calls[1][0][0] == "php-security-checker"
 
     def test_invoke_includes_format_json(self, tmp_path):
         """The CLI command always includes --format=json."""

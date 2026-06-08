@@ -1,12 +1,18 @@
 """Targeted tests to kill surviving mutmut mutants in DepAnalyserAdapter.parse.
 
 Kills:
-  mutmut_1  : stderr default "" → "XXXX"  → killed by log assertion
-  mutmut_2  : exitcode default 0 → 1      → killed by log assertion
-  mutmut_11 : item.get("type", "") → None → killed by log assertion
-  mutmut_13 : item.get("type", "") → (none)→ killed by log assertion
-  mutmut_16 : item.get("type", "") → "XXXX"→ killed by log assertion
-  mutmut_23 : item.get("message", "") → None → killed by message assertion
+  mutmut_1   : stderr default "" → "XXXX"  → killed by log assertion
+  mutmut_2   : exitcode default 0 → 1      → killed by log assertion
+  mutmut_11  : item.get("type", "") → None → killed by log assertion
+  mutmut_13  : item.get("type", "") → (none) → killed by log assertion
+  mutmut_16  : item.get("type", "") → "XXXX"→ killed by log assertion
+  mutmut_23  : item.get("message", "") → None → killed by message assertion
+  mutmut_27  : item.get("file","?") → None  → killed by log args assertion
+  mutmut_30  : Remove item.get("file","?") arg → killed by arg count assertion
+  mutmut_31  : Format string "parse:..." → "XXparse:...XX" → format string assertion
+  mutmut_33  : item.get("file","?") → item.get(None,"?") → killed by log args assertion
+  mutmut_34  : item.get("file","?") → item.get("file",None) → killed by log args assertion
+  mutmut_35  : item.get("file","?") → item.get("?") → killed by log args assertion
 """
 
 from __future__ import annotations
@@ -23,6 +29,75 @@ from harness_quality_gate.adapters.php.dep_analyser_adapter import (
 )
 
 _LOGGER_NAME = "harness_quality_gate.adapters.php.dep_analyser_adapter"
+
+
+# ===========================================================================
+# Kill mutmut_27, 30, 31, 33, 34, 35 (item.get("file","?") mutations)
+# All 6 mutate the SECOND argument of logger.debug() in the top-level array
+# parsing section. They change item.get("file","?") to something else.
+#
+# Strategy: provide TWO items — one WITH "file" key and one WITHOUT.
+# Assert on BOTH vtype log calls. Mutations affecting the call pattern will
+# be caught by arg count, value, and format string assertions.
+# ===========================================================================
+
+class TestParseTopLevelItemMissingFile:
+    """Assert vtype + file logged when items have/don't have 'file' key.
+
+    Kills:
+      mutmut_27: .get("file","?") → None        → log arg[2] fails on 2nd item
+      mutmut_30: .get("file","?") removed entirely → arg count wrong
+      mutmut_31: Format string "parse:..." → "XXparse:...XX" → format assertion
+      mutmut_33: .get("file","?") → .get(None,"?") → arg[2] == "valid.php" fails
+      mutmut_34: .get("file","?") → .get("file",None) → arg[2] fails on 2nd item
+      mutmut_35: .get("file","?") → .get("?") → arg[2] fails on 2nd item
+    """
+
+    def test_item_missing_file_key_logs_default_question_mark(self) -> None:
+        """Two items: one with real file, one without.
+
+        First item HAS "file" key — catches format string mutants (31, 33).
+        Second item MISSING "file" key — catches default-value mutants (27, 34, 35).
+        Mutant 30 removes the argument entirely — caught by arg count.
+        """
+        logger = logging.getLogger(_LOGGER_NAME)
+        adapter = DepAnalyserAdapter()
+        data = [
+            {"type": "dep-class", "file": "valid.php", "line": 1},
+            {"type": "dep-antipattern"},  # No "file" key
+        ]
+        with patch.object(logger, "debug") as mock_debug:
+            adapter.parse(json.dumps(data))
+
+        vtype_logs = [
+            args for args, _ in mock_debug.call_args_list
+            if "vtype=" in args[0]
+        ]
+        assert len(vtype_logs) >= 2
+
+        # --- FIRST item (HAS "file" key) ---
+        # Catches mutmut_31 (format string mutation) and mutmut_33
+        #   item.get(None, "?") on {"file":"valid.php"} returns "?" (not "valid.php")
+        first_fmt = vtype_logs[0][0]
+        assert first_fmt == "parse: vtype=%r (item=%s)"
+        assert vtype_logs[0][1] == "dep-class"
+        # This assertion alone kills mutmut_31, 33 (arg mismatch on first item)
+        assert vtype_logs[0][2] == "valid.php"
+
+        # --- SECOND item (NO "file" key) ---
+        # Catches mutmut_27 (None), mutmut_34 (None default), mutmut_35 (key="?")
+        assert vtype_logs[1][0] == "parse: vtype=%r (item=%s)"
+        assert vtype_logs[1][1] == "dep-antipattern"
+        assert vtype_logs[1][2] == "?"
+
+    def test_item_with_file_key(self) -> None:
+        """Item with all keys produces correct Finding."""
+        data = [
+            {"type": "dep-class", "file": "x.php", "line": 1},
+        ]
+        findings = DepAnalyserAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].node == "x.php:1"
 
 
 # ===========================================================================

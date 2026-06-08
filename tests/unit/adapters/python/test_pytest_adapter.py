@@ -180,6 +180,78 @@ class TestParse:
         assert isinstance(findings, list)
         assert len(findings) == 0
 
+    def test_parse_failure_empty_message_has_fallback(self) -> None:
+        """<failure/> with no message/text → fallback message contains full_name.
+
+        Kills mutants 84 and 86: when failure has no message attribute and
+        no text, both '' and None fall through to the fallback
+        'Test failed: {full_name}'."""
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase classname="pkg" name="test_x" time="0.1">
+      <failure></failure>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        f = findings[1]
+        assert f.severity == "error"
+        assert f.node == "pkg.test_x"
+        # Message falls back to "Test failed: pkg.test_x" when no message attr and no text
+        assert "Test failed:" in f.message
+        assert "pkg.test_x" in f.message
+
+    def test_parse_failure_no_message_attr_uses_text(self) -> None:
+        """<failure>text only</failure> → text used as message (not None/empty).
+
+        Kills mutants 84, 86, 89: when failure.text is truthy ('boom'),
+        failure.text and "" → "" (mutants) vs failure.text or "" → 'boom' (original).
+        Mutant 86: failure.get("message", None) → None when no attr, then fallback."""
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase classname="mod" name="test_y">
+      <failure>boom</failure>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        f = findings[1]
+        assert f.node == "mod.test_y"
+        # Key assertion: message must be the raw text "boom", not empty or fallback
+        assert f.message == "boom"
+
+    def test_parse_testcase_without_classname_fullname(self) -> None:
+        """testcase missing classname → node is just the name.
+
+        Kills mutants 51/53: when classname default is None or removed,
+        full_name becomes just 'name' (not 'classname.name') since None/''
+        is falsy in the ternary. The classname-less and classname-present
+        cases must produce DIFFERENT nodes."""
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase name="standalone_test">
+      <failure/>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) >= 2
+        f = findings[1]
+        assert f.severity == "error"
+        # Without classname, full_name = just name (not "None.name" or ".name")
+        assert f.node == "standalone_test"
+        assert f.rule_id == "failure"
+        # Message falls back to "Test failed: standalone_test"
+        assert "Test failed:" in f.message
+        assert "standalone_test" in f.message
+
     def test_parse_whitespace_only(self) -> None:
         """Whitespace-only stdout → []"""
         adapter = PytestAdapter()
@@ -253,38 +325,6 @@ line2</failure>
         # Ensure classname is properly used in full_name (kills mutants 51,53,59,61,64)
         assert "mytests.test_mod" in failure.node
         assert ".test_login" in failure.node
-
-    def test_parse_failure_empty_message(self) -> None:
-        """<failure/> with no message/text → fallback message."""
-        adapter = PytestAdapter()
-        xml = """<?xml version="1.0"?>
-<testsuites>
-  <testsuite tests="1" failures="1" errors="0">
-    <testcase classname="pkg" name="test_x" time="0.1">
-      <failure></failure>
-    </testcase>
-  </testsuite>
-</testsuites>"""
-        findings = adapter.parse(xml)
-        assert len(findings) >= 2
-        f = findings[1]
-        assert f.severity == "error"
-        assert f.node == "pkg.test_x"
-
-    def test_parse_failure_no_message_attr(self) -> None:
-        """<failure>text only</failure> → text used as message."""
-        adapter = PytestAdapter()
-        xml = """<?xml version="1.0"?>
-<testsuites>
-  <testsuite tests="1" failures="1" errors="0">
-    <testcase classname="mod" name="test_y">
-      <failure>boom</failure>
-    </testcase>
-  </testsuite>
-</testsuites>"""
-        findings = adapter.parse(xml)
-        f = findings[1]
-        assert f.node == "mod.test_y"
 
     # -- single errors -----------------------------------------------------
 
@@ -457,10 +497,12 @@ line2</failure>
         findings = adapter.parse(xml)
         assert len(findings) >= 2
         f = findings[1]
+        assert f.severity == "error"
+        assert f.rule_id == "failure"
         assert f.node == "standalone_test"
-        # Verify the full_name fallback when classname is falsy
-        # (This helps kill mutants 51/53 by confirming fullname is just name)
-        assert f.node.startswith("standalone_test")
+        # Message must be the fallback when no message attr and no text
+        assert "Test failed:" in f.message
+        assert "standalone_test" in f.message
 
     def test_parse_multiple_test_suites(self) -> None:
         """Multiple <testsuite> elements → all testcases parsed."""
@@ -532,6 +574,28 @@ line2</failure>
         assert f.tool == "pytest"
         assert f.layer == "L1"
         assert f.language == "python"
+
+
+# ---------------------------------------------------------------------------
+# parse() — signature/defaults verification (kills default-param mutants)
+# ---------------------------------------------------------------------------
+
+class TestDefaults:
+    def test_parse_signature_defaults(self) -> None:
+        """Default parameter values: stderr="", exitcode=0.
+
+        Kills mutant 1: if stderr default is mutated to "XXXX", this
+        assert strictly requires the default to be an empty string.
+        """
+        import inspect
+        from harness_quality_gate.adapters.python.pytest_adapter import (
+            PytestAdapter,
+        )
+
+        sig = inspect.signature(PytestAdapter.parse)
+        params = sig.parameters
+        assert params["stderr"].default == ""
+        assert params["exitcode"].default == 0
 
     def test_parse_exitcode_default_zero(self) -> None:
         """exitcode=0 (default) → no exitcode Finding."""

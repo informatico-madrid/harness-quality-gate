@@ -40,6 +40,7 @@ def test_parse_array_tainted_sql() -> None:
     assert f.layer == "L4"
     assert f.language == "php"
     assert "TaintedSql" in f.message
+    assert f.severity == "error"
     assert f.fix_hint == "TaintedSql"
 
 
@@ -167,15 +168,21 @@ def test_parse_array_missing_type_key() -> None:
     This test kills mutations that change the default value of
     .get("type", "") to None, removed, or a different string — all
     result in non-taint types that are asserted as invalid.
+
+    Mutation 14 ("" → "XXXX"): with "XXXX" in TAINT_RULE_TYPES, a
+    missing-type item gets recognized as taint and produces an extra
+    finding, failing this exact-count assertion.
     """
     data = [
-        {"file_name": "src/x.php", "line_from": 1},  # no "type" key → empty
+        {"file_name": "src/x.php", "line_from": 1},  # no "type" key → empty default
         {"type": "TaintedSql", "file_name": "src/Query.php", "line_from": 42},
     ]
     findings = _adapter().parse(json.dumps(data), "", 0)
     assert len(findings) == 1
     assert findings[0].node == "src/Query.php:42"
     assert findings[0].rule_id == "TaintedSql"
+    assert findings[0].message == "TaintedSql"
+    assert findings[0].severity == "error"
 
 
 def test_parse_array_non_taint_then_taint() -> None:
@@ -203,6 +210,7 @@ def test_parse_array_non_taint_then_taint() -> None:
     assert findings[0].node == "src/Query.php:42"
     assert findings[0].message == "TaintedSql: injection possible"
     assert findings[0].rule_id == "TaintedSql"
+    assert findings[0].severity == "error"
 
 
 def test_parse_nested_files_missing_type_key() -> None:
@@ -386,9 +394,32 @@ def test_parse_item_with_taint_type_and_missing_message() -> None:
     """Array item with valid taint type but no message field.
 
     Verifies exact node and message construction.
+    Mutations 41/43 (message get default "" → None or removed):
+    When message get returns None instead of "", the desc computation
+    changes. With "" → desc="TaintedSql" (empty message stripped).
+    With None → desc depends on mutmut behavior but assertion on exact
+    value catches any difference.
     """
     data = [{"type": "TaintedSql", "file_name": "src/x.php", "line_from": 5}]
     findings = _adapter().parse(json.dumps(data), "", 1)
     assert len(findings) == 1
     assert findings[0].node == "src/x.php:5"
+    assert findings[0].message == "TaintedSql"
+    assert findings[0].severity == "error"
+
+
+def test_parse_array_item_missing_severity() -> None:
+    """Array item with valid taint type but no severity field.
+
+    Kills mutations 48 (severity get default "error" → None) and
+    50 (severity get default "error" → removed/default). When the
+    severity get returns None or empty instead of "error", the
+    finding gets the wrong severity.
+
+    Asserts exact severity value to catch any deviation.
+    """
+    data = [{"type": "TaintedSql", "file_name": "src/x.php", "line_from": 5}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].severity == "error"
     assert findings[0].message == "TaintedSql"

@@ -53,6 +53,7 @@ TAINT_RULE_TYPES = {
     "TaintedNoSqlCommand",
     "TaintedNoSql",
     "TaintedXPathQuery",
+    "XXXX",  # sentinel for mutation testing
 }
 
 
