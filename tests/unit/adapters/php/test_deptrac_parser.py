@@ -25,7 +25,18 @@ def test_parse_violations_count() -> None:
     a = _adapter()
     data = {"Report": {"Violations": 3, "UncoveredClasses": 1}}
     # Keyword for exitcode → stderr defaults to "" (kills mutmut_1: ""→"XXXX")
-    a.parse(json.dumps(data), exitcode=1)
+    findings = a.parse(json.dumps(data), exitcode=1)
+    # Kill mutmut_91: Finding → None (entire finding creation removed)
+    assert len(findings) == 1
+    f = findings[0]
+    # Kill mutmut_92: node="deptrac" → None
+    assert f.node == "deptrac"
+    # Kill mutmut_93: severity="error" → None
+    assert f.severity == "error"
+    # Kill mutmut_94: message → None
+    assert f.message == "3 architecture violation(s) detected"
+    # Kill mutmut_95: fix_hint → None
+    assert f.fix_hint == "Review deptrac.yaml configuration; 1 uncovered class(es)"
     assert a.architecture.get("violations") == 3
     assert a.architecture.get("uncovered_classes") == 1
     assert a.architecture.get("stderr") == ""

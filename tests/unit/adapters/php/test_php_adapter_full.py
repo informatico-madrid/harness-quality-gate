@@ -1025,12 +1025,30 @@ class TestRunL1InfectionPaths:
         env = {"HARNESS_INFECTION_REQUIRED": "1"}
         result = adapter.run_l1(tmp_path, env)
         assert result.layer == "L1"
-        assert any("HARNESS_INFECTION_REQUIRED" in f.message for f in result.findings)
+        assert result.language == "php"
+        # === Mutant-killing assertions for ALL 6 survivors ===
+
+        # --- Mutants 174, 178, 179, 184: field mutations on HARNESS_INFECTION_REQUIRED Finding ---
+        # mutmut_174: node="infection" → "" (empty string)
+        # mutmut_178: layer="L1" → "" (empty string)
+        # mutmut_179: language="php" → "" (empty string)
+        # mutmut_184: layer param removed → layer=None (dataclass default)
         inf_f = [f for f in result.findings if "HARNESS_INFECTION_REQUIRED" in f.message]
-        assert len(inf_f) == 1
-        assert inf_f[0].node == "infection"
-        assert inf_f[0].layer == "L1"
-        assert inf_f[0].language == "php"
+        assert len(inf_f) == 1, (
+            "Mut114/Mut174: HARNESS_INFECTION_REQUIRED Finding must be present "
+            "(Mut114: mutation_stats=\"\" causes missing check; Mut174: node=\"infection\")"
+        )
+        # Verify exact field values — each kills a specific mutant
+        assert inf_f[0].node == "infection"  # Mut174: kills "" → not equal to "infection"
+        assert inf_f[0].layer == "L1"  # Mut178: kills "" → Mut184: kills None (default)
+        assert inf_f[0].language == "php"  # Mut179: kills "" → not equal to "php"
+        # Additional field assertions to catch mutations on other fields of this Finding
+        assert inf_f[0].severity == "error"  # kills severity mutations
+        assert inf_f[0].tool == "infection"  # kills tool mutations
+        # Exact message check kills string mutations on the message
+        assert inf_f[0].message.startswith(
+            "Infection mutation gate required but unavailable"
+        ), "Mut174/178/179/184: message must start with exact text"
 
     def test_infection_not_required_when_missing(self, tmp_path, caplog):
         """Kill logger mutations (mutmut_21-24) on _run_infection unavailable path.
@@ -3331,3 +3349,94 @@ class TestPhpWeakTestLayerAdapter:
         adapter = PhpWeakTestLayerAdapter()
         result = adapter.run_l3b(tmp_path, {})
         assert result.layer == "L3B"
+
+
+# ===========================================================================
+# run_l3a — Tier-A (PHPStan + PHPMD + php-cs-fixer + tier-A visitors)
+# ===========================================================================
+
+class TestRunL3a:
+    """Kill mutmut_86, 87, 88, 89 (php-cs-fixer logger) and mutmut_92, 93 (skip logger)."""
+
+    def test_success_path_kills_86_87_88_89(self, tmp_path, caplog):
+        """Assert exact php-cs-fixer logger output to kill all 4 string-param mutations.
+
+        Kills:
+        - mutmut_86:   logger.info(fmt, arg) → logger.info(arg) — msg becomes just a number
+        - mutmut_87:   logger.info(fmt, arg) → logger.info(fmt,) — no arg → no count in msg
+        - mutmut_88:   "XX...XX" decoration — msg contains XX
+        - mutmut_89:   lowercase "l3a" — msg starts with "l3a" not "L3A"
+        """
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = _make_mock_adapter()
+        # Override parse to return 1 finding (so len(cs_findings) >= 1)
+        adapter._cs_fixer.parse.return_value = [Finding(
+            node="src/Foo.php", severity="warning", message="style issue", tool="php-cs-fixer"
+        )]
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.layer == "L3A"
+        assert result.language == "php"
+        assert result.passed is False
+
+        # --- Kill mutmut_86, 87, 88, 89 ---
+        cs_logs = [m for m in caplog.messages
+                   if "php-cs-fixer" in m and "findings" in m]
+
+        # Mut86: fmt removed → logger.info(len(cs_findings)) → message is just "1"
+        #         "1" does NOT start with "L3A" → killed
+        assert len(cs_logs) >= 1, (
+            f"Mut86/87/88/89: Expected php-cs-fixer log, got: {caplog.messages}"
+        )
+        assert cs_logs[0].startswith("L3A php-cs-fixer:"), (
+            "Mut86: Format-arg removed — message is bare number, not 'L3A php-cs-fixer: N findings'"
+        )
+        # Mut87: arg removed → no number in message → kills when check for digit presence
+        assert any(c.isdigit() for c in cs_logs[0]), (
+            "Mut87: Argument removed — count number missing from log message"
+        )
+        # Mut88: "XX...XX" decoration
+        assert "XX" not in cs_logs[0], (
+            "Mut88: XX decoration inserted into log message"
+        )
+        # Mut89: lowercase "l3a" instead of "L3A"
+        assert not cs_logs[0].startswith("l3a"), (
+            "Mut89: Log message starts with lowercase 'l3a' instead of 'L3A'"
+        )
+        # Exact format check kills both Mut86 (no fmt) and Mut87 (no arg)
+        assert cs_logs[0].startswith("L3A php-cs-fixer:") and any(
+            c.isdigit() for c in cs_logs[0]
+        ), (
+            "Mut86/87: Log format must be 'L3A php-cs-fixer: N findings'"
+        )
+
+    def test_runtime_error_kills_92_93(self, tmp_path, caplog):
+        """Assert warn log for skipped php-cs-fixer to kill exc param mutations.
+
+        Kills:
+        - mutmut_92: logger.warning(fmt, None) — message says "None" not exception text
+        - mutmut_93: logger.warning(exc) — message is "<RuntimeError: ...>" not format prefix
+        """
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = _make_mock_adapter()
+        # Make php-cs-fixer invoke raise RuntimeError
+        adapter._cs_fixer.invoke.side_effect = RuntimeError("no such tool")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.layer == "L3A"
+        assert result.language == "php"
+
+        # --- Kill mutmut_92, 93 ---
+        skip_logs = [m for m in caplog.messages if "php-cs-fixer skipped" in m]
+        assert len(skip_logs) >= 1, (
+            f"Mut92/93: Expected php-cs-fixer skipped warning, got: {caplog.messages}"
+        )
+        # Mut93: logger.warning(exc) → message is "<RuntimeError(...)> not format prefix
+        assert skip_logs[0].startswith("L3A php-cs-fixer skipped:"), (
+            "Mut93: Format string removed — message is raw exc, not format prefix"
+        )
+        # Mut92: logger.warning(fmt, None) → "L3A php-cs-fixer skipped: None"
+        #        Original contains exception text "no such tool", mutant is "None"
+        assert "no such tool" in skip_logs[0], (
+            "Mut92: Exception replaced with None — log says 'None' not actual exception text"
+        )
