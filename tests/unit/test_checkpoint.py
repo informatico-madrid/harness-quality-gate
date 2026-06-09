@@ -336,6 +336,117 @@ def test_build_findings_default_empty_list(good_detection: dict) -> None:
     assert result2["layers"][0]["findings"] == []
 
 
+def test_build_with_layer_per_language_exact_value(good_detection: dict) -> None:
+    """Kill 'per_language' key mutation (mutmut_21).
+    The exact key name must be preserved; otherwise the layer entry won't have
+    the expected per_language data."""
+    layer_dict = {
+        "layer": "L3A",
+        "language": "python",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 0.5,
+        "per_language": {"python": {"passed": True, "msi": 95.5}},
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    entry = result["layers"][0]
+    # Assert per_language exact value and exact key — kills key-mutation mutants
+    assert "per_language" in entry
+    assert entry["per_language"]["python"]["passed"] is True
+    assert entry["per_language"]["python"]["msi"] == 95.5
+
+
+def test_build_with_layer_tool_specific_exact_value(good_detection: dict) -> None:
+    """Kill 'tool_specific' key mutation (mutmut_28).
+    The exact key name must be preserved."""
+    layer_dict = {
+        "layer": "L1",
+        "language": "python",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 1.0,
+        "tool_specific": {"version": "2.0", "flags": ["--strict"]},
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    entry = result["layers"][0]
+    assert "tool_specific" in entry
+    assert entry["tool_specific"]["version"] == "2.0"
+    assert entry["tool_specific"]["flags"] == ["--strict"]
+
+
+def test_detection_has_no_optional_mutation_field(good_detection: dict) -> None:
+    """Kill 'mutation' key mutation in detection (mutmut_46, 77, 78, 79, 87, 94).
+    These mutations affect detection.get("mutation") or if mutation is not None.
+    When no mutation is provided, output should NOT have 'mutation' key.
+    """
+    result = build(
+        [{"layer": "L3A", "language": "python", "passed": True, "findings": [], "duration_sec": 0.0}],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    # No mutation in detection → no 'mutation' in output
+    assert "mutation" not in result
+
+
+def test_detection_with_mutation_field(good_detection: dict) -> None:
+    """Kill 'mutation' key mutation (mutmut_46).
+    When mutation IS in detection, output must have 'mutation' with correct value."""
+    detection_with_mutation = {
+        "repo_path": "/tmp/test",
+        "language": "python",
+        "framework": None,
+        "confidence": 0.95,
+        "mutation": {"total": 100, "killed": 95, "msi": 95.0},
+    }
+    result = build(
+        [{"layer": "L3A", "language": "python", "passed": True, "findings": [], "duration_sec": 0.0}],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        detection_with_mutation,
+    )
+    # mutation IS in detection → must appear in output
+    assert "mutation" in result
+    assert result["mutation"]["total"] == 100
+    assert result["mutation"]["msi"] == 95.0
+
+
+def test_build_duration_sec_zero_keeps_zero(good_detection: dict) -> None:
+    """Kill 'duration_sec or 0.0 → 1.0' mutation (mutmut_46).
+
+    When a layer dict provides duration_sec=0.0, the 'or 0.0' clause
+    would evaluate to the mutated value (1.0). Assert exact value to kill it.
+    """
+    layer_dict = {
+        "layer": "L1",
+        "language": "php",
+        "passed": True,
+        "findings": [],
+        "duration_sec": 0.0,
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    assert result["layers"][0]["duration_sec"] == 0.0, (
+        f"Duration sec must be 0.0, got: {result['layers'][0]['duration_sec']}"
+    )
+
+
+def test_build_timestamp_is_valid_iso8601(good_detection: dict) -> None:
+    """Kill 'timezone.utc → None' and strftime format mutations (mutmut_77, 78, 79).
+
+    The timestamp must be a valid ISO 8601 date-time string. Changes to the format
+    ('XX...', '%y-%m-%dt%h:%m:%sz') or timezone (None) would produce an invalid
+    or different ISO string that this assertion catches.
+    """
+    result = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    ts = result["timestamp"]
+    # Must be a non-empty string matching ISO 8601 format YYYY-MM-DDTHH:MM:SSZ
+    assert isinstance(ts, str)
+    assert len(ts) == 20  # "2026-06-09T12:00:00Z"
+    # Must match ISO 8601 pattern: YYYY-MM-DDTHH:MM:SSZ
+    import re
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", ts), (
+        f"Expected ISO 8601 timestamp, got: {ts}"
+    )
+
+
 def test_write_atomic_cleanup_on_fdopen_failure(good_detection: dict, tmp_path: Path) -> None:
     """Kill the 'BaseException after mkstemp → no cleanup' mutation in write().
 
@@ -354,3 +465,37 @@ def test_write_atomic_cleanup_on_fdopen_failure(good_detection: dict, tmp_path: 
     assert not target.exists()
     # Temp file must be cleaned up — no .quality-gate-*.tmp leftovers
     assert list(tmp_path.glob(".quality-gate-*.tmp")) == []
+
+
+def test_build_layer_missing_layer_key_uses_empty_string(good_detection: dict) -> None:
+    """Kill lr.get('layer') → lr.get('layer') or 'XXXX' fallback mutation (mutmut_21).
+
+    When the layer dict is missing the 'layer' key entirely, lr.get() returns None,
+    and the fallback '' vs 'XXXX' is exercised. Assert it must be exactly ''."""
+    layer_dict = {
+        "language": "python",  # 'layer' intentionally omitted
+        "passed": True,
+        "findings": [],
+        "duration_sec": 0.0,
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    assert result["layers"][0]["layer"] == "", (
+        f"Missing 'layer' should default to empty string, got: {result['layers'][0]['layer']!r}"
+    )
+
+
+def test_build_layer_missing_language_key_uses_empty_string(good_detection: dict) -> None:
+    """Kill lr.get('language') → lr.get('language') or 'XXXX' fallback mutation (mutmut_28).
+
+    When the layer dict is missing the 'language' key entirely, lr.get() returns None,
+    and the fallback '' vs 'XXXX' is exercised. Assert it must be exactly ''."""
+    layer_dict = {
+        "layer": "L3A",
+        "passed": True,  # 'language' intentionally omitted
+        "findings": [],
+        "duration_sec": 0.0,
+    }
+    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    assert result["layers"][0]["language"] == "", (
+        f"Missing 'language' should default to empty string, got: {result['layers'][0]['language']!r}"
+    )

@@ -74,15 +74,15 @@ class BanditAdapter(ToolAdapter):
         for issue in issues:
             if not isinstance(issue, dict):
                 continue
-            filename = issue.get("filename", "")
-            issue_id = issue.get("issue_id", "")
-            severity_raw = issue.get("issue_severity", "MEDIUM")
-            message = issue.get("issue_text", "")
+            filename = issue.get("filename") or ""
+            issue_id = issue.get("issue_id") or ""
+            severity_raw = issue.get("issue_severity") or "MEDIUM"
+            message = issue.get("issue_text") or ""
             line_no = issue.get("line_number") or 0
             cwe = issue.get("cwe") or {}
             cwe_id = ""
             if isinstance(cwe, dict):
-                cwe_id = cwe.get("id", "") or cwe.get("link", "")
+                cwe_id = cwe.get("id") or cwe.get("link") or ""
             elif isinstance(cwe, str):
                 cwe_id = cwe
             detail = f"{filename}:{line_no} [{issue_id}]: {message}"

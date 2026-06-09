@@ -90,7 +90,7 @@ class DeptryAdapter(ToolAdapter):
             for item in items:
                 if isinstance(item, dict):
                     module = item.get("module", item.get("name", ""))
-                    filepath = item.get("filepath", "")
+                    filepath = item.get("filepath") or ""
                     line = item.get("line") or item.get("line_no") or 0
                 else:
                     module = str(item)

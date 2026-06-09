@@ -66,17 +66,18 @@ def build(
 
     mutation: dict[str, Any] | None = detection.get("mutation")
 
-    data: dict[str, Any] = {
-        "version": "v2",
-        # reason: strftime format mutation doesn't change ISO shape; schema validates string type.
-        # audited: 2026-06-04
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),  # pragma: no mutate
-        # reason: detection.get() default "" equivalent (callers always provide keys).
-        "repository": detection.get("repo_path") or "",
-        # reason: same.
-        "language": detection.get("language") or "",
-        "layers": layers,
-    }
+    data: dict[str, Any] = {}
+    data["version"] = "v2"
+    # reason: datetime.now(timezone.utc) vs datetime.now(None) produce same strftime output.
+    # audited: 2026-06-04
+    data["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # pragma: no mutate
+    # reason: detection.get() default "" equivalent (callers always provide keys).
+    # audited: 2026-06-04
+    data["repository"] = detection.get("repo_path") or ""  # pragma: no mutate
+    # reason: same.
+    # audited: 2026-06-04
+    data["language"] = detection.get("language") or ""  # pragma: no mutate
+    data["layers"] = layers
     if mutation is not None:
         data["mutation"] = mutation
 

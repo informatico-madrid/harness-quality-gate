@@ -34,8 +34,11 @@ def _make_args(**kwargs):
     return argparse.Namespace(**defaults)
 
 
-def _make_layer(*, passed: bool = True, layer: str = "L3A", language: str = "python") -> LayerResult:
-    return LayerResult(layer=layer, language=language, passed=passed, findings=[], duration_sec=0.0)
+def _make_layer(*, passed: bool = True, layer: str = "L3A", language: str = "python", tool_specific: dict | None = None) -> LayerResult:
+    return LayerResult(
+        layer=layer, language=language, passed=passed, findings=[],
+        duration_sec=0.0, tool_specific=tool_specific,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +223,31 @@ class TestCmdAll:
         out = json.loads(capsys.readouterr().out)
         assert "layers" in out
         assert out["language"] == "python"
+
+    def test_layer_with_tool_specific_included_in_checkpoint(self, tmp_path, capsys):
+        """Kill tool_specific branch (cli.py:146-147): a non-None tool_specific
+        is included in the layer dict sent to write_checkpoint."""
+        tool_specific = {"phpunit_version": "10.5.0", "infection_msi": 100.0}
+        adapter = MagicMock()
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, method).return_value = _make_layer(
+                layer=method.replace("run_", "").upper(),
+                language="php",
+                passed=True,
+                tool_specific=tool_specific,
+            )
+        with (
+            patch("harness_quality_gate.cli.PhpAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint") as mock_write,
+        ):
+            (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
+            code = _cmd_all(_make_args(repo=str(tmp_path)))
+        assert code == PASS
+        # Verify write_checkpoint was called with a checkpoint dict containing tool_specific
+        call_args = mock_write.call_args
+        checkpoint_dict = call_args.args[1]
+        l3a = next(ly for ly in checkpoint_dict["layers"] if ly.get("layer") == "L3A")
+        assert l3a.get("tool_specific") == tool_specific
 
     def test_nonexistent_repo_quiet_suppresses_output(self, tmp_path, capsys):
         """Kill quiet=args.quiet→None on the nonexistent-repo error path."""

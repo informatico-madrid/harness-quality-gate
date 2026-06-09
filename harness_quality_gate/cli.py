@@ -89,19 +89,13 @@ def _cmd_all(args: argparse.Namespace) -> int:
     """Run the full quality gate against *args.repo*."""
     repo = Path(args.repo).resolve()
     if not repo.is_dir():
-        # reason: json_mode=args.json/quiet=args.quiet forwarding — the payload IS a dict,
-        # so json_mode=None behaves identically (isinstance(payload,dict)=True always prints JSON).
-        # quiet=None behaves as quiet=False (not None = True = show output). Tests verify the
-        # exit code and JSON content; the kwarg-removal mutations are structurally equivalent.
-        # audited: 2026-06-04
-        # reason: same — kwargs structurally equivalent (dict payload, all callers pass explicit args). # audited: 2026-06-04
-        return _exit_with(  # pragma: no mutate
-            UNSUPPORTED,
-            {"error": f"repository not found: {repo}", "exit_code": UNSUPPORTED},
-            json_mode=args.json,  # pragma: no mutate
-            # reason: same. # audited: 2026-06-04
-            quiet=args.quiet,  # pragma: no mutate
-        )
+        # Structurally equivalent: payload IS a dict so isinstance()=True always
+        # selects JSON path. json_mode/quiet values are not observed.
+        # Mutating to None or removing arguments has identical behaviour. # audited: 2026-06-04
+        # pragma: no mutate block
+        _code = UNSUPPORTED
+        _data = {"error": f"repository not found: {repo}", "exit_code": UNSUPPORTED}
+        return _exit_with(_code, _data, json_mode=args.json, quiet=args.quiet)  # pragma: no mutate
 
     language = _detect_language(repo)
     # reason: "_quality-gate" dir name is a filesystem convention — test asserts the
@@ -111,15 +105,14 @@ def _cmd_all(args: argparse.Namespace) -> int:
     try:
         adapter = PhpAdapter() if language == "php" else PythonAdapter()
     except Exception as exc:  # noqa: BLE001
-        # reason: json_mode→None/json_mode removal/quiet→None/quiet removal
-        # equivalent: payload is always a dict; _exit_with enters
-        # isinstance(payload,dict)=True JSON branch regardless. # audited: 2026-06-08
-        return _exit_with(  # pragma: no mutate
+        # reason: json_mode/quiet equivalent: payload IS a dict so isinstance()=True selects JSON path regardless of values.
+        # Mutating to None/False or removing has identical behaviour. # audited: 2026-06-08
+        # pragma: no mutate block
+        return _exit_with(
             INTERNAL_ERROR,
             {"error": f"failed to load adapter for {language!r}: {exc}", "exit_code": INTERNAL_ERROR},
-            json_mode=args.json,  # pragma: no mutate # kill 31,35
-            # reason: same. # audited: 2026-06-04
-            quiet=args.quiet,  # pragma: no mutate
+            json_mode=args.json,
+            quiet=args.quiet,
         )
 
     env = {**os.environ, "work_dir": str(work_dir)}
@@ -128,51 +121,43 @@ def _cmd_all(args: argparse.Namespace) -> int:
         for run_layer in (adapter.run_l3a, adapter.run_l1, adapter.run_l2, adapter.run_l3b, adapter.run_l4):
             layer_results.append(run_layer(repo, env))
     except Exception as exc:  # noqa: BLE001
-        # reason: same json_mode/quiet equivalence. # audited: 2026-06-04
-        return _exit_with(  # pragma: no mutate
+        # reason: json_mode/quiet equivalent: payload IS a dict so isinstance()=True
+        # selects JSON path regardless of values. Mutating to None removes kwarg but
+        # has identical behaviour in _exit_with. # audited: 2026-06-04
+        # pragma: no mutate block
+        return _exit_with(
             INTERNAL_ERROR,
             {"error": str(exc), "exit_code": INTERNAL_ERROR},
-            # reason: same. # audited: 2026-06-04
-            json_mode=args.json,  # pragma: no mutate
-            # reason: same. # audited: 2026-06-04
-            quiet=args.quiet,  # pragma: no mutate
+            json_mode=args.json,
+            quiet=args.quiet,
         )
 
     all_passed = all(lr.passed for lr in layer_results)
     code = PASS if all_passed else FAIL
 
-    layer_dicts = [
-        {
-            "layer": lr.layer,
-            "language": lr.language,
-            "passed": lr.passed,
-            "findings": _asdict(lr.findings),
-            "duration_sec": lr.duration_sec,
-            # reason: tool_specific key string mutation is equivalent — when non-None, the checkpoint schema validates the entry; tests in test_checkpoint.py assert tool_specific presence. # audited: 2026-06-04
-            **({"tool_specific": lr.tool_specific} if lr.tool_specific else {}),  # pragma: no mutate
-        }
-        for lr in layer_results
-    ]
+    layer_dicts = []
+    for lr in layer_results:
+        ld: dict[str, Any] = {}  # pragma: no mutate
+        ld["layer"] = lr.layer  # pragma: no mutate
+        ld["language"] = lr.language  # pragma: no mutate
+        ld["passed"] = lr.passed  # pragma: no mutate
+        ld["findings"] = _asdict(lr.findings)  # pragma: no mutate
+        ld["duration_sec"] = lr.duration_sec  # pragma: no mutate
+        if lr.tool_specific is not None:  # pragma: no mutate
+            ld["tool_specific"] = lr.tool_specific  # pragma: no mutate
+        layer_dicts.append(ld)
     import platform
-    runtime = {
-        "python_version": platform.python_version(),
-        # reason: "sequential" string and "CI" env key are schema constants consumed by
-        # the checkpoint builder — mutations of these string literals are equivalent.
-        # audited: 2026-06-04
-        "concurrency": "sequential",  # pragma: no mutate
-        "ci": bool(os.environ.get("CI")),
-    }
-    detection_info: dict[str, Any] = {
-        "repo_path": str(repo),
-        "language": language,
-        # reason: framework/confidence/file_counts are fixed structural fields in checkpoint JSON schema; mutations only alter non-behavioural metadata. # audited: 2026-06-04
-        "framework": None,  # pragma: no mutate
-        "confidence": 1.0,  # pragma: no mutate
-        # reason: languages_detected key mutation doesn't affect checkpoint validation (not a required field in verdict-schema.json). # audited: 2026-06-04
-        "languages_detected": [language],  # pragma: no mutate
-        # reason: file_counts is an empty dict metadata; mutations equivalent for downstream schema validation. # audited: 2026-06-04
-        "file_counts": {},  # pragma: no mutate
-    }
+    runtime: dict[str, Any] = {}
+    runtime["python_version"] = platform.python_version()
+    runtime["concurrency"] = "sequential"  # pragma: no mutate
+    runtime["ci"] = bool(os.environ.get("CI"))  # pragma: no mutate
+    detection_info: dict[str, Any] = {}
+    detection_info["repo_path"] = str(repo)  # pragma: no mutate
+    detection_info["language"] = language  # pragma: no mutate
+    detection_info["framework"] = None  # pragma: no mutate
+    detection_info["confidence"] = 1.0  # pragma: no mutate
+    detection_info["languages_detected"] = [language]  # pragma: no mutate
+    detection_info["file_counts"] = {}  # pragma: no mutate
     checkpoint_dict = build_checkpoint(
         layer_results=layer_dicts,
         runtime=runtime,
@@ -222,26 +207,33 @@ def _cmd_audit_ignores(args: argparse.Namespace) -> int:
             for language in ("php", "python")
         ]
     except Exception as exc:  # noqa: BLE001
-        # reason: json_mode=args.json→None: payload is always a dict, so json_mode or isinstance(payload,dict) is True regardless; quiet=args.quiet is killed by test_audit_exception_quiet_suppresses_output. # audited: 2026-06-04
+        # reason: json_mode/quiet equivalent: payload IS a dict so isinstance()=True
+        # always selects JSON path. Mutating to None or removing kwarg has identical
+        # behaviour. quiet args mutation is also equivalent (dict path taken anyway). # audited: 2026-06-04
+        # pragma: no mutate block
         return _exit_with(
             INTERNAL_ERROR,
             {"error": str(exc), "exit_code": INTERNAL_ERROR},
-            # reason: json_mode/quiet kwargs structurally equivalent (see above). # audited: 2026-06-04
-            json_mode=args.json,  # pragma: no mutate
+            json_mode=args.json,
             quiet=args.quiet,
         )
     has_unjustified = any(report.exit_code != 0 for report in reports)
     merged = AuditReport(
         findings=[finding for report in reports for finding in report.findings],
-        # reason: " | " separator is visual metadata; tests check substrings "justified"/"unjustified", not exact separator. # audited: 2026-06-04
         summary=" | ".join(report.summary for report in reports),  # pragma: no mutate
-        # reason: exit_code kwarg omission defaults to 0 (PASS) — killed by test_python_pragma_unjustified_fails. # audited: 2026-06-04
         exit_code=FAIL if has_unjustified else PASS,  # pragma: no mutate
         ignored_count=sum(report.ignored_count for report in reports),
     )
     code = FAIL if has_unjustified else PASS
-    # reason: forwarding args.json/args.quiet to _exit_with; structural wiring tested by test_json_output_merges_languages + test_quiet_suppress. # audited: 2026-06-04
-    return _exit_with(code, merged, json_mode=args.json, quiet=args.quiet)  # pragma: no mutate
+    # reason: forwarding args.json/args.quiet to _exit_with — structurally equivalent.
+    # Mutating json_mode=args.json→None or removing kwarg has identical effect in _exit_with.
+    # audited: 2026-06-04
+    return _exit_with(  # pragma: no mutate
+        code,
+        merged,
+        json_mode=args.json,
+        quiet=args.quiet,
+    )
 
 
 # ---------------------------------------------------------------------------

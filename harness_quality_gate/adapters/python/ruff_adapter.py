@@ -71,12 +71,12 @@ class RuffAdapter(ToolAdapter):
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            code = entry.get("code", "") or entry.get("rule", "")
-            filename = entry.get("filename", "")
+            code = entry.get("code") or entry.get("rule") or ""
+            filename = entry.get("filename") or ""
             location = entry.get("location") or {}
             line = location.get("row") or 0
             col = location.get("column") or 0
-            message = entry.get("message", "")
+            message = entry.get("message") or ""
             fix = entry.get("fix") or {}
             fix_hint = None
             if isinstance(fix, dict):

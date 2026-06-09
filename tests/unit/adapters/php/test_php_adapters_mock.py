@@ -5017,6 +5017,73 @@ class TestPhpAntipatternTierAAdapter:
             "Merged output must contain PHPMD source findings"
         )
 
+    def test_parse_priority_default_3(self) -> None:
+        """Parse item with 'source' and 'rule' but no priority — priority defaults to 3.
+
+        Kills mutmut_8/9: .get("priority", 3) → .get("priority", None/4).
+        priority 3 maps to severity "minor". priority 1 → "critical", 2 → "major".
+        If default mutates to 1, priority would be 1 → "critical" → fails assertion.
+        If mutates to 4, priority would be 4 → "info" → fails.
+        If mutates to None, isinstance check catches it.
+        """
+        from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
+            PhpAntipatternTierAAdapter,
+        )
+        data = [
+            {
+                "source": "phpmd",
+                "file": "src/DefaultPri.php",
+                "rule": "TestRule",
+                "description": "default priority",
+                "line": 5,
+                # "priority" key deliberately missing
+            }
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        # priority 3 → severity "minor"
+        assert findings[0].severity == "minor"
+
+    def test_parse_priority_values_map_to_severity(self) -> None:
+        """Priority 1-5 must map to correct severity strings.
+
+        Kills mutations in _priority_to_severity mapping function.
+        If priority mapping is mutated, severity assertions fail.
+        """
+        from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
+            PhpAntipatternTierAAdapter,
+        )
+        data = [
+            {"source": "phpmd", "file": "a.php", "rule": "R1", "description": "d", "line": 1, "priority": 1},
+            {"source": "phpmd", "file": "b.php", "rule": "R2", "description": "d", "line": 2, "priority": 2},
+            {"source": "phpmd", "file": "c.php", "rule": "R3", "description": "d", "line": 3, "priority": 5},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 3
+        assert findings[0].severity == "critical"   # priority 1
+        assert findings[1].severity == "major"      # priority 2
+        assert findings[2].severity == "info"       # priority 5
+
+    def test_parse_missing_fields_defaults(self) -> None:
+        """Parse item with missing description, rule_id — asserts exact defaults.
+
+        Catches mutations on description default ("" vs None) and rule_id default.
+        """
+        data = [
+            {
+                "source": "phpmd",
+                "file": "src/Default.php",
+                "priority": 3,
+                # missing "description" key
+                # missing "rule" key
+            }
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.rule_id == ""  # rule default
+        assert f.message == ""  # no description → message is empty
+
 # ═══════════════════════════════════════════════════════════════════════
 # Kill composer_audit_adapter.py mutations
 # ═══════════════════════════════════════════════════════════════════════

@@ -267,14 +267,46 @@ def test_unjustified_finding_message_is_non_none(tmp_path: Path) -> None:
     assert "pragma" in unjustified[0].message or "Unjustified" in unjustified[0].message
 
 
+def test_unjustified_finding_exact_line_number(tmp_path: Path) -> None:
+    """Kill 'at line {i + 1}' → 'at line {i - 1}' and 'at line {i + 2}' mutations
+    (mutmut_52, 53) by asserting exact line number in unjustified message.
+
+    The pragma is on line 1 (single-line file). So i=0, and the message should say
+    'at line 1'. Mutations: i+1=1 → i-1=-1 (message: 'at line -1')
+    or i+1=1 → i+2=2 (message: 'at line 2'). Both would fail this assertion."""
+    _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
+    report = AllowListAuditor(language="python").audit(tmp_path)
+    assert report.exit_code == 1
+    unjustified = [f for f in report.findings if f.severity == "warning"]
+    assert len(unjustified) == 1, (
+        f"Expected 1 unjustified finding, got: {unjustified} (exit_code={report.exit_code})"
+    )
+    assert "at line 1" in unjustified[0].message, (
+        f"Expected 'at line 1', got: {unjustified[0].message}"
+    )
+
+
 def test_unjustified_finding_fix_hint_is_non_none(tmp_path: Path) -> None:
-    """Kill fix_hint=None and fix_hint removal mutations."""
+    """Kill fix_hint=None, fix_hint removal, and fix_hint string mutations (mutmut_54, 55).
+
+    The fix_hint must be the exact expected string — not mutated with "XX" prefix/suffix
+    (mutmut_54: "XXAdd # reason: ... XX") or case change (mutmut_55: "add # reason: ...").
+    """
     _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
     report = AllowListAuditor(language="python").audit(tmp_path)
     unjustified = [f for f in report.findings if f.severity == "warning"]
     assert unjustified
     assert unjustified[0].fix_hint is not None
-    assert "reason" in unjustified[0].fix_hint
+    fix_hint = unjustified[0].fix_hint
+    # Kill mutmut_54: exact string "Add # reason" must be present (not "XXAdd ... XX")
+    assert "Add # reason" in fix_hint, (
+        f"Expected 'Add # reason' in fix_hint, got: {fix_hint}"
+    )
+    # Kill mutmut_55: the fix_hint must NOT be lowercase "add # reason"
+    # The mutation changes "Add" → "add". Assert it starts with "Add " not "add "
+    assert fix_hint.lstrip().startswith("Add #"), (
+        f"Expected 'Add' (capitalized), got: {fix_hint}"
+    )
 
 
 def test_default_language_is_php(tmp_path: Path) -> None:

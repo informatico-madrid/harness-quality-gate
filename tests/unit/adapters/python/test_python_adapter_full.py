@@ -1114,11 +1114,12 @@ class TestRunRuffHelper:
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
 
-    def test_run_ruff_tool_found(self, tmp_path: Path):
+    def test_run_ruff_tool_found(self, tmp_path: Path, caplog):
         """Ruff on PATH -> invoke + parse called.
 
         Kills mutmut_6 (False→None assertion), mutmut_7 (True→False)
         Kills mutmut_8, 9, 12, 18-23, 25-28 (return []→None mutations)
+        Kills mutmut_11: logger.warning call removed (caplog checks warning)
         """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
@@ -1139,7 +1140,7 @@ class TestRunRuffHelper:
         assert pars_args[0] is not None, "parse() stdout must not be None (kills mutmut_13)"
         assert isinstance(pars_args[0], str), f"parse() stdout must be str, got {type(pars_args[0])}"
 
-    def test_run_ruff_tool_not_found(self, tmp_path: Path):
+    def test_run_ruff_tool_not_found(self, tmp_path: Path, caplog):
         """Ruff not on PATH -> empty list."""
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
@@ -1149,27 +1150,37 @@ class TestRunRuffHelper:
         assert findings is not None, "findings must not be None (kills mutmut_12)"
         assert findings == []
 
-    def test_run_ruff_parse_error(self, tmp_path: Path):
+    def test_run_ruff_parse_error(self, tmp_path: Path, caplog):
         """Ruff parse raises -> caught, empty list returned."""
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
         a.ruff.parse = MagicMock(side_effect=RuntimeError("parse err"))
-        findings = a._run_ruff(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            findings = a._run_ruff(tmp_path, {})
         # Kill mutmut_18, 19, 20 (parse return → None, replaced with empty list path)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None
         assert findings == []
+        # Kill logger string mutations in warning (mutmut_14-18 string changes)
+        ruff_warn = [r for r in caplog.records if r.levelname == "WARNING" and "ruff" in r.message.lower()]
+        assert len(ruff_warn) == 1, f"Expected 1 ruff warning log, got {len(ruff_warn)}"
+        assert "ruff invocation failed" in ruff_warn[0].getMessage()
 
-    def test_run_ruff_oserror_on_invoke(self, tmp_path: Path):
+    def test_run_ruff_oserror_on_invoke(self, tmp_path: Path, caplog):
         """Ruff.invoke raises OSError -> caught, empty list returned."""
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
         a.ruff.invoke = MagicMock(side_effect=OSError("ruff exec failed"))
-        findings = a._run_ruff(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            findings = a._run_ruff(tmp_path, {})
         # Kill mutmut_21, 22, 23 (exception path return → None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None
         assert findings == []
+        # Kill logger string mutations in warning path
+        ruff_warn = [r for r in caplog.records if r.levelname == "WARNING" and "ruff" in r.message.lower()]
+        assert len(ruff_warn) == 1, f"Expected 1 ruff warning log, got {len(ruff_warn)}"
+        assert "ruff invocation failed" in ruff_warn[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -1184,11 +1195,18 @@ class TestRunPyrightHelper:
         return PythonAdapter()
 
     def test_run_pyright_tool_found(self, tmp_path: Path):
-        """Pyright on PATH -> invoke + parse called with correct args -> findings returned."""
+        """Pyright on PATH -> invoke + parse called with correct args -> findings returned.
+
+        Kills mutations on invoke() args: repo and [] (not None/removed/wrong)
+        Kills return-value mutations on parse result via isinstance assertion
+        """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[_make_finding(tool="pyright")])
         findings = a._run_pyright(tmp_path, {})
         assert len(findings) == 1
+        # Type assertion: kills return []→None mutations (mutmut_15-19, 22-24)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
         # Kill mutations on invoke() args: repo and [] (not None/removed/wrong)
         inv_args, inv_kwargs = a.pyright.invoke.call_args
         assert inv_args[0] is tmp_path
@@ -1198,26 +1216,41 @@ class TestRunPyrightHelper:
         assert pars_args[0] is not None
         assert isinstance(pars_args[0], str)
 
-    def test_run_pyright_tool_not_found(self, tmp_path: Path):
+    def test_run_pyright_tool_not_found(self, tmp_path: Path, caplog):
         """Pyright not on PATH -> early return empty list."""
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            findings = a._run_pyright(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_pyright(tmp_path, {})
+        # Type assertion: kills return []→None mutations
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
         assert findings == []
+        # Kill logger string mutations in "not found" warning (mutmut_5-8)
+        pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
+        assert len(pyright_warn) == 1, f"Expected warning, got {len(pyright_warn)}"
+        assert "pyright not found on PATH" in pyright_warn[0].getMessage()
 
-    def test_run_pyright_oserror(self, tmp_path: Path):
+    def test_run_pyright_oserror(self, tmp_path: Path, caplog):
         """Pyright.invoke raises OSError -> empty list + invoke was called correctly."""
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         a.pyright.invoke = MagicMock(side_effect=OSError("pyright exec failed"))
-        findings = a._run_pyright(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            findings = a._run_pyright(tmp_path, {})
         # Kill mutations: verify invoke was called with repo+[]
         assert a.pyright.invoke.called
         inv_args = a.pyright.invoke.call_args[0]
         assert inv_args[0] is tmp_path
         assert inv_args[1] == []
         assert findings == []
+        # Type assertion: kills return None mutations (mutmut_15-19, 22-24)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        # Kill logger string mutations in "invocation failed" warning
+        pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
+        assert len(pyright_warn) == 1
+        assert "pyright invocation failed" in pyright_warn[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -1231,31 +1264,53 @@ class TestRunPytestHelper:
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
 
-    def test_run_pytest_tool_found(self, tmp_path: Path):
-        """Pytest runs and returns findings."""
+    def test_run_pytest_tool_found(self, tmp_path: Path, caplog):
+        """Pytest runs and returns findings.
+
+        Kills return-value mutations via isinstance assertion
+        Kills logger string mutations via caplog checks
+        """
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[_make_finding(tool="pytest")])
-        findings = a._run_pytest(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            findings = a._run_pytest(tmp_path, {})
         assert len(findings) == 1
+        # Type assertion: kills return []→None mutations (mutmut_11, 12)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
 
-    def test_run_pytest_oserror(self, tmp_path: Path):
+    def test_run_pytest_oserror(self, tmp_path: Path, caplog):
         """Pytest.invoke raises -> empty list."""
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
-        with patch.object(a.pytest, "invoke", side_effect=RuntimeError("pytest failed")):
-            findings = a._run_pytest(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            with patch.object(a.pytest, "invoke", side_effect=RuntimeError("pytest failed")):
+                findings = a._run_pytest(tmp_path, {})
+        # Type assertion: kills return None mutations (mutmut_26-29)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings == []
+        # Kill logger string mutations in warning path (mutmut_6, 7)
+        pytest_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pytest" in r.message.lower()]
+        assert len(pytest_warn) == 1, f"Expected pytest warning, got {len(pytest_warn)}"
+        assert "pytest invocation failed" in pytest_warn[0].getMessage()
 
-    def test_run_pytest_tool_not_found(self, tmp_path: Path):
+    def test_run_pytest_tool_not_found(self, tmp_path: Path, caplog):
         """python3 not found on PATH -> empty list, no invoke called."""
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
-        with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            return_value=None,
-        ):
-            findings = a._run_pytest(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            with patch(
+                "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+                return_value=None,
+            ):
+                findings = a._run_pytest(tmp_path, {})
+        # Type assertion: kills return []→None mutations
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings == []
+        # Kill logger string mutations in "not found" warning
+        pytest_warn = [r for r in caplog.records if r.levelname == "WARNING" and "python" in r.message.lower()]
+        assert len(pytest_warn) == 1, f"Expected python not found warning, got {len(pytest_warn)}"
+        assert "python3 not found on PATH" in pytest_warn[0].getMessage()
 
     def test_run_pytest_invoke_args_strict(self, tmp_path: Path):
         """Validate invoke() receives (repo, []) — kills argument mutations."""
@@ -1268,7 +1323,6 @@ class TestRunPytestHelper:
         assert findings
         assert mock_pytest.invoke.call_args[0][0] is tmp_path
         assert mock_pytest.invoke.call_args[0][1] == []
-
     def test_run_pytest_parse_args_strict(self, tmp_path: Path):
         """Validate parse() receives (stdout, stderr, exitcode) — kills arg mutations."""
         from harness_quality_gate.adapters.python.pytest_adapter import PytestAdapter

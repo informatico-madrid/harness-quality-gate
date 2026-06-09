@@ -83,8 +83,8 @@ class PytestAdapter(ToolAdapter):
         skipped = []
 
         for testcase in root.findall(".//testcase"):
-            classname = testcase.get("classname", "")
-            name = testcase.get("name", "")
+            classname = testcase.get("classname") or ""
+            name = testcase.get("name") or ""
             full_name = f"{classname}.{name}" if classname else name
 
             failure = testcase.find("failure")

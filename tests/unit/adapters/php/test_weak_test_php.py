@@ -1431,3 +1431,108 @@ def test_parse_findings_have_all_attributes(tmp_path: Path) -> None:
     assert f.tool == "weak-test-php"
     assert f.layer == "L3B"
     assert f.language == "php"
+
+# ===========================================================================
+# Parse edge cases — default value mutations (catches .get("key", "default") mutations)
+# ===========================================================================
+
+
+def test_parse_findings_default_severity_info() -> None:
+    """Finding without severity field — must default to 'info'.
+
+    Catches mutation on severity default. If mutation changes default
+    from "info" to something else, this assertion fails.
+    """
+    data = [{"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "m"}]  # no severity
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].severity == "info"
+
+
+def test_parse_findings_default_rule_id_empty() -> None:
+    """Finding without rule_id field — must default to empty string.
+
+    Catches mutation on rule_id default. If mutation changes default
+    from "" to None or "XXXX", this assertion fails.
+    """
+    data = [{"file": "tests/A.php", "line": 1, "message": "m"}]  # no rule_id
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].rule_id == ""
+
+
+def test_parse_findings_default_message_empty() -> None:
+    """Finding without message field — must default to empty string.
+
+    Catches mutation on message default. If mutation changes default
+    from "" to None or "XXXX", this assertion fails.
+    """
+    data = [{"file": "tests/A.php", "line": 1, "rule_id": "A1"}]  # no message
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].message == ""
+
+
+def test_parse_findings_default_fix_hint_none() -> None:
+    """Finding without fix_hint field — must default to None.
+
+    Catches mutation on fix_hint default. If mutation changes
+    from .get("fix_hint") → .get("fix_hint", "default"), this fails.
+    """
+    data = [{"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "m"}]
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].fix_hint is None
+
+
+def test_parse_findings_missing_line_node_format() -> None:
+    """Finding without line — node must be just filepath (no colon).
+
+    Catches mutation on line handling. If mutation changes line
+    from item.get("line") to item.get("line", 0), node would include ":0".
+    """
+    data = [{"file": "tests/A.php", "rule_id": "A1", "message": "m"}]  # no line
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].node == "tests/A.php"  # no colon when line is missing
+
+
+def test_parse_finding_all_layer_attributes() -> None:
+    """All Finding layer attributes must have exact default values.
+
+    Catches mutations on tool, layer, and language fields in Finding construction.
+    If any of these are mutated (e.g., tool → "XXweak-test-phpXX"), assertions fail.
+    """
+    data = [{"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "m"}]
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].tool == "weak-test-php"
+    assert findings[0].layer == "L3B"
+    assert findings[0].language == "php"
+
+
+def test_parse_findings_mixed_present_missing_fields() -> None:
+    """Multiple findings with various missing fields — asserts exact outputs.
+
+    Catches mutations on multiple field defaults simultaneously.
+    Tests items with: missing line, missing severity, missing rule_id,
+    missing message, missing fix_hint. Each Finding must have correct defaults.
+    """
+    data = [
+        {"file": "tests/A.php", "message": "m1"},                                    # missing line, severity, rule_id, fix_hint
+        {"file": "tests/B.php", "line": 5, "rule_id": "A2-PHP"},                     # missing message, severity, fix_hint
+        {"file": "tests/C.php", "line": 10, "rule_id": "A3", "severity": "warning"}, # missing message, fix_hint
+    ]
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 3
+    f0, f1, f2 = findings
+    assert f0.node == "tests/A.php"  # no line → no colon
+    assert f0.severity == "info"     # default
+    assert f0.rule_id == ""          # default
+    assert f0.fix_hint is None       # default
+    assert f1.node == "tests/B.php:5"  # line present → colon + line
+    assert f1.message == ""          # default
+    assert f1.severity == "info"
+    assert f2.node == "tests/C.php:10"
+    assert f2.message == ""          # default
+    assert f2.severity == "warning"  # from input

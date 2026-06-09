@@ -500,3 +500,199 @@ def test_invoke_infra_incomplete_warning_logged() -> None:
             assert result.exitcode == 3
             # Assert exact warning message to catch mutmut_5 (None) and mutmut_6 ("XX...XX")
             mock.warning.assert_called_once_with("psalm not found; returning INFRA_INCOMPLETE")
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — missing field defaults (catches .get("key", "") mutations)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_array_item_missing_line_from() -> None:
+    """Array item with missing line_from — test exact node format.
+
+    Catches mutations on line_from default: "" → None or "XXXX".
+    When line_from is missing, the Finding node should be just the filepath.
+    """
+    data = [{"type": "TaintedSql", "file_name": "src/x.php"}]  # no line_from
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == "src/x.php"  # line is None → node is just file
+    assert findings[0].severity == "error"
+
+
+def test_parse_array_item_missing_severity_and_message() -> None:
+    """Item missing both severity and message — defaults must be exact.
+
+    Catches mutations on severity get(default "error" → "XXerrorXX" or None).
+    Catches mutations on message get(default "" → None or "XXXX").
+    When both are missing, severity should be "error" and message "TaintedSql".
+    """
+    data = [{"type": "TaintedHtml", "file_name": "src/x.php", "line_from": 10}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].severity == "error"
+    assert findings[0].message == "TaintedHtml"  # TaintedHtml + ": " + "" = "TaintedHtml"
+
+
+def test_parse_nested_files_missing_type_key_default() -> None:
+    """Nested files format — item with missing 'type' key uses empty default.
+
+    Catches mutation that changes type default from "" to None or other value.
+    Missing-type items have raw_type="" which is NOT in TAINT_RULE_TYPES → skipped.
+    Combined with a taint item, the count assertion catches extra findings from wrong defaults.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"file_name": "src/x.php", "line_from": 1},  # no type
+                    {"type": "TaintedShell", "file_name": "src/x.php", "line_from": 5, "message": "shell"},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "TaintedShell"
+
+
+def test_parse_nested_files_missing_severity_in_item() -> None:
+    """Nested files item missing severity — must default to 'error'.
+
+    Catches mutation on severity default. If default changes to None or "", 
+    the Finding gets the mutated value instead of 'error'.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"type": "TaintedXss", "file_name": "src/x.php", "line_from": 7},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].severity == "error"
+    assert findings[0].message == "TaintedXss"
+
+
+def test_parse_nested_files_severity_override_from_item() -> None:
+    """Nested files item with explicit severity — must use item value not default.
+
+    Ensures the severity from the input item is used, not overridden by mutation.
+    If mutation changes the get call to always return default, this would fail.
+    """
+    data = {
+        "files": {
+            "src/x.php": {
+                "psalmErrors": [
+                    {"type": "TaintedCommand", "line_from": 3, "severity": "critical"},
+                    {"type": "TaintedEval", "line_from": 7, "severity": "warning"},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 2
+    assert findings[0].severity == "critical"
+    assert findings[1].severity == "warning"
+
+
+def test_parse_nested_array_entry_missing_file_name() -> None:
+    """Array format item missing file_name — node must use empty string default.
+
+    Catches mutations on file_name default value. When file_name is missing,
+    the node format is f"{file_name}:{line_from}" where file_name="" → ":5".
+    Mutations changing default to None or "XXXX" would produce different node.
+    """
+    data = [{"type": "TaintedCookie", "line_from": 5}]  # no file_name
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == ":5"
+
+
+def test_parse_nested_array_entry_missing_line_and_file() -> None:
+    """Array item missing both file_name and line_from — node is just severity + message.
+
+    Verifies edge case where file_name and line_from are both missing.
+    """
+    data = [{"type": "TaintedLFI", "message": "local file inclusion"}]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].node == ""  # file_name="" + no line → just filepath (empty)
+
+
+def test_parse_nested_multiple_errors_mixed_missing_fields() -> None:
+    """Multiple psalmErrors with various missing fields — asserts exact outputs.
+
+    Catches mutations on multiple field defaults simultaneously.
+    Tests items with: missing line_from, missing severity, missing message.
+    Each Finding must have correct defaults.
+
+    In nested files format, file_name comes from outer key (filepath),
+    so only inner item fields (line_from, message, severity) are variable.
+    """
+    data = {
+        "files": {
+            "src/mixed.php": {
+                "psalmErrors": [
+                    {"type": "TaintedNoSqlCommand", "message": "msg1"},  # missing line_from, severity
+                    {"type": "TaintedNoSql", "line_from": 20},  # missing message, severity
+                    {"type": "TaintedSql"},  # missing line_from, message, severity
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 3
+    f0, f1, f2 = findings
+    assert f0.node == "src/mixed.php"  # filepath + no line
+    assert f0.message == "TaintedNoSqlCommand: msg1"
+    assert f0.severity == "error"
+    assert f1.node == "src/mixed.php:20"
+    assert f1.message == "TaintedNoSql"  # missing message → ""
+    assert f1.severity == "error"
+    assert f2.node == "src/mixed.php"  # filepath + no line
+    assert f2.message == "TaintedSql"
+    assert f2.severity == "error"
+
+
+def test_parse_nested_file_data_not_dict() -> None:
+    """When file_data in files structure is not a dict, skip it silently.
+
+    Catches mutations that change continue → break or remove the isinstance check.
+    If break were used instead of continue, subsequent items would be skipped.
+    """
+    data = {
+        "files": {
+            "src/a.php": "not a dict",  # not a dict
+            "src/b.php": {
+                "psalmErrors": [
+                    {"type": "TaintedSSRF", "line_from": 5},
+                ]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "TaintedSSRF"
+
+
+def test_invoke_psalm_found_version_path() -> None:
+    """When psalm binary is found, invoke delegates to _run without error.
+
+    Catches mutations on the cmd construction and _run call.
+    When psalm is found, invoke should call _run with correct cmd and env.
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = _adapter()
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/local/bin/psalm"]):
+        with patch.object(adapter, "_run", return_value=MagicMock(stdout="[]", stderr="", exitcode=0, duration_seconds=0.0)) as mock_run:
+            result = adapter.invoke("/tmp", ["--taint-analysis"])
+            # _run should be called with combined cmd
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            assert call_args[0][0] == ["/usr/local/bin/psalm", "--taint-analysis"]

@@ -71,9 +71,9 @@ class VultureAdapter(ToolAdapter):
         for item in items:
             if not isinstance(item, dict):
                 continue
-            name = item.get("name", "")
-            item_type = item.get("type", "unused")
-            filepath = item.get("filename", "")
+            name = item.get("name") or ""
+            item_type = item.get("type") or "unused"
+            filepath = item.get("filename") or ""
             line_no = item.get("line") or item.get("line_no") or 0
             desc = f"{item_type}: {name}"
             detail = desc

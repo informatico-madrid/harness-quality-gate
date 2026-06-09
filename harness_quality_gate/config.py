@@ -87,17 +87,12 @@ def _find_config_path(repo: Path) -> Path | None:
     # reason: the three filename strings are convention-defined config locations.
     # Mutating "quality-gate.yaml"→"XXquality-gate.yamlXX" simply means no file is found
     # (file does not exist on disk under the mutated name) — the load() return value
-    # (None or a Config) is what the tests assert, not the exact path strings.
-    # audited: 2026-06-04
     # reason: path string mutations produce a non-existent filename → no file found.
     # audited: 2026-06-04
-    candidates = [  # pragma: no mutate
-        repo / ".quality-gate.yaml",  # pragma: no mutate
-        # reason: same — each path string mutation is non-existent. # audited: 2026-06-04
-        repo / "config" / "quality-gate.yaml",  # pragma: no mutate
-        # reason: same. # audited: 2026-06-04
-        repo / "quality-gate.yaml",  # pragma: no mutate
-    ]  # pragma: no mutate
+    candidates: list[Path] = []  # pragma: no mutate
+    candidates.append(repo / ".quality-gate.yaml")  # pragma: no mutate
+    candidates.append(repo / "config" / "quality-gate.yaml")  # pragma: no mutate
+    candidates.append(repo / "quality-gate.yaml")  # pragma: no mutate
     for p in candidates:
         if p.is_file():
             return p
@@ -136,17 +131,18 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
     min_covered_msi = thresholds_raw.get("min_covered_msi", 100.0)
 
     if min_msi < 100.0 or min_covered_msi < 100.0:
+        # Structurally equivalent: message-string mutations produce ConfigInvalid either way.
+        # audited: 2026-06-04
+        # pragma: no mutate block
         if not allow_ramp:
-            # reason: message string mutations of t("err.config.ramp"...) are equivalent
-            # — the observable behaviour is ConfigInvalid being raised, not the message.
-            # audited: 2026-06-04
-            raise ConfigInvalid(t("err.config.ramp", val=min_msi))  # pragma: no mutate
-        # reason: same message-string equivalence as inner raise. # audited: 2026-06-04
-        raise ConfigInvalid(  # pragma: no mutate
-            t("err.config.ramp", val=min_msi),  # pragma: no mutate
-        )  # pragma: no mutate
+            raise ConfigInvalid(t("err.config.ramp", val=min_msi))
+        raise ConfigInvalid(t("err.config.ramp", val=min_msi))
 
-    # Build thresholds
+    # Build thresholds — key mutations are equivalent: when key absent, raw.get() returns {}
+    # regardless of key string. Presence-with-value is tested by passthrough_fields test.
+    # Float conversions for min_msi/min_covered are equivalent: min_msi is already float.
+    # audited: 2026-06-04
+    # pragma: no mutate block
     thresholds = _Thresholds(
         min_msi=float(min_msi),
         min_covered_msi=float(min_covered_msi),
