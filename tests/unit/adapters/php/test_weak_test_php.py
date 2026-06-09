@@ -610,6 +610,11 @@ class TestInvokeDirect:
                         result = PhpWeakTestAdapter().invoke(tmp_path, [])
             # All findings should have rule_id set
             findings = json.loads(result.stdout)
+            # Must have findings — kills mutations that clear all_findings (mutmut_86-120 variants on line 153 where extend(parsed) is changed to extend([]) or all_findings = [])
+            assert len(findings) > 0, (
+                f"Expected non-empty findings (subprocess returned findings with exitcode=0). "
+                f"Got {len(findings)} findings. stdout was: {result.stdout}"
+            )
             for finding in findings:
                 assert "rule_id" in finding
                 assert finding["rule_id"] in ["A1", "A2-PHP", "A3", "A4", "A5", "A6", "A7", "A8"]
@@ -636,7 +641,7 @@ class TestInvokeDirect:
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(
                         returncode=0,
-                        stdout='',
+                        stdout=json.dumps([{"file": "tests/FooTest.php", "line": 1, "message": "test finding"}]),
                         stderr=""
                     )
                     with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
@@ -646,6 +651,10 @@ class TestInvokeDirect:
                         MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
                         result = PhpWeakTestAdapter().invoke(tmp_path, [])
             findings = json.loads(result.stdout) if result.stdout else []
+            # Must have findings — kills mutations on line 153/154 that clear all_findings (all_findings.extend(parsed) → all_findings = [] or extend([]))
+            assert len(findings) > 0, (
+                f"Expected non-empty findings. stdout: {result.stdout}"
+            )
         else:
             findings = []
         # If any findings, all must have valid rule_id
@@ -798,6 +807,66 @@ class TestInvokeDirect:
                 assert mock_run.call_count >= 1
                 for call in mock_run.call_args_list:
                     assert call[1]["cwd"] == str(tmp_path)
+
+    def test_invoke_exitcode_one_when_stderr_parts_populated(self, tmp_path: Path) -> None:
+        """Exit code is 1 when stderr_parts is populated (kills mutmut_78/79/99/100: 'not' → 'and'/'or' on line 163).
+
+        This test ensures exitcode==1 when stderr_parts is populated.
+        If 'not' on line 163 is replaced with 'and' or 'or', the condition always
+        evaluates differently and exitcode would become 0 despite stderr parts.
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        from unittest.mock import MagicMock
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            pytest.skip("No visitor scripts to test line 163 exit code mutation")
+
+        call_count = [0]
+        visitor_scripts = sorted([f for f in real_visitors_dir.iterdir() if f.suffix == ".php"])
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            m = MagicMock()
+            # Odd calls: success with findings (indices 1, 3, 5, 7)
+            # Even calls: failure with stderr (indices 0, 2, 4, 6)
+            if call_count[0] % 2 == 1:  # odd: 1st, 3rd, 5th, 7th call (4 successes)
+                m.returncode = 0
+                m.stdout = json.dumps([{"file": "tests/FooTest.php", "line": 1, "message": "weak test"}])
+                m.stderr = ""
+            else:  # even: 2nd, 4th, 6th, 8th call (4 failures)
+                m.returncode = 1
+                m.stdout = ""
+                m.stderr = "visitor error"
+            return m
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # 8 calls total (4 visitors succeed, 4 fail)
+        assert call_count[0] == 8
+        # With original code: not stderr_parts → False (has stderr), exitcode=1
+        # If 'not' → 'and' or 'or': exitcode would be 0 → this catches the mutation
+        assert result.exitcode == 1, (
+            f"Expected exitcode=1 when stderr_parts is populated. "
+            f"Got {result.exitcode}. stderr: {result.stderr}"
+        )
+        # Findings from successful visitors should be populated
+        findings = json.loads(result.stdout)
+        assert len(findings) > 0, (
+            f"Expected findings from successful visitors. Got {len(findings)}"
+        )
 
     def test_invoke_duration_seconds_rounded(self, tmp_path: Path) -> None:
         """invoke returns duration_seconds rounded to 3 decimal places."""

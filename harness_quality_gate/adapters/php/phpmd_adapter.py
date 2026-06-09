@@ -150,10 +150,9 @@ class PhpMdAdapter(ToolAdapter):
             if not isinstance(file_entry, dict):
                 continue
             filepath = file_entry.get("file", "")
-            violations = file_entry.get("violations")
-            if not isinstance(violations, list):
+            if not isinstance(file_entry.get("violations"), list):
                 continue
-            for v in violations:
+            for v in file_entry.get("violations", []):
                 if not isinstance(v, dict):
                     continue
                 description = v.get("description", "")

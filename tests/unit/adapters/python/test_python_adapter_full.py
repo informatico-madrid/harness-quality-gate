@@ -100,14 +100,24 @@ class TestRunL3A:
         assert isinstance(layer.duration_sec, float)
 
     def test_l3a_ruff_findings(self, tmp_path: Path):
-        """ruff returns findings, pyright clean -> passed=False."""
+        """ruff returns findings, pyright clean -> passed=False.
+
+        Kills mutmut_21-26, 28, 50 (passed=len(x)==0 mutations).
+        Kills mutmut_16 (env keyword arg mutation) — assert invoke called with env=.
+        Kills mutmut_9-14 (logger format string mutations) — assert log message.
+        """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[_make_finding(rule_id="E501")])
         a.pyright = _mock_subadapter(findings=[])
         layer = a.run_l3a(tmp_path, {})
         assert layer.passed is False
+        assert isinstance(layer.passed, bool), "passed must be bool (kills mutmut_21-26,28,50)"
         assert len(layer.findings) == 1
         assert layer.findings[0].tool == "ruff"
+        # Kill mutmut_16: ruff.invoke called with env= keyword arg
+        call_kwargs = a.ruff.invoke.call_args.kwargs
+        assert "env" in call_kwargs, "invoke() must receive env= keyword arg (kills mutmut_16)"
+        assert call_kwargs["env"] == {}, "env= keyword arg must be {} or dict (kills mutmut_17)"
 
     def test_l3a_pyright_findings(self, tmp_path: Path):
         """ruff clean, pyright returns findings -> passed=False."""
@@ -195,6 +205,81 @@ class TestRunL3A:
         assert layer.passed is True
         assert layer.findings == []
 
+    def test_l3a_logger_format_strings(self, tmp_path: Path, caplog):
+        """Verify logger.info format strings contain colon+count pattern.
+
+        Kills mutmut_9 (logger.info call removed → log text empty)
+        Kills mutmut_10 (len(ruff)→None in format arg)
+        Kills mutmut_11 ("ruff: %d"→"ruff" → no colon in message)
+        Kills mutmut_12-14 (same for pyright logger)
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.pyright = _mock_subadapter(findings=[])
+        with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
+            a.run_l3a(tmp_path, {})
+        assert len(caplog.messages) >= 2
+        # mutmut_9: if logger.info removed, this assertion fails
+        ruff_msg = [m for m in caplog.messages if "ruff:" in m and "findings" in m]
+        pyright_msg = [m for m in caplog.messages if "pyright:" in m and "findings" in m]
+        assert len(ruff_msg) >= 1, "Logger must emit ruff message with format (kills mutmut_9,11)"
+        assert len(pyright_msg) >= 1, "Logger must emit pyright message with format (kills mutmut_13)"
+        # mutmut_10, 12: len→None means format fails at string % int → message empty/broken
+        # Check format pattern: "tool: N findings"
+        for msg in ruff_msg + pyright_msg:
+            parts = msg.split(": ")
+            assert len(parts) >= 2, f"Message must have 'tool: count' format, got: {msg}"
+            count_str = parts[1].split()[0]
+            int(count_str)  # kills mutmut_10, 12: count is int, not None
+
+    def test_l3a_ruff_invoke_args_strict(self, tmp_path: Path):
+        """Assert _run_ruff calls ruff.invoke with correct args.
+
+        Kills mutmut_16 (repo→None as first param to _run_ruff)
+        Kills mutmut_17 (env=dict(env) removed → changed positional args)
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.pyright = _mock_subadapter(findings=[])
+        with _all_tools_on_path({"ruff": "/bin/ruff", "pyright": "/bin/pyright"}):
+            layer = a.run_l3a(tmp_path, {})
+        # Kill mutmut_16: invoke first arg must be the repo path (not None)
+        assert a.ruff.invoke.called
+        inv_args, inv_kwargs = a.ruff.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_16)"
+        # Kill mutmut_17: env keyword arg must be present and dict
+        assert "env" in inv_kwargs, "invoke() called with env= keyword arg (kills mutmut_17)"
+        assert isinstance(inv_kwargs["env"], dict), "env= must be dict (kills mutmut_17)"
+        assert layer.passed is True, "passed must be bool True (kills mutmut_21-28,50)"
+
+    def test_l3a_pyright_invoke_args_strict(self, tmp_path: Path):
+        """Assert _run_pyright calls pyright.invoke with correct args."""
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.pyright = _mock_subadapter(findings=[])
+        with _all_tools_on_path({"ruff": "/bin/ruff", "pyright": "/bin/pyright"}):
+            layer = a.run_l3a(tmp_path, {})
+        assert a.pyright.invoke.called
+        inv_args, inv_kwargs = a.pyright.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_15,29)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_15,29)"
+
+    def test_l3a_passed_type_when_fail(self, tmp_path: Path):
+        """passed must be exact bool False when findings exist.
+
+        Kills mutmut_21 (False→None in passed=assignment)
+        Kills mutmut_22 (True→False, etc.)
+        Kills mutmut_23-26 (len(x)==0 mutations)
+        Kills mutmut_28 (0→None in == comparison)
+        Kills mutmut_50 (passed=False→True)
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
+        a.pyright = _mock_subadapter(findings=[])
+        layer = a.run_l3a(tmp_path, {})
+        assert layer.passed is False, "passed must be False when findings exist (kills mutmut_21-28,50)"
+        assert isinstance(layer.passed, bool), f"passed must be bool, got {type(layer.passed)}"
+
 
 # ---------------------------------------------------------------------------
 # Run L1 (pytest)
@@ -217,13 +302,48 @@ class TestRunL1:
         assert layer.passed is True
         assert layer.findings == []
 
-    def test_l1_has_findings(self, tmp_path: Path):
-        """Pytest returns findings -> passed=False."""
+    def test_l1_has_findings(self, tmp_path: Path, caplog):
+        """Pytest returns findings -> passed=False.
+
+        Kills mutmut_4 (env→None positional), mutmut_5 (env=None keyword)
+        Kills mutmut_9-14 (logger format string mutations)
+        Kills mutmut_35-38 (passed=len(x)==0 mutations)
+        """
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[_make_finding(tool="pytest")])
-        layer = a.run_l1(tmp_path, {})
+        with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
+            layer = a.run_l1(tmp_path, {})
         assert layer.passed is False
+        assert isinstance(layer.passed, bool)
         assert len(layer.findings) == 1
+        # Kill mutmut_10, 12: logger.info format string mutations
+        pytest_msg = [m for m in caplog.messages if "pytest:" in m and "findings" in m]
+        assert len(pytest_msg) >= 1, "Logger must emit pytest message (kills mutmut_9, 11)"
+        for msg in pytest_msg:
+            parts = msg.split(": ")
+            assert len(parts) >= 2
+            int(parts[1].split()[0])  # kills mutmut_10, 12: count must be int
+
+    def test_l1_pytest_invoke_args(self, tmp_path: Path):
+        """Assert pytest.invoke called with correct args."""
+        a = self._adapter()
+        a.pytest = _mock_subadapter(findings=[])
+        layer = a.run_l1(tmp_path, {})
+        assert a.pytest.invoke.called
+        inv_args, inv_kwargs = a.pytest.invoke.call_args
+        assert inv_args[0] is tmp_path, "first arg = repo"
+        assert inv_args[1] == [], "second arg = []"
+
+    def test_l1_all_pass_strict(self, tmp_path: Path):
+        """passed must be exact bool True (kills mutmut_35-38)."""
+        a = self._adapter()
+        a.pytest = _mock_subadapter(findings=[])
+        layer = a.run_l1(tmp_path, {})
+        assert layer.layer == "L1"
+        assert layer.language == "python"
+        assert layer.passed is True
+        assert layer.findings == []
+        assert isinstance(layer.passed, bool), "passed must be bool (kills mutmut_35-38)"
 
     def test_l1_pytest_raises_oserror(self, tmp_path: Path):
         """Pytest.invoke raises OSError -> empty findings."""
@@ -293,6 +413,8 @@ class TestRunL2:
         Kills: mutmut_9 (format string → None), mutmut_10 (count → None),
         mutmut_11 (format string removed), mutmut_12 (len → None).
         Verifies logger.info called with exact format string and numeric count.
+        Kills mutmut_17,18 (env keyword arg mutation), mutmut_57,58 (logger msg mutations).
+        Kills mutmut_63 (return value mutations).
         """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
@@ -302,7 +424,8 @@ class TestRunL2:
             with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
                 layer = a.run_l2(tmp_path, {})
         assert layer.layer == "L2"
-        assert layer.passed is True            # kills mutmut_12: passed = None == 0
+        assert layer.passed is True
+        assert isinstance(layer.passed, bool), f"passed must be bool (kills mutmut_37-40,46)"
         assert layer.findings == []
         assert isinstance(layer.duration_sec, float)
         # Kills: mutmut_9 (format string → None), mutmut_10 (count → None), mutmut_11 (no format)
@@ -311,9 +434,52 @@ class TestRunL2:
         assert "deptry" in caplog.text
         # Verify log messages contain numeric count values (kills count → None mutations)
         for line in caplog.messages:
-            if "ruff (L2)" in line:
-                # Message is "ruff (L2): %d findings" % count — count must be numeric
+            if "ruff (L2)" in line or "vulture" in line or "deptry" in line:
+                # Message is "tool: %d findings" % count — count must be numeric
                 assert isinstance(int(str(line.split(":")[1].split()[0])), int)
+        # Kill mutmut_17, 18: _run_ruff passes env=dict(env) if env else {}
+        assert a.ruff.invoke.called
+        inv_kwargs = a.ruff.invoke.call_args.kwargs
+        assert "env" in inv_kwargs, "ruff.invoke() called with env= kwarg (kills mutmut_17,18)"
+        # Kill mutmut_63: validate LayerResult creation (ensure not returning wrong type)
+        assert isinstance(layer, LayerResult), "return must be LayerResult (kills mutmut_63)"
+
+    def test_l2_vulture_invoke_args(self, tmp_path: Path):
+        """Assert vulture.invoke called with correct args."""
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.vulture = _mock_subadapter(findings=[])
+        a.deptry = _mock_subadapter(findings=[])
+        with _all_tools_on_path():
+            layer = a.run_l2(tmp_path, {})
+        assert a.vulture.invoke.called
+        inv_args = a.vulture.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo"
+        assert inv_args[1] == [], "invoke() second arg = []"
+
+    def test_l2_deptry_invoke_args(self, tmp_path: Path):
+        """Assert deptry.invoke called with correct args."""
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.vulture = _mock_subadapter(findings=[])
+        a.deptry = _mock_subadapter(findings=[])
+        with _all_tools_on_path():
+            layer = a.run_l2(tmp_path, {})
+        assert a.deptry.invoke.called
+        inv_args = a.deptry.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo"
+        assert inv_args[1] == [], "invoke() second arg = []"
+
+    def test_l2_passed_type_when_fail(self, tmp_path: Path):
+        """passed must be exact bool False when findings exist (mutmut_37-40,46)."""
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
+        a.vulture = _mock_subadapter(findings=[])
+        a.deptry = _mock_subadapter(findings=[])
+        with _all_tools_on_path():
+            layer = a.run_l2(tmp_path, {})
+        assert layer.passed is False
+        assert isinstance(layer.passed, bool), f"passed must be bool, got {type(layer.passed)} (kills mutmut_37-40,46)"
 
     def test_l2_ruff_findings(self, tmp_path: Path):
         """Ruff returns findings -> included.
@@ -680,15 +846,29 @@ class TestRunL4:
         assert layer.passed is True
         assert layer.findings == []
 
-    def test_l4_security_findings(self, tmp_path: Path):
-        """Bandit finds security issues -> passed=False."""
+    def test_l4_security_findings(self, tmp_path: Path, caplog):
+        """Bandit finds security issues -> passed=False.
+
+        Kills mutmut_4 (env→None positional), mutmut_5 (env=None keyword)
+        Kills mutmut_9-10, 12-14 (logger format string mutations)
+        Kills mutmut_35-37 (passed=len(x)==0 mutations)
+        """
         a = self._adapter()
         a.bandit = _mock_subadapter(findings=[_make_finding(tool="bandit", severity="error")])
         with _all_tools_on_path():
-            layer = a.run_l4(tmp_path, {})
+            with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
+                layer = a.run_l4(tmp_path, {})
         assert layer.passed is False
+        assert isinstance(layer.passed, bool), f"passed must be bool (kills mutmut_35-37)"
         assert len(layer.findings) == 1
         assert layer.findings[0].tool == "bandit"
+        # Kill mutmut_9, 10: logger.info format string mutations
+        bandit_msg = [m for m in caplog.messages if "bandit:" in m and "findings" in m]
+        assert len(bandit_msg) >= 1, "Logger must emit bandit message (kills mutmut_9, 12)"
+        for msg in bandit_msg:
+            parts = msg.split(": ")
+            assert len(parts) >= 2
+            int(parts[1].split()[0])  # kills mutmut_10, 13, 14: count must be int
 
     def test_l4_multiple_security_findings(self, tmp_path: Path):
         """Multiple bandit findings -> all merged."""
@@ -935,18 +1115,38 @@ class TestRunRuffHelper:
         return PythonAdapter()
 
     def test_run_ruff_tool_found(self, tmp_path: Path):
-        """Ruff on PATH -> invoke + parse called."""
+        """Ruff on PATH -> invoke + parse called.
+
+        Kills mutmut_6 (False→None assertion), mutmut_7 (True→False)
+        Kills mutmut_8, 9, 12, 18-23, 25-28 (return []→None mutations)
+        """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
         findings = a._run_ruff(tmp_path, {})
+        # Type assertion: kills mutmut_8, 9, 12, 18-23, 25-28 (return []→None)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None"
         assert len(findings) == 1
         assert findings[0].tool == "ruff"
+        # Assert invoke was called with correct args
+        assert a.ruff.invoke.called
+        inv_args, inv_kwargs = a.ruff.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_3, 5)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_3, 5)"
+        # Assert parse was called with non-None stdout
+        assert a.ruff.parse.called
+        pars_args = a.ruff.parse.call_args[0]
+        assert pars_args[0] is not None, "parse() stdout must not be None (kills mutmut_13)"
+        assert isinstance(pars_args[0], str), f"parse() stdout must be str, got {type(pars_args[0])}"
 
     def test_run_ruff_tool_not_found(self, tmp_path: Path):
         """Ruff not on PATH -> empty list."""
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
             findings = a._run_ruff(tmp_path, {})
+        # Kill mutmut_6 (False→None), mutmut_7, 12 (return []→None)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_12)"
         assert findings == []
 
     def test_run_ruff_parse_error(self, tmp_path: Path):
@@ -955,6 +1155,9 @@ class TestRunRuffHelper:
         a.ruff = _mock_subadapter(findings=[])
         a.ruff.parse = MagicMock(side_effect=RuntimeError("parse err"))
         findings = a._run_ruff(tmp_path, {})
+        # Kill mutmut_18, 19, 20 (parse return → None, replaced with empty list path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
         assert findings == []
 
     def test_run_ruff_oserror_on_invoke(self, tmp_path: Path):
@@ -963,6 +1166,9 @@ class TestRunRuffHelper:
         a.ruff = _mock_subadapter(findings=[])
         a.ruff.invoke = MagicMock(side_effect=OSError("ruff exec failed"))
         findings = a._run_ruff(tmp_path, {})
+        # Kill mutmut_21, 22, 23 (exception path return → None)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
         assert findings == []
 
 
