@@ -1280,15 +1280,27 @@ class TestRunPytestHelper:
         assert findings is not None
 
     def test_run_pytest_oserror(self, tmp_path: Path, caplog):
-        """Pytest.invoke raises -> empty list."""
+        """Pytest.invoke raises -> empty list.
+
+        Kills return None mutations (mutmut_26-29) via isinstance assertion.
+        Kills invoke-args mutations (mutmut_5-7) via assert invoke called with args.
+        Kills logger string mutations (mutmut_6,7) via caplog message assertion.
+        """
         a = self._adapter()
-        a.pytest = _mock_subadapter(findings=[])
+        mock_pytest = MagicMock()
+        mock_pytest.invoke = MagicMock(side_effect=RuntimeError("pytest failed"))
+        a.pytest = mock_pytest
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-            with patch.object(a.pytest, "invoke", side_effect=RuntimeError("pytest failed")):
-                findings = a._run_pytest(tmp_path, {})
+            findings = a._run_pytest(tmp_path, {})
         # Type assertion: kills return None mutations (mutmut_26-29)
-        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert isinstance(findings, list), f"findings must be list, got {type(findings).__name__}"
+        assert findings is not None, "findings must not be None"
         assert findings == []
+        # Kill invoke-args mutations: verify invoke was called with correct args
+        assert mock_pytest.invoke.called, "invoke() must be called before exception"
+        inv_args = mock_pytest.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_5,7)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_5,7)"
         # Kill logger string mutations in warning path (mutmut_6, 7)
         pytest_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pytest" in r.message.lower()]
         assert len(pytest_warn) == 1, f"Expected pytest warning, got {len(pytest_warn)}"
@@ -1324,7 +1336,12 @@ class TestRunPytestHelper:
         assert mock_pytest.invoke.call_args[0][0] is tmp_path
         assert mock_pytest.invoke.call_args[0][1] == []
     def test_run_pytest_parse_args_strict(self, tmp_path: Path):
-        """Validate parse() receives (stdout, stderr, exitcode) — kills arg mutations."""
+        """Validate parse() receives (stdout, stderr, exitcode) — kills arg mutations.
+
+        Kills mutmut_8 (parse args → None/None/None) via each-arg-is-not-None check.
+        Kills mutmut_11 (parse call removed) via assert parse.called.
+        Kills mutmut_6,7 (stderr/stdout swap in parse call) via positional position check.
+        """
         from harness_quality_gate.adapters.python.pytest_adapter import PytestAdapter
 
         a = self._adapter()
@@ -1334,11 +1351,12 @@ class TestRunPytestHelper:
         mock_pytest.parse = MagicMock(wraps=real_adapter.parse)
         with patch.object(a, "pytest", mock_pytest):
             findings = a._run_pytest(tmp_path, {})
-        assert mock_pytest.parse.called
+        assert mock_pytest.parse.called, "parse() must be called (kills mutmut_11)"
         pars_args = mock_pytest.parse.call_args[0]
-        assert pars_args[0] is not None
-        assert pars_args[1] is not None
-        assert pars_args[2] is not None
+        assert len(pars_args) >= 3, "parse() called with at least 3 args"
+        assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut_5-8)"
+        assert pars_args[1] is not None, "parse() arg1=stderr must not be None (kills mutmut_15-19)"
+        assert pars_args[2] is not None, "parse() arg2=exitcode must not be None (kills mutmut_21-24)"
 
     def test_run_pytest_invoke_return_propagated(self, tmp_path: Path):
         """invoke() result flows to parse() — kills remove-mutations."""
@@ -1386,13 +1404,25 @@ class TestRunVultureHelper:
         assert findings == []
 
     def test_run_vulture_oserror(self, tmp_path: Path):
-        """Vulture.invoke raises -> empty list."""
+        """Vulture.invoke raises -> empty list.
+
+        Kills return None mutations (mutmut_23-24) via isinstance assertion.
+        Kills invoke-args mutations (mutmut_19-21) via assert invoke called with args.
+        """
         a = self._adapter()
         a.vulture = _mock_subadapter(findings=[])
         a.vulture.invoke = MagicMock(side_effect=OSError("vulture exec failed"))
         with _all_tools_on_path({"vulture": "/bin/vulture"}):
             findings = a._run_vulture(tmp_path, {})
+        # Type assertion: kills return None mutations (mutmut_23-24)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None"
         assert findings == []
+        # Kill invoke-args mutations: verify invoke was called with correct args
+        assert a.vulture.invoke.called
+        inv_args = a.vulture.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_19)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_19)"
 
 
 # ---------------------------------------------------------------------------
