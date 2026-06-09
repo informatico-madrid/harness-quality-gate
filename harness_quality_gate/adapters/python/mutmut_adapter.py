@@ -75,12 +75,12 @@ class MutmutAdapter(ToolAdapter):
             for m in re.finditer(r"(\w+)\s*:\s*(\d+)", stdout):
                 data[m.group(1)] = int(m.group(2))
 
-        total = data.get("total", 0)
-        killed = data.get("killed", 0)
-        survived = data.get("survived", 0)
-        timed_out = data.get("timeout", 0)
-        escaped = data.get("escaped", 0)
-        untested = data.get("untested", 0)
+        total = data.get("total") or 0
+        killed = data.get("killed") or 0
+        survived = data.get("survived") or 0
+        timed_out = data.get("timeout") or 0
+        escaped = data.get("escaped") or 0
+        untested = data.get("untested") or 0
 
         covered = killed + survived + timed_out + escaped
         msi = killed / covered if covered else 0.0

@@ -74,7 +74,7 @@ class DeptryAdapter(ToolAdapter):
         if not isinstance(data, dict):
             return findings
 
-        errors = data.get("errors", {}) if isinstance(data.get("errors"), dict) else {}
+        errors = (data.get("errors") or {}) if isinstance(data.get("errors"), dict) else {}
 
         category_severity = {
             "unused_imports": "warning",
@@ -91,7 +91,7 @@ class DeptryAdapter(ToolAdapter):
                 if isinstance(item, dict):
                     module = item.get("module", item.get("name", ""))
                     filepath = item.get("filepath", "")
-                    line = item.get("line", item.get("line_no", 0))
+                    line = item.get("line") or item.get("line_no") or 0
                 else:
                     module = str(item)
                     filepath = ""

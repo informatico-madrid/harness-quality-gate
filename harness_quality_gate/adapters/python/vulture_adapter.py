@@ -74,7 +74,7 @@ class VultureAdapter(ToolAdapter):
             name = item.get("name", "")
             item_type = item.get("type", "unused")
             filepath = item.get("filename", "")
-            line_no = item.get("line", item.get("line_no", 0))
+            line_no = item.get("line") or item.get("line_no") or 0
             desc = f"{item_type}: {name}"
             detail = desc
             if filepath:

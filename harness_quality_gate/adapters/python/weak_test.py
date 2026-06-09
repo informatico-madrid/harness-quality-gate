@@ -166,8 +166,8 @@ class WeakTestVisitor(ast.NodeVisitor):
             })
 
         # A9: mock where fixture is needed
-        mock_count = t.get("mocks", 0)
-        has_fixture = t.get("has_fixture_ref", False)
+        mock_count = t.get("mocks") or 0
+        has_fixture = t.get("has_fixture_ref") or False
         if mock_count >= 3 and not has_fixture:
             violations.append({
                 "rule": "A9",

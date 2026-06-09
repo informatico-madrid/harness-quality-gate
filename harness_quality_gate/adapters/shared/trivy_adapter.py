@@ -88,7 +88,7 @@ class TrivyAdapter(ToolAdapter):
                 rule_id = misconf.get("AVDID", misconf.get("ID", "UNKNOWN"))
                 severity_raw = misconf.get("Severity", "MEDIUM")
                 message = misconf.get("Message", misconf.get("Title", ""))
-                cause = misconf.get("Cause", {})
+                cause = misconf.get("Cause") or {}
                 if isinstance(cause, dict):
                     filename = cause.get("Provider", "")
                 else:

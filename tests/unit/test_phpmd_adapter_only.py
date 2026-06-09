@@ -387,17 +387,17 @@ class TestPhpMdAdapter:
         - m29: logger.info→logger.debug → assertInfo/NotNotInfo check
         """
         rulesets = "cleancode,codesize"
-        data = {
+        findings_data = {
             "files": [
                 {"file": "src/X.php", "violations": [{"rule": "R", "description": "D", "priority": 2}]}
             ]
         }
         with (
-            patch.object(PhpMdAdapter, "invoke", return_value=_ok(json.dumps(data))) as mock_invoke,
+            patch.object(PhpMdAdapter, "invoke", return_value=_ok(json.dumps(findings_data))) as mock_invoke,
             patch("harness_quality_gate.adapters.php.phpmd_adapter.logger") as mock_logger,
         ):
             adapter = PhpMdAdapter()
-            findings = adapter._run_phpmd(tmp_path, rulesets, {"APP": "T"}, timeout=60.0)
+            result = adapter._run_phpmd(tmp_path, rulesets, {"APP": "T"}, timeout=60.0)
 
         # Verify invoke was called with exact args
         mock_invoke.assert_called_once()
@@ -411,13 +411,19 @@ class TestPhpMdAdapter:
         assert call_args.kwargs["env"] == {"APP": "T"}
         assert call_args.kwargs["timeout"] == 60.0
         # Verify parse produces expected result
-        assert len(findings) == 1
-        assert findings[0].node == "src/X.php"
-        assert findings[0].severity == "major"
-        # Verify logger.info was called (kills logger.info→logger.debug mutant)
+        assert len(result) == 1
+        assert result[0].node == "src/X.php"
+        assert result[0].severity == "major"
+        # Verify exact log severity info was called NOT debug (kills mutation 29)
         mock_logger.info.assert_called_once()
+        mock_logger.debug.assert_not_called()
+        # Verify logger.info was called with the correct format string
+        # (catches mutation 28 on exitcode, mutation on format string keys)
         call_msg = mock_logger.info.call_args[0][0]
-        assert "exit=" in call_msg
+        assert "PHPMD exit=" in call_msg
+        assert "stdout=" in call_msg
+        assert "stderr=" in call_msg
+        assert "duration=" in call_msg
 
     # -- version() tests (kill version survivors 5,11,13,17,18,19,28,29,33,35)
 
@@ -460,14 +466,12 @@ class TestPhpMdAdapter:
                 version = adapter.version(tmp_path)
 
         assert version == "2.14.0"
-        mock_run.assert_called_once()
-        # Verify subprocess is called with correct arguments
-        call_args = mock_run.call_args
-        assert call_args[0][0] == ["/usr/bin/phpmd", "--version"]
+        # Verify subprocess was explicitly called with --version flag
+        assert mock_run.call_args[0][0] == ["/usr/bin/phpmd", "--version"]
         # Verify key subprocess parameters are passed through
-        assert call_args.kwargs["timeout"] == 30
+        assert mock_run.call_args.kwargs["timeout"] == 30
         # Verify env includes os.environ (catches __import__("os") mutation)
-        assert "PATH" in call_args.kwargs["env"]
+        assert "PATH" in mock_run.call_args.kwargs["env"]
 
     def test_version_stderr_failure_raises(self, tmp_path: Path) -> None:
         """Verify version raises RuntimeError on non-zero returncode.

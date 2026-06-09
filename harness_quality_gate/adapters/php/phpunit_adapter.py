@@ -62,8 +62,8 @@ class PhpUnitAdapter(ToolAdapter):
         if composer_json.exists():
             try:
                 data = json.loads(composer_json.read_text(encoding="utf-8"))
-                bin_dir = data.get("config", {}).get("bin-dir", "vendor/bin")
-                return f"{bin_dir}/phpunit"
+                config = data.get("config") or {}
+                return f"{config.get('bin-dir') or 'vendor/bin'}/phpunit"
             except (json.JSONDecodeError, OSError):
                 pass
         return "vendor/bin/phpunit"

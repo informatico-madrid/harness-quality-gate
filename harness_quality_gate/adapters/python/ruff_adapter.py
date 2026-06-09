@@ -73,11 +73,11 @@ class RuffAdapter(ToolAdapter):
                 continue
             code = entry.get("code", "") or entry.get("rule", "")
             filename = entry.get("filename", "")
-            location = entry.get("location", {})
-            line = location.get("row", 0)
-            col = location.get("column", 0)
+            location = entry.get("location") or {}
+            line = location.get("row") or 0
+            col = location.get("column") or 0
             message = entry.get("message", "")
-            fix = entry.get("fix", {})
+            fix = entry.get("fix") or {}
             fix_hint = None
             if isinstance(fix, dict):
                 fix_msg = fix.get("message")

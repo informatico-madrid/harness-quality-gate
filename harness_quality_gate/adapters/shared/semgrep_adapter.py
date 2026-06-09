@@ -89,9 +89,9 @@ class SemgrepAdapter(ToolAdapter):
                 continue
             rule_id = finding.get("check_id", "UNKNOWN")
             filename = finding.get("path", "")
-            start = finding.get("start", {})
+            start = finding.get("start") or {}
             line = start.get("line", 0) if isinstance(start, dict) else 0
-            extra = finding.get("extra", {})
+            extra = finding.get("extra") or {}
             if not isinstance(extra, dict):
                 extra = {}
             severity_raw = extra.get("severity", "WARNING")

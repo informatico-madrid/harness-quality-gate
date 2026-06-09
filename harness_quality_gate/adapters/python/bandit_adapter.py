@@ -78,8 +78,8 @@ class BanditAdapter(ToolAdapter):
             issue_id = issue.get("issue_id", "")
             severity_raw = issue.get("issue_severity", "MEDIUM")
             message = issue.get("issue_text", "")
-            line_no = issue.get("line_number", 0)
-            cwe = issue.get("cwe", {})
+            line_no = issue.get("line_number") or 0
+            cwe = issue.get("cwe") or {}
             cwe_id = ""
             if isinstance(cwe, dict):
                 cwe_id = cwe.get("id", "") or cwe.get("link", "")

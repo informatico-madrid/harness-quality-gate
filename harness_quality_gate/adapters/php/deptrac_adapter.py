@@ -133,13 +133,13 @@ class DeptracAdapter(ToolAdapter):
         except json.JSONDecodeError:
             return findings
 
-        report = data.get("Report", {})
+        report = data.get("Report") or {}
         if not isinstance(report, dict):
             return findings
 
         # Architecture metadata
-        violations_count = report.get("Violations", 0)
-        uncovered = report.get("UncoveredClasses", 0)
+        violations_count = report.get("Violations") or 0
+        uncovered = report.get("UncoveredClasses") or 0
 
         self._architecture: dict = {
             "violations": violations_count,
@@ -203,11 +203,11 @@ class DeptracAdapter(ToolAdapter):
         except (json.JSONDecodeError, ValueError):
             return {"violations": 0, "uncovered_classes": 0}
 
-        report = data.get("Report", {})
+        report = data.get("Report") or {}
         if not isinstance(report, dict):
             return {"violations": 0, "uncovered_classes": 0}
 
         return {
-            "violations": report.get("Violations", 0),
-            "uncovered_classes": report.get("UncoveredClasses", 0),
+            "violations": report.get("Violations") or 0,
+            "uncovered_classes": report.get("UncoveredClasses") or 0,
         }

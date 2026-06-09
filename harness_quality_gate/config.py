@@ -130,8 +130,8 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
         raise ConfigInvalid(t("err.config.v1", path="<config>"))  # pragma: no mutate
 
     # --- infection thresholds check (TD-10) ---
-    infection_raw = raw.get("infection", {})
-    thresholds_raw = infection_raw.get("thresholds", {})
+    infection_raw = raw.get("infection") or {}
+    thresholds_raw = infection_raw.get("thresholds") or {}
     min_msi = thresholds_raw.get("min_msi", 100.0)
     min_covered_msi = thresholds_raw.get("min_covered_msi", 100.0)
 
@@ -151,14 +151,14 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
         min_msi=float(min_msi),
         min_covered_msi=float(min_covered_msi),
         timeouts_as_escaped=thresholds_raw.get("timeouts_as_escaped", True),
-        max_timeouts=int(thresholds_raw.get("max_timeouts", 0)),
+        max_timeouts=int(thresholds_raw.get("max_timeouts") or 0),
         allow_ramp_flag_required=bool(
             thresholds_raw.get("allow_ramp_flag_required", True),
         ),
     )
 
     # Build concurrency
-    concurrency_raw = raw.get("concurrency", {})
+    concurrency_raw = raw.get("concurrency") or {}
     concurrency = _Concurrency(
         default=concurrency_raw.get("default", "auto"),
         ci_env_vars=list(concurrency_raw.get("ci_env_vars", [])),
@@ -172,15 +172,15 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
     # audited: 2026-06-04
     return Config(
         schema_version=schema_version,
-        detection=raw.get("detection", {}),
-        gates=raw.get("gates", {}),
+        detection=raw.get("detection") or {},
+        gates=raw.get("gates") or {},
         concurrency=concurrency,
         infection=thresholds,
-        language_profiles=raw.get("language_profiles", {}),
+        language_profiles=raw.get("language_profiles") or {},
         # reason: shared_tools/layer4 raw.get() key mutations return {} either way. # audited: 2026-06-04
-        shared_tools=raw.get("shared_tools", {}),  # pragma: no mutate
+        shared_tools=raw.get("shared_tools") or {},  # pragma: no mutate
         # reason: same. # audited: 2026-06-04
-        layer4=raw.get("layer4", {}),  # pragma: no mutate
+        layer4=raw.get("layer4") or {},  # pragma: no mutate
     )
 
 

@@ -243,7 +243,7 @@ def analyze_solid(src_dir: Path) -> dict[str, Any]:
             )
 
         # S violations: method-level complexity via AST (basic threshold)
-        max_arity = cls.get("max_arity", 0)
+        max_arity = cls.get("max_arity") or 0
         if max_arity > 5:
             file_violations.append(f"max_arity={max_arity} > 5 (high CC proxy)")
 

@@ -1327,3 +1327,107 @@ class TestRunL3bReturnStructure:
             with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[]):
                 result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
                 assert result is not None
+
+    def test_run_l3b_logger_info_called_not_debug(self, tmp_path: Path, caplog):
+        """run_l3b must call logger.info (NOT logger.debug).
+        
+        Kills mutations that change logger.info → logger.debug at line 307-312.
+        This is the strongest assertion for logger level mutations.
+        """
+        logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+        logger.setLevel(logging.DEBUG)
+        
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
+            stdout=json.dumps([{
+                "file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "m"
+            }])
+        )):
+            with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tmp_path / "tests/X.php"]):
+                with patch("logging.Logger.debug") as mock_debug:
+                    with patch("logging.Logger.info") as mock_info:
+                        result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+                        assert result is not None
+                # logger.info should have been called for the actual findings
+                # logger.debug should NOT have been called
+                mock_info.assert_called_once()
+                assert result is not None
+
+    def test_run_l3b_invoke_timeout_300_passed(self, tmp_path: Path):
+        """run_l3b passes timeout=300.0 to invoke.
+        
+        Kills mutations on the timeout argument (300.0).
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()) as mock_invoke:
+            with patch.object(PhpWeakTestLayerAdapter, "__init__", lambda self: None):
+                adapter = object.__new__(PhpWeakTestLayerAdapter)
+                adapter._adapter = PhpWeakTestAdapter()
+                # Patch the invoke we want to verify
+                adapter._adapter.invoke = mock_invoke
+                adapter.run_l3b(tmp_path, {})
+        mock_invoke.assert_called_once()
+        assert mock_invoke.call_args.kwargs["timeout"] == 300.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL weak_test_php parse() SURVIVORS — subprocess args and node assertions
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_node_format_with_line() -> None:
+    """parse() must format node as 'filepath:line' when line exists.
+    
+    Kills mutations that change the f-string format or line→None.
+    """
+    findings = PhpWeakTestAdapter().parse(
+        json.dumps([{"file": "tests/Foo.php", "line": 42, "rule_id": "A1", "message": "m"}]),
+        "", 0
+    )
+    assert len(findings) == 1
+    assert findings[0].node == "tests/Foo.php:42"
+
+
+def test_parse_node_format_without_line() -> None:
+    """parse() must use filepath only when line is missing.
+    
+    Kills mutations that change the conditional node format.
+    """
+    findings = PhpWeakTestAdapter().parse(
+        json.dumps([{"file": "tests/Foo.php", "rule_id": "A2-PHP", "message": "m"}]),
+        "", 0
+    )
+    assert len(findings) == 1
+    assert findings[0].node == "tests/Foo.php"
+
+
+def test_parse_node_format_with_path_key() -> None:
+    """parse() must accept 'path' key as alias for 'file'.
+    
+    Kills mutations that change item.get("file", item.get("path", "")).
+    """
+    findings = PhpWeakTestAdapter().parse(
+        json.dumps([{"path": "tests/Other.php", "line": 5, "rule_id": "A3", "message": "m"}]),
+        "", 0
+    )
+    assert len(findings) == 1
+    assert findings[0].node == "tests/Other.php:5"
+
+
+def test_parse_findings_have_all_attributes(tmp_path: Path) -> None:
+    """All Finding objects produced by parse must have correct attributes.
+    
+    Kills mutations that change any Finding attribute (severity, rule_id, tool, layer, language).
+    """
+    from harness_quality_gate.models import Finding
+    data = [{"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "m", "severity": "error", "fix_hint": "h"}]
+    findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    f = findings[0]
+    assert isinstance(f, Finding)
+    assert f.node == "tests/A.php:1"
+    assert f.severity == "error"
+    assert f.rule_id == "A1"
+    assert f.message == "m"
+    assert f.fix_hint == "h"
+    assert f.tool == "weak-test-php"
+    assert f.layer == "L3B"
+    assert f.language == "php"

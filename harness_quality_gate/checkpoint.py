@@ -49,17 +49,14 @@ def build(
 
     layers = []
     for lr in layer_results:
-        raw_findings = lr.get("findings", [])
+        raw_findings = lr.get("findings") or []
         findings = [_to_dict(f) for f in raw_findings]
-        # reason: lr.get() default mutations ("" →None) are equivalent when callers
-        # always provide all keys (LayerResult.__dict__). # audited: 2026-06-04
         entry: dict[str, Any] = {
-            "layer": lr.get("layer", ""),  # pragma: no mutate
-            "language": lr.get("language", ""),  # pragma: no mutate
+            "layer": lr.get("layer") or "",
+            "language": lr.get("language") or "",
             "passed": lr.get("passed", False),
             "findings": findings,
-            # reason: duration_sec default 0.0 equivalent. # audited: 2026-06-04
-            "duration_sec": lr.get("duration_sec", 0.0),  # pragma: no mutate
+            "duration_sec": lr.get("duration_sec") or 0.0,
         }
         if "per_language" in lr:
             entry["per_language"] = lr["per_language"]
@@ -74,11 +71,10 @@ def build(
         # reason: strftime format mutation doesn't change ISO shape; schema validates string type.
         # audited: 2026-06-04
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),  # pragma: no mutate
-        # reason: detection.get() default "" →None mutations equivalent; callers always provide keys.
-        # audited: 2026-06-04
-        "repository": detection.get("repo_path", ""),  # pragma: no mutate
-        # reason: same. # audited: 2026-06-04
-        "language": detection.get("language", ""),  # pragma: no mutate
+        # reason: detection.get() default "" equivalent (callers always provide keys).
+        "repository": detection.get("repo_path") or "",
+        # reason: same.
+        "language": detection.get("language") or "",
         "layers": layers,
     }
     if mutation is not None:

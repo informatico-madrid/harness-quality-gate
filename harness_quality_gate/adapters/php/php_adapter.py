@@ -144,8 +144,8 @@ class PhpAdapter(BaseAdapter):
         except (json.JSONDecodeError, OSError):
             return detected
 
-        require = data.get("require", {})
-        require_dev = data.get("require-dev", {})
+        require = data.get("require") or {}
+        require_dev = data.get("require-dev") or {}
         all_deps: dict[str, str] = {**require, **require_dev}
         require_keys = set(all_deps.keys()) if isinstance(all_deps, dict) else set()
 

@@ -80,7 +80,7 @@ class CheckovAdapter(ToolAdapter):
         if not isinstance(data, dict):
             return findings
 
-        results = data.get("results", {})
+        results = data.get("results") or {}
         if not isinstance(results, dict):
             return findings
 

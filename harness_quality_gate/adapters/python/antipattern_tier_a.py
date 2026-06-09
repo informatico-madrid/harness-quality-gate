@@ -227,9 +227,9 @@ class AntipatternVisitor(ast.NodeVisitor):
                 "is_static": is_static,
                 "is_classmethod": is_classmethod,
                 "is_property": is_property,
-                "delegates": func_data.get("delegates", False),
-                "foreign_calls": func_data.get("foreign_calls", 0),
-                "self_calls": func_data.get("self_calls", 0),
+                "delegates": func_data.get("delegates") or False,
+                "foreign_calls": func_data.get("foreign_calls") or 0,
+                "self_calls": func_data.get("self_calls") or 0,
             })
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
@@ -241,12 +241,12 @@ class AntipatternVisitor(ast.NodeVisitor):
             func = self._func_stack[-1]
             if isinstance(node.value, ast.Name):
                 if node.value.id == "self":
-                    func["self_calls"] = func.get("self_calls", 0) + 1
+                    func["self_calls"] = (func.get("self_calls") or 0) + 1
                     # Track attribute for class data
                     if self._class_stack:
                         self._class_stack[-1]["attributes"].add(node.attr)
                 else:
-                    func["foreign_calls"] = func.get("foreign_calls", 0) + 1
+                    func["foreign_calls"] = (func.get("foreign_calls") or 0) + 1
                     func["calls"].append(node.value.id + "." + node.attr)
         self.generic_visit(node)
 
@@ -506,8 +506,8 @@ def detect_ap08(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
 def detect_ap09(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
     """AP09: Feature Envy — method uses more foreign attributes than self."""
     for func in visitor.functions:
-        foreign = func.get("foreign_calls", 0)
-        self_calls = func.get("self_calls", 0)
+        foreign = func.get("foreign_calls") or 0
+        self_calls = func.get("self_calls") or 0
         total = foreign + self_calls
         if total > 0 and foreign > self_calls and foreign >= 3:
             violations.append({
@@ -596,7 +596,7 @@ def detect_ap17(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         empty_methods = 0
         total_methods = 0
         for func in visitor.functions:
-            if func["lineno"] >= subcls["lineno"] and func.get("end_lineno", 0) <= subcls.get("end_lineno", 0):
+            if func["lineno"] >= subcls["lineno"] and (func.get("end_lineno") or 0) <= (subcls.get("end_lineno") or 0):
                 total_methods += 1
                 if func["body_is_pass_or_ellipsis"]:
                     empty_methods += 1

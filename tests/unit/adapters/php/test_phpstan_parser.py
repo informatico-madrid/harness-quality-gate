@@ -341,11 +341,13 @@ def test_parse_legacy_files_non_dict_first() -> None:
     assert findings[1].message == "dict_msg"
 
 
-def test_parse_error_missing_tip_key() -> None:
+def test_parse_error_missing_tip_key_strict() -> None:
     """Error entry missing 'tip' key triggers default '' in message construction.
     
     Kills mutants 80 (get('tip', None)), 82 (get('tip', )), 85 (get('tip', 'XXXX')).
     Mutations change the default → different message string.
+    
+    Asserts exact message (not just substring) to catch ALL default-value mutations.
     """
     data: dict = {
         "file_diagnostics": [
@@ -364,7 +366,9 @@ def test_parse_error_missing_tip_key() -> None:
     # Default for err.get('tip', '') is '' → message = "Some error ()" → rstrip = "Some error"
     # If default is None → "Some error (None)" → rstrip = "Some error (None"
     # If default is 'XXXX' → "Some error (XXXX)" → rstrip = "Some error (XXXX"
+    # STRONG: exact match catches ALL three mutation variants
     assert f.message == "Some error"
+    assert f.node == "src/X.php"
 
 
 def test_parse_error_messages_rstrip_arg() -> None:
@@ -476,8 +480,6 @@ def test_parse_unknown_top_level_key() -> None:
 # KILL version() SURVIVORS (mutmut 1-18 in version method)
 # ═══════════════════════════════════════════════════════════════════════
 
-from unittest.mock import MagicMock, patch
-
 
 def test_version_binary_not_found_raises() -> None:
     """version() with no phpstan binary → RuntimeError.
@@ -503,10 +505,13 @@ def test_version_success_parses_version_string() -> None:
     mock_result.stderr = ""
 
     with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
-        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result) as mock_run:
             with tempfile.TemporaryDirectory() as tmp:
                 version = _adapter().version(Path(tmp))
-                assert version == "2.1.34"
+
+        assert version == "2.1.34"
+        # Verify subprocess was called with --version
+        assert mock_run.call_args[0][0] == ['phpstan', '--version']
 
 
 def test_version_version_key_not_first() -> None:
@@ -520,10 +525,13 @@ def test_version_version_key_not_first() -> None:
     mock_result.stderr = ""
 
     with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
-        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result) as mock_run:
             with tempfile.TemporaryDirectory() as tmp:
                 version = _adapter().version(Path(tmp))
-                assert version == "3.0.5"
+
+        assert version == "3.0.5"
+        # Verify subprocess was called with --version
+        assert mock_run.call_args[0][0] == ['phpstan', '--version']
 
 
 def test_version_no_dot_version_fallback() -> None:
@@ -537,10 +545,13 @@ def test_version_no_dot_version_fallback() -> None:
     mock_result.stderr = ""
 
     with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
-        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result) as mock_run:
             with tempfile.TemporaryDirectory() as tmp:
                 version = _adapter().version(Path(tmp))
-                assert version == "PHPStan dev-master"
+
+        assert version == "PHPStan dev-master"
+        # Verify subprocess was called with --version even for fallback
+        assert mock_run.call_args[0][0] == ['phpstan', '--version']
 
 
 def test_version_nonzero_returncode_raises() -> None:
@@ -554,10 +565,13 @@ def test_version_nonzero_returncode_raises() -> None:
     mock_result.stderr = "Error: command not found"
 
     with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
-        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result) as mock_run:
             with tempfile.TemporaryDirectory() as tmp:
                 with pytest.raises(RuntimeError, match="phpstan --version failed"):
                     _adapter().version(Path(tmp))
+
+        # Verify subprocess was called with --version in error path too
+        assert mock_run.call_args[0][0] == ['phpstan', '--version']
 
 
 def test_version_strip_stderr() -> None:
@@ -569,12 +583,15 @@ def test_version_strip_stderr() -> None:
     mock_result.returncode = 1
     mock_result.stdout = ""
     mock_result.stderr = "  error message  "
+    mock_run = MagicMock(return_value=mock_result)
 
     with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
-        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', mock_run):
             with tempfile.TemporaryDirectory() as tmp:
                 with pytest.raises(RuntimeError, match="error message"):
                     _adapter().version(Path(tmp))
+        # Verify subprocess was called with --version
+        assert mock_run.call_args[0][0] == ['phpstan', '--version']
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -781,3 +798,63 @@ def test_run_l3a_handles_parse_empty_list() -> None:
             findings = a.run_l3a(Path(tmp), {})
             assert isinstance(findings, list)
             assert len(findings) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL run_l3a() SURVIVORS — argument assertion tests (mutmut 15, 33, 34)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_run_l3a_invoke_call_args() -> None:
+    """run_l3a calls invoke with exact argument list.
+    
+    Kills mutations that change any of the args:
+    - 'analyse' → 'analyze' or None
+    - '--no-progress' → '' or removed
+    - '--error-format=json' → '--error-format=xml'
+    - '--level=max' → '--level=0'
+    - str(repo) → None
+    """
+    a = _adapter()
+    
+    mock_result = MagicMock()
+    mock_result.stdout = '{"file_diagnostics": []}'
+    mock_result.stderr = ""
+    mock_result.exitcode = 0
+
+    with patch.object(a, 'invoke', return_value=mock_result) as mock_invoke:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            a.run_l3a(repo, {})
+
+    mock_invoke.assert_called_once()
+    call_args = mock_invoke.call_args
+    assert call_args[0][0] is repo
+    args_list = call_args[0][1]
+    assert args_list[0] == "analyse"
+    assert args_list[1] == "--no-progress"
+    assert args_list[2] == "--error-format=json"
+    assert args_list[3] == "--level=max"
+    assert args_list[4] == str(repo)
+    # Verify timeout=600.0
+    assert call_args.kwargs["timeout"] == 600.0
+
+
+def test_run_l3a_env_passed_to_invoke() -> None:
+    """run_l3a passes env dict to invoke.
+    
+    Kills mutations that change env → None or env=env → env=None.
+    """
+    a = _adapter()
+    
+    mock_result = MagicMock()
+    mock_result.stdout = '{"file_diagnostics": []}'
+    mock_result.stderr = ""
+    mock_result.exitcode = 0
+
+    with patch.object(a, 'invoke', return_value=mock_result) as mock_invoke:
+        with tempfile.TemporaryDirectory() as tmp:
+            a.run_l3a(Path(tmp), {"APP_ENV": "test"})
+
+    mock_invoke.assert_called_once()
+    assert mock_invoke.call_args.kwargs["env"] == {"APP_ENV": "test"}

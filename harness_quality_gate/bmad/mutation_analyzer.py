@@ -102,7 +102,7 @@ def parse_infection(repo: Path) -> dict[str, ModuleMutStats]:
 
     stats: dict[str, ModuleMutStats] = {}
 
-    for module, mutants in data.get("mutators", {}).items():
+    for module, mutants in (data.get("mutators") or {}).items():
         if not isinstance(mutants, list):
             continue
         killed = sum(1 for m in mutants if m.get("status") == "killed")

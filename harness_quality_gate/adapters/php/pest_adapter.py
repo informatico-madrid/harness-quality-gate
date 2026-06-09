@@ -109,7 +109,7 @@ class PestAdapter(ToolAdapter):
         except (json.JSONDecodeError, OSError):
             return False
         for section in ("require", "require-dev"):
-            deps = data.get(section, {})
+            deps = data.get(section) or {}
             if isinstance(deps, dict) and "pestphp/pest-plugin-mutate" in deps:
                 return True
         return False
