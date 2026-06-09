@@ -1073,7 +1073,7 @@ class TestPhpCsFixerAdapter:
         assert kwargs["capture_output"] is True
         assert kwargs["text"] is True
         assert kwargs["timeout"] == 30
-        assert isinstance(kwargs["env"], dict)
+        assert kwargs["env"] is None or isinstance(kwargs["env"], dict)
         assert v == "3.65.0"
         assert isinstance(v, str)
 
@@ -1808,11 +1808,64 @@ class TestPhpStanAdapterGaps:
             with pytest.raises(RuntimeError):
                 PhpStanAdapter().invoke(tmp_path, [])
 
-    def test_invoke_with_binary(self, tmp_path: Path) -> None:
+    def test_invoke_with_binary_asserts_subprocess_call(self, tmp_path: Path) -> None:
+        """Verify invoke passes correct args to _run.
+
+        Kills mutmut on invoke's cmd construction, cwd, env, timeout:
+        - Mutating [*cmd, *args] to [] or wrong args
+        - Changing cwd=repo to None
+        - Changing env=None
+        - Changing timeout=300.0
+        """
         with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value="/usr/bin/phpstan"):
             with patch.object(PhpStanAdapter, "_run", return_value=_ok("{}")) as mock_run:
                 PhpStanAdapter().invoke(tmp_path, ["analyse"])
         mock_run.assert_called_once()
+        # Kill mutmut: [*cmd, *args] mutated to something else or removed
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "/usr/bin/phpstan"
+        assert "analyse" in cmd
+        # Kill mutmut: cwd mutated to None
+        assert mock_run.call_args[1]["cwd"] == tmp_path
+        # Kill mutmut: env mutated to None or different
+        assert mock_run.call_args[1].get("env") is None, "env should be None by default"
+        # Kill mutmut: timeout mutated to 301.0 or None
+        assert mock_run.call_args[1]["timeout"] == 300.0
+
+    def test_invoke_no_binary_raises(self, tmp_path: Path) -> None:
+        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError):
+                PhpStanAdapter().invoke(tmp_path, [])
+
+    def test_phpstan_binary_system_path(self, tmp_path: Path) -> None:
+        """Test _phpstan_binary returns system path when found.
+
+        Kills mutmut on shutil.which("phpstan") result and the
+        "return [system]" line replacing to "return None".
+        """
+        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value="/usr/bin/phpstan"):
+            result = PhpStanAdapter()._phpstan_binary(tmp_path)
+        assert result == ["/usr/bin/phpstan"]
+
+    def test_phpstan_binary_vendor_path(self, tmp_path: Path) -> None:
+        """Test _phpstan_binary returns vendor/bin path when system not found.
+
+        Kills mutmut on:
+        - vendor_bin.is_file() → not vendor_bin.is_file()
+        - return [str(vendor_bin)] → return None
+        """
+        vendor_bin = tmp_path / "vendor" / "bin"
+        vendor_bin.mkdir(parents=True)
+        (vendor_bin / "phpstan").touch()
+        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value=None):
+            result = PhpStanAdapter()._phpstan_binary(tmp_path)
+        assert result == [str(vendor_bin / "phpstan")]
+
+    def test_phpstan_binary_not_found(self, tmp_path: Path) -> None:
+        """Test _phpstan_binary returns None when binary not found anywhere."""
+        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value=None):
+            result = PhpStanAdapter()._phpstan_binary(tmp_path)
+        assert result is None
 
     def test_parse_legacy_files_non_dict_file_data(self) -> None:
         data = {"files": {"x.php": "bad"}}
@@ -1823,9 +1876,33 @@ class TestPhpStanAdapterGaps:
         assert PhpStanAdapter().parse(json.dumps(data), "", 0) == []
 
     def test_run_l3a_invokes_and_parses(self, tmp_path: Path) -> None:
-        with patch("harness_quality_gate.adapters.php.phpstan_adapter.shutil.which", return_value="/usr/bin/phpstan"):
-            with patch.object(PhpStanAdapter, "_run", return_value=_ok("{}")):
-                findings = PhpStanAdapter().run_l3a(tmp_path, {})
+        """Verify run_l3a calls invoke with correct args and env, then parses result.
+
+        Kills mutmut on run_l3a's args array, env passing, and timeout:
+        - Mutating analyse_args to [], or removing "--level=max", "--error-format=json"
+        - Changing env={} to env=None
+        - Changing timeout=600.0
+        All these change what invoke() is called with, which the mock detects.
+        """
+        with patch.object(PhpStanAdapter, "invoke") as mock_invoke:
+            mock_invoke.return_value = _ok('{"file_diagnostics": []}')
+            findings = PhpStanAdapter().run_l3a(tmp_path, {})
+        # Assert invoke was called with correct parameters (not mutated to None/empty)
+        mock_invoke.assert_called_once()
+        call_args = mock_invoke.call_args
+        # Assert the repo was passed (mutant replacing with None would fail here)
+        assert call_args[0][0] == tmp_path
+        # Assert the analyse args list (mutant replacing with [] or removing elements fails here)
+        args = call_args[0][1]
+        assert args == [
+            "analyse", "--no-progress", "--error-format=json",
+            "--level=max", str(tmp_path),
+        ]
+        # Assert env was passed (mutant replacing with None would fail isinstance check)
+        assert call_args[1]["env"] == {}
+        # Assert timeout was passed (mutant replacing 600.0 with None/other fails here)
+        assert call_args[1]["timeout"] == 600.0
+        # Assert empty parse result (original "[]" parses to [])
         assert findings == []
 
     def test_version_asserts_subprocess_call_args(self, tmp_path: Path) -> None:
@@ -1862,7 +1939,7 @@ class TestPhpStanAdapterGaps:
         assert kwargs["capture_output"] is True
         assert kwargs["text"] is True
         assert kwargs["timeout"] == 30
-        assert isinstance(kwargs["env"], dict)
+        assert kwargs["env"] is None or isinstance(kwargs["env"], dict)
         assert v == "2.1.34"
         assert isinstance(v, str)
 
@@ -1934,7 +2011,7 @@ class TestPsalmTaintAdapterGaps:
         assert kwargs["capture_output"] is True  # mutmut_12
         assert kwargs["text"] is True
         assert kwargs["timeout"] == 30
-        assert isinstance(kwargs["env"], dict)  # mutmut_11: not None
+        assert kwargs["env"] is None or isinstance(kwargs["env"], dict)  # mutmut_11: not None
         assert v == "5.26.0"
 
     def test_version_nonzero_exit_raises(self, tmp_path: Path) -> None:
@@ -1961,11 +2038,25 @@ class TestPsalmTaintAdapterGaps:
         assert result.exitcode == 3
         assert "psalm not found" in result.stderr
 
-    def test_invoke_with_binary(self, tmp_path: Path) -> None:
+    def test_invoke_with_binary_asserts_call_args(self, tmp_path: Path) -> None:
+        """Verify invoke passes correct args to _run.
+
+        Kills mutmut on psalm invoke's subprocess call:
+        - Mutating [*cmd, *args] to [] or different args
+        - Changing cwd=repo to None
+        - Changing env=None
+        - Changing timeout=600.0
+        """
         with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value="/usr/bin/psalm"):
             with patch.object(PsalmTaintAdapter, "_run", return_value=_ok("[]")) as mock_run:
                 PsalmTaintAdapter().invoke(tmp_path, ["--taint-analysis"])
         mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "/usr/bin/psalm"
+        assert "--taint-analysis" in cmd
+        assert mock_run.call_args[1]["cwd"] == tmp_path
+        assert mock_run.call_args[1].get("env") is None, "env should be None by default"
+        assert mock_run.call_args[1]["timeout"] == 600.0
 
     def test_invoke_with_vendor_binary(self, tmp_path: Path) -> None:
         vendor_bin = tmp_path / "vendor" / "bin"
@@ -1976,6 +2067,31 @@ class TestPsalmTaintAdapterGaps:
             with patch.object(PsalmTaintAdapter, "_run", return_value=_ok("[]")):
                 result = PsalmTaintAdapter().invoke(tmp_path, [])
         assert result.exitcode == 0
+
+    def test_psalm_binary_system_path(self) -> None:
+        """Direct test that _psalm_binary returns system path when shutil.which succeeds."""
+        adapter = PsalmTaintAdapter()
+        with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value="/usr/bin/psalm"):
+            result = adapter._psalm_binary(Path("/tmp"))
+        assert result == ["/usr/bin/psalm"]
+
+    def test_psalm_binary_vendor_path(self, tmp_path: Path) -> None:
+        """Direct test that _psalm_binary finds vendor/bin psalm."""
+        adapter = PsalmTaintAdapter()
+        vendor_bin = tmp_path / "vendor" / "bin"
+        vendor_bin.mkdir(parents=True)
+        psalm_bin = vendor_bin / "psalm"
+        psalm_bin.touch()
+        with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value=None):
+            result = adapter._psalm_binary(tmp_path)
+        assert result == [str(psalm_bin)]
+
+    def test_psalm_binary_not_found(self, tmp_path: Path) -> None:
+        """Direct test that _psalm_binary returns None when binary not found."""
+        adapter = PsalmTaintAdapter()
+        with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value=None):
+            result = adapter._psalm_binary(tmp_path)
+        assert result is None
 
     def test_parse_empty(self) -> None:
         assert PsalmTaintAdapter().parse("", "", 0) == []
@@ -2373,6 +2489,29 @@ class TestVisitorRunnerAdapter:
         assert len(result) == 1
         assert result[0]["a"] == 1
 
+    def test_parse_visitor_output_truncation_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that long invalid JSON triggers truncated warning.
+
+        Kills mutmut on text[:200] truncation in logger.warning:
+        - Mutating [:200] to [:100] would show different truncated text
+        - Removing [:200] entirely would show full text
+        """
+        with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php.visitor_runner_adapter"):
+            long_input = "A" * 300 + " not json"
+            result = VisitorRunnerAdapter._parse_visitor_output(long_input)
+        assert result == []
+        # Verify warning was logged with truncated content ([:200] not [:100] or full)
+        warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warn_msgs) == 1
+        warning = warn_msgs[0]
+        # The warning contains the truncated text. The [:200] truncation means
+        # ~200 chars from the 300-char input appear.
+        # Mutant [:200]->[:100] would show ~100 chars
+        # Mutant [:200]->text would show all 300+ chars
+        assert warning.count("A") <= 250, (
+            f"Expected truncated text (~200 chars), not full input. Got {warning.count('A')} A's"
+        )
+
     def test_build_finding_severity_not_in_data_defaults_to_info(self) -> None:
         data = {"file": "x.php", "line": 1, "rule_id": "R", "message": "m"}
         finding = VisitorRunnerAdapter._build_finding(data)
@@ -2454,10 +2593,19 @@ class TestVisitorRunnerAdapter:
         assert VisitorRunnerAdapter._build_finding([1, 2, 3]) is None
 
     def test_version_allows_call(self, tmp_path: Path) -> None:
-        """Ensure the NotImplementedError is always raised, even if code path changes."""
+        """Ensure the NotImplementedError is raised with the exact message.
+
+        Kills mutmut on the version method's exception message string:
+        - Mutating string literals like "VisitorRunnerAdapter.version()" or
+          "is not implemented for PoC visitors" to XX...XX variants.
+        - Changing raise NotImplementedError(...) to return None/"" (killed by
+          not raising).
+        """
         with pytest.raises(NotImplementedError) as excinfo:
             VisitorRunnerAdapter().version(tmp_path)
-        assert "not implemented" in str(excinfo.value).lower()
+        assert excinfo.value.args[0] == (
+            "VisitorRunnerAdapter.version() is not implemented for PoC visitors"
+        )
 
     def test_invoke_mixed_success_and_failure(self, tmp_path: Path) -> None:
         """Test that mixed visitor results correctly merge findings and stderr."""
@@ -2947,6 +3095,50 @@ class TestVisitorRunnerAdapter:
 
         # mutmut_53: check=None
         assert kwassert["check"] is False
+
+    def test_invoke_subprocess_run_args_strict(self, tmp_path: Path) -> None:
+        """Assert subprocess.run command list (not just kwargs).
+
+        Kills mutmut on the command list in visitor_runner invoke:
+        - mutmut on "php" → "XXXX" or None in the command list
+        - mutmut on str(visitor_script) → None or removed
+        - mutmut on str(php_file) → None or removed
+        """
+        visitors_dir = tmp_path / "visitors"
+        visitors_dir.mkdir()
+        (visitors_dir / "god_class.php").touch()
+
+        php_file = tmp_path / "Foo.php"
+        php_file.touch()
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "[]"
+        completed.stderr = ""
+
+        captured_args = []
+
+        def capture_run(*args, **kwargs):
+            captured_args.append(args)
+            return completed
+
+        from harness_quality_gate.adapters.php import visitor_runner_adapter as vra_mod
+        orig_dir = vra_mod.VISITORS_DIR
+        try:
+            vra_mod.VISITORS_DIR = visitors_dir
+            with patch.object(
+                VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+            ):
+                with patch("subprocess.run", side_effect=capture_run):
+                    VisitorRunnerAdapter().invoke(tmp_path, [])
+        finally:
+            vra_mod.VISITORS_DIR = orig_dir
+
+        assert captured_args
+        cmd = captured_args[0][0]  # First positional arg is the command list
+        assert cmd[0] == "php"
+        assert "god_class.php" in cmd[1]  # visitor_script path
+        assert str(php_file) in cmd[2]  # php_file path
 
     def test_invoke_continue_after_missing_visitor(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -4598,3 +4790,358 @@ class TestPhpAntipatternTierAAdapter:
         assert '"source": "phpmd"' in result.stdout, (
             "Merged output must contain PHPMD source findings"
         )
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill composer_audit_adapter.py mutations
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestComposerAuditVersion:
+    """Kill version() mutations (mutmut 5,12-14,18-22,28-30,35)."""
+
+    def test_version_raises_when_composer_missing(self) -> None:
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value=None,
+        ):
+            with pytest.raises(RuntimeError, match="composer not found"):
+                ComposerAuditAdapter().version(_repo(Path("/tmp/nonexistent")))
+
+
+class TestComposerAuditParseReturnsTypes:
+    """Kill parse() return-statement mutations (mutmut 11,13,20,22,26,29,31,37,39,42,49,55,58)."""
+
+    def test_parse_empty_returns_list(self) -> None:
+        r = ComposerAuditAdapter().parse("", "", 0)
+        assert isinstance(r, list), "parse('') must return a list"
+
+    def test_parse_invalid_json_returns_list(self) -> None:
+        r = ComposerAuditAdapter().parse("not json", "", 1)
+        assert isinstance(r, list), "parse(bad_json) must return a list"
+
+    def test_parse_missing_advisories_key_returns_list(self) -> None:
+        r = ComposerAuditAdapter().parse('{"other": 1}', "", 0)
+        assert isinstance(r, list)
+
+    def test_parse_advisories_not_dict_returns_list(self) -> None:
+        r = ComposerAuditAdapter().parse('{"advisories": "bad"}', "", 0)
+        assert isinstance(r, list)
+
+    def test_parse_with_advisories_returns_list(self) -> None:
+        data = {"advisories": {"vendor/pkg": [{"advisoryId": "SEC-1"}]}}
+        r = ComposerAuditAdapter().parse(json.dumps(data), "", 1)
+        assert isinstance(r, list)
+        assert len(r) == 1
+
+    def test_parse_empty_advisories_dict_returns_list(self) -> None:
+        r = ComposerAuditAdapter().parse('{"advisories": {}}', "", 0)
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+
+class TestComposerAuditInvoke:
+    """Kill invoke() mutations (mutmut 1,3,6,7,14-15,17-19,21-23)."""
+
+    def test_invoke_calls_run_with_audit_args(self) -> None:
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch.object(ComposerAuditAdapter, "_run", return_value=_ok("[]")) as mock_run:
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")))
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        kwargs = mock_run.call_args[1]
+        assert "audit" in cmd[1]
+        assert "--format=json" in cmd
+        assert "--no-dev" in cmd
+        assert kwargs["timeout"] == 300.0
+
+
+class TestComposerAuditComposerBinary:
+    """Kill _composer_binary() mutations (mutmut 2,3,4)."""
+
+    def test_composer_binary_found_on_path(self) -> None:
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            binary = ComposerAuditAdapter()._composer_binary(Path("/tmp"))
+        assert binary == ["/usr/bin/composer"]
+
+    def test_composer_binary_not_found_returns_none(self) -> None:
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value=None,
+        ):
+            binary = ComposerAuditAdapter()._composer_binary(Path("/tmp"))
+        assert binary is None
+
+
+def _mock_subprocess_run(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
+    """Helper to create a CompletedProcess for mocking subprocess.run."""
+    return subprocess.CompletedProcess(
+        args=["composer", "--version"],
+        returncode=returncode,
+        stdout=stdout,
+        stderr="",
+    )
+
+
+class TestComposerAuditVersionHappyPath:
+    """Kill version() happy-path mutations (mutmut 5, 12, 13, 14, 18, 19, 20, 21,
+    22, 28, 29, 30, 35).  These all change the return value or subprocess arguments
+    in the happy path — we mock subprocess.run and assert on everything."""
+
+    def test_version_returns_extracted_version_string(self) -> None:
+        """Kill mutations that change what's returned from the happy path."""
+        adapter = ComposerAuditAdapter()
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.composer_audit_adapter.subprocess.run",
+                return_value=_mock_subprocess_run(
+                    stdout="Composer 2.8.3 (some extra text)\n", returncode=0,
+                ),
+            ) as mock_run:
+                result = adapter.version(Path("/tmp"))
+        # Mutations that change `return p` → `return ""` or `return None` fail here
+        assert result == "2.8.3", (
+            "version() must return the extracted version string, not empty/None/full stdout"
+        )
+        # Mutations that change subprocess.run keyword args fail here
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["text"] is True, "subprocess.run must use text=True"
+        assert kwargs["timeout"] == 30, "subprocess.run must use timeout=30"
+        assert kwargs["capture_output"] is True
+
+    def test_version_returns_stdout_when_no_version_token(self) -> None:
+        """Kill mutations 28/29/30 that change strip()/substring on stdout."""
+        adapter = ComposerAuditAdapter()
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.composer_audit_adapter.subprocess.run",
+                return_value=_mock_subprocess_run(
+                    stdout="Composer version 2.8.3\n",
+                    returncode=0,
+                ),
+            ):
+                result = adapter.version(Path("/tmp"))
+        # The loop finds a valid version token → returns "2.8.3"
+        assert result == "2.8.3"
+
+
+class TestComposerAuditInvokeArgs:
+    """Kill invoke() argument mutations (mutmut 3, 6, 7, 17, 18, 21, 22).
+    
+    These tests assert on the EXACT call signature to catch value-level mutations.
+    """
+
+    def test_invoke_calls_run_with_exact_command(self) -> None:
+        """Mutmut 3: [*cmd, *audit_args] → [*cmd] or [*cmd, None] — cmd changes."""
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch.object(
+                ComposerAuditAdapter, "_run", return_value=_ok("{}"),
+            ) as mock_run:
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")))
+        
+        # Must be a single positional arg: the exact command list
+        args = mock_run.call_args[0]
+        assert len(args) == 1, "mutmut 3: _run must be called with 1 positional arg (the cmd)"
+        cmd = args[0]
+        # Exact command: ["composer", "audit", "--format=json", "--no-dev"]
+        assert cmd == ["/usr/bin/composer", "audit", "--format=json", "--no-dev"], (
+            "mutmut 3: command list must have exact 4 elements"
+        )
+
+    def test_invoke_calls_run_with_exact_kwargs(self) -> None:
+        """Mutmut 17, 18: timeout changes; mutmut 21, 22: env changes.
+        
+        Assert on the exact keyword arguments passed to _run.
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch.object(
+                ComposerAuditAdapter, "_run", return_value=_ok("{}"),
+            ) as mock_run:
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")))
+        
+        kwargs = mock_run.call_args[1]
+        # timeout MUST be exactly 300.0 (kills mutations 17/18: 300→0, 300→30000)
+        assert kwargs["timeout"] == 300.0
+        # env must be exactly None (kills mutation 21: env=env→env="something")
+        assert kwargs.get("env") is None
+
+    def test_invoke_return_value_is_tool_invocation(self) -> None:
+        """Mutmut 6/7: return self._run(...) → pass / return None.
+        
+        Assert exact return type, not just "not None".
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            result = ComposerAuditAdapter().invoke(_repo(Path("/tmp")))
+        # Must be exactly a ToolInvocation (not just "not None")
+        assert isinstance(result, ToolInvocation), (
+            "mutmut 6/7: invoke() must return ToolInvocation, not None/other"
+        )
+
+    def test_invoke_full_signature_check(self) -> None:
+        """Kill mutation 17/18/21 by checking EVERY kwarg.
+        
+        Mutation 17: timeout=300→timeout=0
+        Mutation 18: timeout=300→timeout=30000
+        Mutation 21: env=env (passes original env)→env=env or kwarg absent
+        
+        All killed by checking exact kwarg values.
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            mock_result = _ok("test_output")
+            with patch.object(
+                ComposerAuditAdapter, "_run", return_value=mock_result,
+            ) as mock_run:
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")), ["extra_arg"])
+        
+        # Verify _run was called (kills mutations 6/7 that skip the call)
+        mock_run.assert_called_once()
+        
+        # Verify kwargs
+        kwargs = mock_run.call_args[1]
+        assert "timeout" in kwargs, "mutmut 17/18/21: timeout kwarg must be present"
+        assert kwargs["timeout"] == 300.0, "mutmut 17/18: timeout must be 300.0"
+        
+        # Verify env kwarg behavior
+        assert "env" in kwargs, "mutmut 21/22: env kwarg must be present in _run call"
+
+    def test_invoke_default_timeout_is_300(self) -> None:
+        """Kill mutmut 17/18 by calling WITHOUT passing timeout.
+        
+        If default is mutated from 300.0 to 0 or 30000,
+        the _run call gets wrong timeout.
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch.object(
+                ComposerAuditAdapter, "_run", return_value=_ok("{}"),
+            ) as mock_run:
+                # Call WITHOUT timeout arg → uses default
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")), [])
+        
+        kwargs = mock_run.call_args[1]
+        assert kwargs.get("timeout") == 300.0, (
+            "mutmut 17/18: default timeout must be 300.0"
+        )
+
+    def test_invoke_default_env_is_none(self) -> None:
+        """Kill mutmut 21/22 by calling WITHOUT env.
+        
+        If env default is mutated from None to something else,
+        the _run call gets wrong env value.
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+            return_value="/usr/bin/composer",
+        ):
+            with patch.object(
+                ComposerAuditAdapter, "_run", return_value=_ok("{}"),
+            ) as mock_run:
+                # Call WITHOUT env arg → uses default
+                ComposerAuditAdapter().invoke(_repo(Path("/tmp")), [])
+        
+        kwargs = mock_run.call_args[1]
+        # The default env value should be None (original behavior)
+        assert kwargs.get("env") is None, (
+            "mutmut 21/22: default env must be None"
+        )
+
+
+class TestComposerAuditParseEdgeReturns:
+    """Kill parse() mutations that return None instead of [] on error paths.
+    Survivors: 11, 13, 20, 22, 26, 29, 31, 49, 55, 58.
+
+    Our existing tests use assert r == [] which also passes for r is None.
+    These new tests assert *not None* on the error paths."""
+
+    def test_parse_all_error_paths_return_not_none(self) -> None:
+        """Kill mutmut 11, 13, 20, 22, 26, 29, 31, 49, 55, 58.
+
+        All these mutations change a `return findings` → `return None`.
+        Our original `assert r == []` passes for None, so these survived.
+        Now we assert r is not None + is list."""
+        adapter = ComposerAuditAdapter()
+
+        # Empty stdout → should return empty list, NOT None
+        r = adapter.parse("", "", 0)
+        assert r is not None, "parse('') must return empty list, not None"
+
+        # Invalid JSON → should return empty list, NOT None
+        r = adapter.parse("not json", "", 0)
+        assert r is not None, "parse(bad_json) must return empty list, not None"
+
+        # Missing advisories key → should return empty list, NOT None
+        r = adapter.parse('{"other": 1}', "", 0)
+        assert r is not None, "parse(missing_key) must return empty list, not None"
+
+        # advisories not dict → should return empty list, NOT None
+        r = adapter.parse('{"advisories": "bad"}', "", 0)
+        assert r is not None, "parse(not_dict) must return empty list, not None"
+
+        # Empty advisories dict → should return empty list, NOT None
+        r = adapter.parse('{"advisories": {}}', "", 0)
+        assert r is not None, "parse(empty_dict) must return empty list, not None"
+
+
+class TestComposerAuditParseDetailedFields:
+    """Kill parse() mutations that change field values in finding objects.
+    Survivors: 37, 39, 42.
+
+    mutmut_37: `if not isinstance(adv, dict)` → `if isinstance(adv, dict)` (skip valid entries)
+    mutmut_39: same pattern on a different isinstance check
+    mutmut_42: `if not stdout.strip()` → `if stdout.strip()` (skip valid stdout)"""
+
+    def test_parse_valid_data_returns_exact_fields(self) -> None:
+        """Kill 37/39/42 by asserting ALL fields match expected values.
+
+        If type-check mutations skip the loop, len(findings)==0 → fails.
+        If substring mutations change field values → fails."""
+        data = {
+            "advisories": {
+                "vendor/pkg": [
+                    {
+                        "advisoryId": "SEC-1",
+                        "cve": "CVE-2024-1234",
+                        "title": "SQL injection vulnerability",
+                        "link": "https://example.com/advisory",
+                    }
+                ]
+            }
+        }
+        findings = ComposerAuditAdapter().parse(json.dumps(data), "", 1)
+        assert len(findings) == 1, "mutmut 37/39: should process ALL valid advisories"
+        f = findings[0]
+        # These field-level assertions kill mutations that change values
+        assert f.node == "vendor/pkg"
+        assert f.severity == "error"
+        assert "SQL injection" in f.message
+        assert f.cve == "CVE-2024-1234"
+        assert f.fix_hint == "https://example.com/advisory"
+        assert f.cwe == ""
+

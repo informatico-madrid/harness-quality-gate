@@ -7,6 +7,11 @@ parse_stats() convenience wrapper, and invalid input.
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from harness_quality_gate.adapters.php.deptrac_adapter import DeptracAdapter
 
@@ -270,13 +275,38 @@ def test_parse_stats_valid() -> None:
 def test_parse_stats_invalid_json() -> None:
     """parse_stats with bad JSON → zeroed dict."""
     arch = _adapter().parse_stats("garbage")
+    assert isinstance(arch, dict), "parse_stats must return a dict (not None/False)"
     assert arch == {"violations": 0, "uncovered_classes": 0}
 
 
 def test_parse_stats_missing_report() -> None:
     """parse_stats without Report key → zeroed dict."""
     arch = _adapter().parse_stats('{"other": 1}')
+    assert isinstance(arch, dict), "parse_stats must return a dict (not None/False)"
     assert arch == {"violations": 0, "uncovered_classes": 0}
+
+
+def test_parse_stats_returns_dict_type() -> None:
+    """parse_stats always returns a dict — kills 'return' → return None/False mutations.
+
+    Kills mutmut_11, 13 (return → return None/False from try block),
+    mutmut_21-23 (return → None/False/empty from if-not-dict guard).
+    """
+    # Valid data
+    arch1 = _adapter().parse_stats('{"Report": {"Violations": 1}}')
+    assert isinstance(arch1, dict)
+
+    # Empty
+    arch2 = _adapter().parse_stats("")
+    assert isinstance(arch2, dict)
+
+    # Bad JSON
+    arch3 = _adapter().parse_stats("not json")
+    assert isinstance(arch3, dict)
+
+    # Report not a dict
+    arch4 = _adapter().parse_stats('{"Report": "string"}')
+    assert isinstance(arch4, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -296,3 +326,191 @@ def test_architecture_property() -> None:
 def test_architecture_property_unset() -> None:
     """architecture property before parse → empty dict."""
     assert _adapter().architecture == {}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill parse() return-statement mutations (mutmut 94-103, 108-111)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_returns_list_on_empty_output() -> None:
+    """parse('') → list (kills 'return None'/return False mutations).
+
+    Kills mutmut_94 and nearby: 'return findings' → 'return None/False'.
+    """
+    findings = _adapter().parse("", "", 0)
+    assert isinstance(findings, list), "parse('') must return a list"
+    assert len(findings) == 0
+
+
+def test_parse_returns_list_on_invalid_json() -> None:
+    """parse('bad json') → list (kills 'return findings' mutations).
+
+    Kills mutmut_95-96 and mutmut_108-109: mutations on early return.
+    """
+    findings = _adapter().parse("not json at all", "", 1)
+    assert isinstance(findings, list), "parse(bad_json) must return a list"
+    assert len(findings) == 0
+
+
+def test_parse_returns_list_on_non_dict_report() -> None:
+    """parse('{"Report":"str"}') → list (kills mid-return mutations).
+
+    Kills mutmut_101-103: mutations on 'return findings' at line 138.
+    """
+    findings = _adapter().parse('{"Report": "string"}', "", 0)
+    assert isinstance(findings, list)
+    assert len(findings) == 0
+
+
+def test_parse_returns_list_on_count_violations() -> None:
+    """parse with Violations as int → list with count finding.
+
+    Kills mutmut_110-111: mutations on 'return findings' at line 180.
+    """
+    data = {"Report": {"Violations": 3, "UncoveredClasses": 1}}
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert isinstance(findings, list)
+    assert len(findings) == 1
+
+
+def test_parse_returns_list_on_list_violations() -> None:
+    """parse with Violations as list → list with per-violation findings.
+
+    Also kills mutmut_110-111 if the loop is taken.
+    """
+    data = {
+        "Report": {
+            "Violations": [
+                {"file": "a.php", "message": "V1"},
+            ]
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert isinstance(findings, list)
+    assert len(findings) == 1
+    assert findings[0].node == "a.php"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# kill parse_stats() return-statement mutations
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_stats_returns_dict() -> None:
+    """parse_stats always returns a dict — kills 'return None/{}' mutations.
+
+    Kills mutmut_11 (return None), 13 (return {}), 21-23 (return mutations).
+    """
+    import json
+    result = _adapter().parse_stats(json.dumps({"Report": {"Violations": 5, "UncoveredClasses": 2}}))
+    assert isinstance(result, dict), "parse_stats must return dict"
+    assert result["violations"] == 5
+    assert result["uncovered_classes"] == 2
+
+
+def test_parse_stats_bad_json_returns_default_dict() -> None:
+    """parse_stats('bad') → default dict (not None/False).
+
+    Kills mutmut_11-13: mutations on return in except block.
+    """
+    result = _adapter().parse_stats("garbage")
+    assert isinstance(result, dict), "parse_stats('bad') must return dict"
+    assert result == {"violations": 0, "uncovered_classes": 0}
+
+
+def test_parse_stats_missing_report_returns_default_dict() -> None:
+    """parse_stats with missing Report → default dict.
+
+    Kills mutmut_21-23: mutations on return at line 208.
+    """
+    result = _adapter().parse_stats('{"foo": "bar"}')
+    assert isinstance(result, dict)
+    assert result == {"violations": 0, "uncovered_classes": 0}
+
+
+def test_parse_stats_not_dict_report_returns_default_dict() -> None:
+    """parse_stats with non-dict Report → default dict.
+
+    Kills mutmut_21-23: mutations on return at line 204-208.
+    """
+    result = _adapter().parse_stats('{"Report": "not a dict"}')
+    assert isinstance(result, dict)
+    assert result == {"violations": 0, "uncovered_classes": 0}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill invoke mutations (mutmut 1, 14, 17-29)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_raises_when_binary_missing() -> None:
+    """invoke with missing deptrac binary → raises RuntimeError.
+
+    Kills mutmut_1: remove if not deptrac_bin.is_file(): early return guard.
+    Kills mutmut_14: change condition (is_file → not is_file or similar).
+    """
+    import tempfile
+    adapter = DeptracAdapter()
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        repo = Path(tmp)
+        # No deptrac binary — is_file() → False
+        with pytest.raises(RuntimeError, match="deptrac not found"):
+            adapter.invoke(repo, [])
+
+
+def test_invoke_calls_run_with_correct_cmd() -> None:
+    """invoke creates correct command and passes through _run.
+
+    Kills mutmut_17 (cmd mutation → empty), 18-19 (analyse/formatter mutations),
+    20-21 ([*cmd, *args] mutation → empty/corrupted), 27-29 (return path mutations).
+    """
+    import tempfile
+    adapter = DeptracAdapter()
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        repo = Path(tmp)
+        # Create the deptrac binary
+        bin_path = repo / "vendor" / "bin"
+        bin_path.mkdir(parents=True)
+        (bin_path / "deptrac").touch()
+
+        mock_result = MagicMock()
+        mock_result.stdout = '{"Report": {}}'
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DeptracAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(repo, ["--some-flag"])
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        cwd = mock_run.call_args[1]["cwd"]
+
+        # Kills mutmut_19, 20: command args forwarded
+        assert "deptrac" in cmd[0] or "deptrac" in cmd
+        assert "--formatter=json" in cmd
+        assert "analyse" in cmd
+        assert "--some-flag" in cmd
+
+        # Kills mutmut_27, 28: cwd must be set to repo
+        assert cwd == repo, "cwd must be repo path"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill version() NotImplementedError mutations (mutmut 1-4)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_version_raises_not_implemented() -> None:
+    """version() always raises NotImplementedError.
+
+    Kills mutmut_1, 2, 3, 4: all mutations on the raise statement or message.
+    """
+    import tempfile
+    from pathlib import Path
+    adapter = DeptracAdapter()
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(NotImplementedError):
+            adapter.version(Path(tmp))

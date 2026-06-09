@@ -7,6 +7,7 @@ Design: Mutation testing / python_adapter coverage
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -67,6 +68,9 @@ def _all_tools_on_path(which_map: dict[str, str | None] | None = None):
         defaults.update(which_map)
 
     def _which(name):
+        # Handle absolute paths (the code sometimes passes /usr/bin/python3 directly)
+        if os.path.isabs(name):
+            return name
         return defaults.get(name)
 
     return patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", side_effect=_which)
@@ -974,14 +978,22 @@ class TestRunPyrightHelper:
         return PythonAdapter()
 
     def test_run_pyright_tool_found(self, tmp_path: Path):
-        """Pyright on PATH -> parse returns findings."""
+        """Pyright on PATH -> invoke + parse called with correct args -> findings returned."""
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[_make_finding(tool="pyright")])
         findings = a._run_pyright(tmp_path, {})
         assert len(findings) == 1
+        # Kill mutations on invoke() args: repo and [] (not None/removed/wrong)
+        inv_args, inv_kwargs = a.pyright.invoke.call_args
+        assert inv_args[0] is tmp_path
+        assert inv_args[1] == []
+        # Kill mutations on parse() args: not None, proper types (not swapped)
+        pars_args, pars_kwargs = a.pyright.parse.call_args
+        assert pars_args[0] is not None
+        assert isinstance(pars_args[0], str)
 
     def test_run_pyright_tool_not_found(self, tmp_path: Path):
-        """Pyright not on PATH -> empty list."""
+        """Pyright not on PATH -> early return empty list."""
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
@@ -989,11 +1001,16 @@ class TestRunPyrightHelper:
         assert findings == []
 
     def test_run_pyright_oserror(self, tmp_path: Path):
-        """Pyright.invoke raises OSError -> empty list."""
+        """Pyright.invoke raises OSError -> empty list + invoke was called correctly."""
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         a.pyright.invoke = MagicMock(side_effect=OSError("pyright exec failed"))
         findings = a._run_pyright(tmp_path, {})
+        # Kill mutations: verify invoke was called with repo+[]
+        assert a.pyright.invoke.called
+        inv_args = a.pyright.invoke.call_args[0]
+        assert inv_args[0] is tmp_path
+        assert inv_args[1] == []
         assert findings == []
 
 
@@ -1023,9 +1040,65 @@ class TestRunPytestHelper:
             findings = a._run_pytest(tmp_path, {})
         assert findings == []
 
+    def test_run_pytest_tool_not_found(self, tmp_path: Path):
+        """python3 not found on PATH -> empty list, no invoke called."""
+        a = self._adapter()
+        a.pytest = _mock_subadapter(findings=[])
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            return_value=None,
+        ):
+            findings = a._run_pytest(tmp_path, {})
+        assert findings == []
 
+    def test_run_pytest_invoke_args_strict(self, tmp_path: Path):
+        """Validate invoke() receives (repo, []) — kills argument mutations."""
+        a = self._adapter()
+        mock_pytest = MagicMock()
+        mock_pytest.parse.return_value = [_make_finding(tool="pytest")]
+        a.pytest = mock_pytest
+        with _all_tools_on_path({"python3": "/usr/bin/python3"}):
+            findings = a._run_pytest(tmp_path, {})
+        assert findings
+        assert mock_pytest.invoke.call_args[0][0] is tmp_path
+        assert mock_pytest.invoke.call_args[0][1] == []
+
+    def test_run_pytest_parse_args_strict(self, tmp_path: Path):
+        """Validate parse() receives (stdout, stderr, exitcode) — kills arg mutations."""
+        from harness_quality_gate.adapters.python.pytest_adapter import PytestAdapter
+
+        a = self._adapter()
+        real_adapter = PytestAdapter()
+        mock_pytest = MagicMock()
+        mock_pytest.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        mock_pytest.parse = MagicMock(wraps=real_adapter.parse)
+        with patch.object(a, "pytest", mock_pytest):
+            findings = a._run_pytest(tmp_path, {})
+        assert mock_pytest.parse.called
+        pars_args = mock_pytest.parse.call_args[0]
+        assert pars_args[0] is not None
+        assert pars_args[1] is not None
+        assert pars_args[2] is not None
+
+    def test_run_pytest_invoke_return_propagated(self, tmp_path: Path):
+        """invoke() result flows to parse() — kills remove-mutations."""
+        from harness_quality_gate.adapters.python.pytest_adapter import PytestAdapter
+
+        a = self._adapter()
+        real_adapter = PytestAdapter()
+        mock_pytest = MagicMock()
+        mock_pytest.parse = real_adapter.parse
+        mock_pytest.invoke.return_value = MagicMock(
+            stdout="[{'message': 'test'}]", stderr="", exitcode=0,
+        )
+        with patch.object(a, "pytest", mock_pytest):
+            findings = a._run_pytest(tmp_path, {})
+        assert isinstance(findings, list)
+        inv_args = mock_pytest.invoke.call_args[0]
+        assert inv_args[0] is tmp_path
+        assert inv_args[1] == []
 # ---------------------------------------------------------------------------
-# Private helper: _run_vulture
+# Private helper: _run_vulture - ENHANCED
 # ---------------------------------------------------------------------------
 
 class TestRunVultureHelper:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from unittest.mock import patch, MagicMock
 
@@ -479,7 +480,6 @@ class TestDepAnalyserInvokeBinaryNotFound:
                 "harness_quality_gate.adapters.php.dep_analyser_adapter.shutil.which",
                 return_value="/usr/bin/composer-dependency-analyser",
             ):
-                from pathlib import Path
                 DepAnalyserAdapter().invoke(repo=Path("/tmp/repo"), args=["--json"])
 
         mock_run.assert_called_once()
@@ -507,7 +507,6 @@ class TestDepAnalyserInvokeBinaryNotFound:
 
         with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
             with patch.object(shutil, "which", side_effect=mock_which):
-                from pathlib import Path
                 vendor_bin = Path("/tmp/repo/vendor/bin/composer-dependency-analyser")
                 vendor_bin.parent.mkdir(parents=True, exist_ok=True)
                 vendor_bin.touch()
@@ -515,4 +514,240 @@ class TestDepAnalyserInvokeBinaryNotFound:
 
         call_args = mock_run.call_args
         cmd = call_args[0][0]
+        assert "vendor/bin/composer-dependency-analyser" in cmd[0]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill _make_finding mutations (mutmut 13,16-19,24-35)
+# These change parameters inside the static method.
+# Strategy: call _make_finding directly with parametrized inputs
+# that produce different outputs for each mutated expression.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestMakeFindingDirect:
+    """Exercise _make_finding() directly to catch parameter mutations."""
+
+    def test_make_finding_prefix_from_dep_class_replace(self) -> None:
+        """prefix = violation_type.replace('dep-', '') → 'class'
+        
+        Kills mutmut_13: .replace('dep-', '') → .replace(None, '') 
+        causes TypeError → parse returns [] → Finding not created → this direct call fails.
+        Kills mutmut_14: .replace → .replace(False, '') same.
+        Kills mutmut_15: .replace → .replace('', '') same.
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=10,
+            violation_type="dep-class", message="unused class",
+        )
+        assert f.message == "class: unused class"
+        assert f.rule_id == "dep-class"
+        assert f.fix_hint == "dep-class"
+        assert f.layer == "L4"
+        assert f.language == "php"
+        assert f.tool == "composer-dependency-analyser"
+
+    def test_make_finding_desc_with_empty_message(self) -> None:
+        """message param = prefix (not 'prefix: ') when message is empty string.
+
+        Kills mutmut_16-19 (ternary → 'or' or 'and'):
+        Mut19: 'or' → 'and': ``message and prefix`` → `` `` (since `` `` is falsy, returns '')
+        So check that message is exactly 'class' (not '').
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=10,
+            violation_type="dep-class", message="",
+        )
+        assert f.message == "class"  # Exactly "class", not "" or "class: "
+
+    def test_make_finding_node_with_line(self) -> None:
+        """node = file_name when line is missing, 'file_name:line' when line present.
+        
+        Kills mutmut_27-29 (if line: → if not line:/if None:/if False):
+        These mutations change when the ':line' suffix is added.
+        """
+        # With line present
+        f1 = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=10,
+            violation_type="dep-class", message="msg",
+        )
+        assert f1.node == "test.php:10", "line suffix must be present when line=10"
+
+        # Without line
+        f2 = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=None,
+            violation_type="dep-class", message="msg",
+        )
+        assert f2.node == "test.php", "no line suffix when line is None"
+
+        # With line=0 (falsy)
+        f3 = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=0,
+            violation_type="dep-class", message="msg",
+        )
+        assert f3.node == "test.php", "no line suffix when line=0 (falsy)"
+
+    def test_make_finding_node_without_line(self) -> None:
+        """node = file_name when no line provided (no ':line' suffix)."""
+        f = DepAnalyserAdapter._make_finding(
+            file_name="test.php", line=None,
+            violation_type="dep-function", message="call to undefined",
+        )
+        assert f.node == "test.php"
+        assert f.message == "function: call to undefined"
+
+    def test_make_finding_all_fields_verified(self) -> None:
+        """Verify every Finding field to kill parameter mutations 24-26, 30-35.
+        
+        Mut24-26: file_name param mutated → node field wrong → assert fails
+        Mut30-35: node construction mutations → assert on node exact format
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="src/Foo.php", line=42,
+            violation_type="dep-global-variable", message="unused $x",
+        )
+        assert f.node == "src/Foo.php:42"
+        assert f.severity == "warning"
+        assert f.message == "global-variable: unused $x"
+        assert f.fix_hint == "dep-global-variable"
+        assert f.tool == "composer-dependency-analyser"
+        assert f.layer == "L4"
+        assert f.language == "php"
+        assert f.rule_id == "dep-global-variable"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill version() NotImplementedError mutations (mutmut 1-4)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestVersionMethod:
+    """Tests for version() — all survivors are in this method.
+    
+    Kills mutmut_1-4: all mutations modify the error message or remove it.
+    """
+
+    def test_version_raises_not_implemented(self) -> None:
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            DepAnalyserAdapter().version(Path("/tmp"))
+
+    def test_version_raises_exact_message(self) -> None:
+        """Verify exact NotImplementedError message.
+        
+        Kills mutmut_1-4: all mutations change/remove the message text.
+        """
+        with pytest.raises(NotImplementedError) as exc_info:
+            DepAnalyserAdapter().version(Path("/tmp"))
+        assert "not implemented" in str(exc_info.value).lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill parse() return-statement mutations (mutmut 76,78,95-102,107,115-121)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestParseReturnTypes:
+    """Assert parse() always returns a list — kills 'return findings'→return X mutations."""
+
+    def test_empty_stdout_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse("")
+        # Kills mutmut_76 (return None) and mutmut_78 (return False) from empty stdout
+        assert isinstance(r, list), 'parse("") must return a list'
+        assert len(r) == 0
+
+    def test_json_decode_error_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse("not json at all", "", 1)
+        # Kills mutmut_95 (return None) and mutmut_98 (return False) from JSON decode error
+        assert isinstance(r, list), 'parse(bad_json) must return a list'
+        assert len(r) == 0
+
+    def test_empty_list_input_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps([]))
+        # Kills mutmut_99, 102 (empty list mutations): adds default finding with wrong type
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_nested_format_empty_files_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps({"files": {}}))
+        # Kills mutmut_115-121: 7 mutations on 'return findings' at end of nested format
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_data_not_list_or_dict_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps({"foo": "bar"}))
+        # Kills mutmut_107 (return None at final return)
+        assert isinstance(r, list), 'parse(non_list_data) must return a list'
+        assert len(r) == 0
+
+    def test_nested_format_violations_processed_return_list(self) -> None:
+        data = {"files": {"x.php": {"violations": []}}}
+        r = DepAnalyserAdapter().parse(json.dumps(data))
+        # Also kills mutmut_107 and mutmut_115-121 via the inner return path
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill invoke() mutations in normal path (mutmut 1,5,6,7,11,20,23,24,27,28)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestDepAnalyserInvokeWithArgs:
+    """Kill remaining invoke mutations by exercising the _run() path directly."""
+
+    def test_invoke_forwards_args_to_run(self) -> None:
+        """_run must be called with args + correct cwd.
+        
+        Kills: mutmut_5 (*cmd mutation→empty), mutmut_6,7 (args→None),
+        mutmut_11 (cwd→None), mutmut_20 (*args removed from [*cmd, *args]),
+        mutmut_23,24,27,28 (return path mutations)
+        """
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.dep_analyser_adapter.shutil.which",
+                return_value="/usr/bin/cda",
+            ):
+                DepAnalyserAdapter().invoke(
+                    repo=Path("/tmp/test_repo"),
+                    args=["--some-flag", "--other"],
+                )
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        cwd = mock_run.call_args[1]["cwd"]
+        assert "--some-flag" in cmd, "mutmut_5/20: args must be forwarded to _run"
+        assert "--other" in cmd, "mutmut_6/7: specific args must be forwarded"
+        assert cwd is not None, "mutmut_11: cwd must not be None"
+        assert isinstance(cwd, Path)
+        assert "cda" in cmd[0], "binary must be in cmd"
+
+    def test_invoke_with_extra_args_vendor_binary(self) -> None:
+        """When binary is in vendor/bin, args must still be forwarded."""
+        import shutil as _shutil
+        original_which = _shutil.which
+
+        def mock_which(name):
+            return None if name == "composer-dependency-analyser" else original_which(name)
+
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
+            with patch.object(_shutil, "which", side_effect=mock_which):
+                repo = Path("/tmp/repo")
+                vendor_bin = repo / "vendor" / "bin" / "composer-dependency-analyser"
+                vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+                vendor_bin.touch()
+                DepAnalyserAdapter().invoke(repo=repo, args=["--json", "--quiet"])
+
+        cmd = mock_run.call_args[0][0]
+        assert "--json" in cmd
+        assert "--quiet" in cmd
         assert "vendor/bin/composer-dependency-analyser" in cmd[0]
