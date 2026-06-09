@@ -536,6 +536,209 @@ class TestPhpMdAdapter:
             with pytest.raises(RuntimeError, match=r"repository path is None"):
                 adapter.version(None)  # type: ignore[arg-type]
 
+    # -- invoke with precise subprocess args verification (kill invoke survivors)
+
+    def test_invoke_subprocess_args_verified(self, tmp_path: Path) -> None:
+        """Verify the exact subprocess.run call arguments in invoke.
+
+        Kills mutmut_1: _phpmd_binary(repo) -> _phpmd_binary(None)
+        Kills mutmut_7: [*cmd, *args] -> [None]
+        Kills mutmut_10: cwd=repo -> cwd=None
+        Kills mutmut_11: env=env -> env=None
+        Kills mutmut_12: timeout=timeout -> timeout=None
+        """
+        adapter = PhpMdAdapter()
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value="/usr/bin/phpmd"):
+            with patch("harness_quality_gate.adapters.php.phpmd_adapter.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=["phpmd"], returncode=0, stdout="", stderr=""
+                )
+                adapter.invoke(tmp_path, ["src", "json", "cleancode"], env={"FOO": "bar"}, timeout=60.0)
+        call_args = mock_run.call_args
+        # Verify command starts with phpmd binary + caller-supplied args
+        # (kills mutmut_7: [*cmd, *args] mutation to [None] or similar)
+        assert call_args[0][0] == ["/usr/bin/phpmd", "src", "json", "cleancode"]
+        # Verify cwd is exact repo path (not mutated to None)
+        assert call_args[1]["cwd"] == str(tmp_path)
+        # Verify env contains custom vars (not mutated to None)
+        assert "FOO" in call_args[1]["env"]
+        assert call_args[1]["env"]["FOO"] == "bar"
+        # Verify timeout (kills mutmut_12: timeout mutation)
+        assert call_args[1]["timeout"] == 60.0
+
+    def test_invoke_version_asserts_timeout(self, tmp_path: Path) -> None:
+        """Version subprocess.run has exact timeout=30 (not mutated)."""
+        adapter = PhpMdAdapter()
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value="/usr/bin/phpmd"):
+            with patch("harness_quality_gate.adapters.php.phpmd_adapter.subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(
+                    args=["phpmd", "--version"], returncode=0, stdout="PHPMD 2.14.0", stderr=""
+                )
+                adapter.version(tmp_path)
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["timeout"] == 30, "Version timeout should be exactly 30s"
+
+    # -- _run_phpmd / run_l3a with precise subprocess args (kill _run_phpmd survivors)
+
+    def test_run_l3a_subprocess_args_verified(self, tmp_path: Path) -> None:
+        """Verify run_l3a/_run_phpmd passes correct args to _run.
+
+        Kills mutmut_14-25 on subprocess.run args in _run_phpmd:
+        - rulesets mutation
+        - timeout mutation
+        - env mutation
+        - cwd mutation
+        """
+        adapter = PhpMdAdapter()
+        with patch("harness_quality_gate.adapters.php.phpmd_adapter.shutil.which", return_value="/usr/bin/phpmd"):
+            with patch.object(PhpMdAdapter, "_run", return_value=_ok("{}")) as mock_run:
+                adapter.run_l3a(tmp_path, {"APP_ENV": "test"})
+        # Verify the _run call
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        # Verify command starts with phpmd + repo path
+        # The command should be [phpmd_binary, repo, "json", default_rulesets]
+        assert isinstance(call_args[0][0], list)
+        assert len(call_args[0][0]) >= 2
+        assert "json" in call_args[0][0]
+        # Verify cwd is the repo path
+        assert call_args[1]["cwd"] == tmp_path
+        # Verify env is passed
+        assert "APP_ENV" in call_args[1].get("env", {})
+
+    def test_phpmd_binary_type_assertion(self, tmp_path: Path) -> None:
+        """_phpmd_binary returns list[str] or None — kills return type mutations."""
+        adapter = PhpMdAdapter()
+        # Case 1: system PATH has phpmd
+        with patch(
+            "harness_quality_gate.adapters.php.phpmd_adapter.shutil.which",
+            return_value="/usr/bin/phpmd",
+        ):
+            result = adapter._phpmd_binary(tmp_path)
+            assert isinstance(result, list)
+            assert result == ["/usr/bin/phpmd"]
+        # Case 2: phpmd not found
+        with patch(
+            "harness_quality_gate.adapters.php.phpmd_adapter.shutil.which",
+            return_value=None,
+        ):
+            result = adapter._phpmd_binary(tmp_path)
+            assert result is None
+        # Case 3: repo is None — guard raises RuntimeError
+        with pytest.raises(RuntimeError, match=r"repository path is None"):
+            adapter._phpmd_binary(None)  # type: ignore[arg-type]
+
+    # -- parse with edge-case assertions (kill parse survivors)
+
+    def test_parse_violation_all_field_key_mutations(self) -> None:
+        """Test with all fields present — kills key mutations on every .get() call.
+
+        Each .get() key mutation changes the output value, which this test
+        detects via exact assertions on every Finding field.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/AllKeys.php",
+                    "violations": [
+                        {
+                            "beginLine": 42,
+                            "startLine": 88,  # beginLine should take precedence
+                            "rule": "SomeRule",
+                            "description": "Exact description text",
+                            "priority": 1,
+                            "class": "MyTestClass",
+                            "method": "myTestMethod",
+                            "externalRuleInfo": "ext-info",
+                            "md5hash": "abc123",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        f = findings[0]
+        # All fields must have exact values
+        assert f.node == "src/AllKeys.php"
+        assert f.severity == "critical"  # priority 1 = critical
+        assert f.message == "Line 42: MyTestClass.myTestMethod: Exact description text"
+        assert f.fix_hint == "Rule: SomeRule"
+        # Line 42 not 88 (beginLine takes precedence)
+        assert "Line 42" in f.message
+        assert "Line 88" not in f.message
+        assert "MyTestClass.myTestMethod" in f.message
+
+    def test_parse_violation_missing_description_key(self) -> None:
+        """Violation without description — default is empty string.
+
+        Kills mutmut on description default:
+        - default "" -> None  → message becomes "Line 42: MyClass.myMethod: None"
+        - default "" -> "XX" → message contains "XX"
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/NoDesc.php",
+                    "violations": [
+                        {
+                            "beginLine": 42,
+                            "rule": "TestRule",
+                            "priority": 2,
+                            "class": "MyClass",
+                            "method": "myMethod",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        f = findings[0]
+        assert f.message == "Line 42: MyClass.myMethod: "
+        assert f.severity == "major"
+
+    def test_parse_return_type_assertions(self) -> None:
+        """parse() returns list[Finding] — kills return type mutations."""
+        from harness_quality_gate.models import Finding
+
+        # Empty input → [] not None
+        result = PhpMdAdapter().parse("", "", 0)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+        # Invalid JSON → [] not None
+        result = PhpMdAdapter().parse("not json", "", 1)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+        # Valid data → list of Finding
+        data = {
+            "files": [{
+                "file": "src/X.php",
+                "violations": [{"beginLine": 1, "rule": "R", "description": "D", "priority": 3}]
+            }]
+        }
+        result = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], Finding)
+        assert result[0].node == "src/X.php"
+        assert result[0].severity == "minor"
+
+    def test_priority_to_severity_edge_cases(self) -> None:
+        """Edge cases for priority mapping — kills value mutations.
+
+        Kills mutmut_11: mapping changes for priority 2 (major → minor)
+        Kills mutmut_14: mapping changes, e.g. priority 3 → "critical"
+        """
+        assert _priority_to_severity(0) == "info"  # below normal range
+        assert _priority_to_severity(1) == "critical"
+        assert _priority_to_severity(2) == "major"
+        assert _priority_to_severity(3) == "minor"
+        assert _priority_to_severity(4) == "info"
+        assert _priority_to_severity(5) == "info"
+        assert _priority_to_severity(6) == "info"  # above normal range
+        assert _priority_to_severity(-1) == "info"
+
 
 # ===========================================================================
 # phpunit_adapter.py

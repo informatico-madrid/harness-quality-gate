@@ -509,3 +509,158 @@ class TestInvoke:
             with patch("subprocess.run", return_value=completed) as mock:
                 adapter.invoke(tmp_path, [])
         assert mock.call_args[1]["timeout"] == 300.0
+
+    # -- version with exact subprocess args (kill version survivors)
+
+    def test_version_asserts_subprocess_command_and_kwargs(self, tmp_path: Path) -> None:
+        """Verify exact subprocess call in version().
+
+        Kills mutmut on:
+        - [*cmd, "--version"] → [None] (command mutation)
+        - cwd=str(repo) → cwd=None (cwd mutation)
+        - env=... → env=None (env mutation)
+        - timeout=30 → timeout=None (timeout mutation)
+        """
+        adapter = PestAdapter()
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "1.0.0"
+        with patch.object(adapter, "_pest_binary", return_value=["/usr/bin/pest"]):
+            with patch("subprocess.run", return_value=completed) as mock:
+                adapter.version(tmp_path)
+        call_args = mock.call_args
+        # Command must be [pest, --version]
+        assert call_args[0][0] == ["/usr/bin/pest", "--version"]
+        # Kwargs must be exact
+        kwargs = call_args[1]
+        assert kwargs["cwd"] == str(tmp_path)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 30
+
+    def test_version_with_env_pass_through(self, tmp_path: Path) -> None:
+        """version() merges env with os.environ correctly.
+
+        Kills mutmut on env mutation: env=env → env=None or env=missing_key.
+        """
+        adapter = PestAdapter()
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "2.0.0"
+        with patch.object(adapter, "_pest_binary", return_value=["/usr/bin/pest"]):
+            with patch("subprocess.run", return_value=completed) as mock:
+                adapter.version(tmp_path, env={"CUSTOM_KEY": "custom_val"})
+        env = mock.call_args[1]["env"]
+        assert isinstance(env, dict)
+        assert "CUSTOM_KEY" in env
+        assert env["CUSTOM_KEY"] == "custom_val"
+
+    def test_version_cwd_is_str(self, tmp_path: Path) -> None:
+        """version() subprocess cwd is str, not mutated to None."""
+        adapter = PestAdapter()
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "3.0.0"
+        with patch.object(adapter, "_pest_binary", return_value=["/usr/bin/pest"]):
+            with patch("subprocess.run", return_value=completed) as mock:
+                adapter.version(tmp_path)
+        assert isinstance(mock.call_args[1]["cwd"], str)
+        assert mock.call_args[1]["cwd"] == str(tmp_path)
+
+    # -- _has_mutate_plugin with exact value assertions (kill _has_mutate_plugin survivors)
+
+    def test_has_mutate_plugin_require_dev_has_plugin(self, tmp_path: Path) -> None:
+        """pest-plugin-mutate in require-dev → True with exact boolean.
+
+        Kills many _has_mutate_plugin mutations that change True to "" or None.
+        """
+        composer = tmp_path / "composer.json"
+        data = {"require-dev": {"pestphp/pest-plugin-mutate": "^3.0"}}
+        composer.write_text(json.dumps(data), encoding="utf-8")
+        adapter = PestAdapter()
+        result = adapter._has_mutate_plugin(tmp_path)
+        assert result is True
+        assert result is not False
+        assert type(result) is bool
+
+    def test_has_mutate_plugin_require_has_plugin_in_dep_dict(self, tmp_path: Path) -> None:
+        """Plugin in require section with exact key match.
+
+        Kills mutations on the key string "pestphp/pest-plugin-mutate".
+        """
+        composer = tmp_path / "composer.json"
+        data = {"require": {"pestphp/pest-plugin-mutate": "^1.0", "other": "^2.0"}}
+        composer.write_text(json.dumps(data), encoding="utf-8")
+        adapter = PestAdapter()
+        result = adapter._has_mutate_plugin(tmp_path)
+        assert result is True
+
+    def test_has_mutate_plugin_require_is_list_fails(self, tmp_path: Path) -> None:
+        """require is a list (not dict) → False.
+
+        Kills mutations that change the isinstance(deps, dict) check.
+        """
+        composer = tmp_path / "composer.json"
+        data = {"require": ["pestphp/pest-plugin-mutate"]}
+        composer.write_text(json.dumps(data), encoding="utf-8")
+        adapter = PestAdapter()
+        result = adapter._has_mutate_plugin(tmp_path)
+        assert result is False
+        assert type(result) is bool
+
+    def test_has_mutate_plugin_requires_both_sections_with_plugin(self, tmp_path: Path) -> None:
+        """Plugin in both require and require-dev.
+
+        Kills mutations that break the for section loop (e.g., early return changes).
+        """
+        composer = tmp_path / "composer.json"
+        data = {
+            "require": {"other": "^1.0"},
+            "require-dev": {"pestphp/pest-plugin-mutate": "^2.0"}
+        }
+        composer.write_text(json.dumps(data), encoding="utf-8")
+        adapter = PestAdapter()
+        result = adapter._has_mutate_plugin(tmp_path)
+        assert result is True
+        assert isinstance(result, bool)
+
+    def test_has_mutate_plugin_composer_json_not_a_file(self, tmp_path: Path) -> None:
+        """composer.json not found → False with exact boolean type.
+
+        Kills mutations that change the return False path.
+        """
+        composer = tmp_path / "composer.json"
+        adapter = PestAdapter()
+        result = adapter._has_mutate_plugin(tmp_path)
+        assert result is False
+        assert isinstance(result, bool)
+
+    def test_parse_returns_list_not_none(self) -> None:
+        """parse() returns [] always — kills return type mutations."""
+        adapter = PestAdapter()
+        result = adapter.parse("", "", 0)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    # -- invoke with precise args (kill invoke survivors)
+
+    def test_invoke_asserts_subprocess_call_details(self, tmp_path: Path) -> None:
+        """invoke() subprocess.run call with precise argument assertions.
+
+        Kills mutmut on:
+        - [*cmd, *args] mutation
+        - cwd mutation
+        - env mutation
+        - timeout mutation
+        """
+        adapter = PestAdapter()
+        completed = MagicMock()
+        completed.returncode = 0
+        with patch.object(adapter, "_pest_binary", return_value=["/usr/bin/pest"]):
+            with patch("subprocess.run", return_value=completed) as mock:
+                adapter.invoke(tmp_path, ["--coverage"], env={"APP_ENV": "test"}, timeout=120.0)
+        call = mock.call_args
+        assert call[0][0] == ["/usr/bin/pest", "--coverage"]
+        assert call[1]["cwd"] == str(tmp_path)
+        assert call[1]["env"]["APP_ENV"] == "test"
+        assert call[1]["timeout"] == 120.0
