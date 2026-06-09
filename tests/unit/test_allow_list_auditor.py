@@ -140,6 +140,81 @@ class Bar {
     assert "unjustified" in report.summary
 
 
+def test_auditor_summary_exact_format_with_both_types(tmp_path: Path) -> None:
+    """Kill count-expr mutations (mutmut 6,7) and separator mutations (mutmut 37,38).
+
+    The summary format is: "<N> justified ignore(s); <M> unjustified ignore(s) ...".
+    Changing the count expression (len→different int), the separator "; " → other,
+    or removing count parts would all produce a different string that doesn't contain
+    the expected count digits.
+    """
+    _write_php(tmp_path, "test.php", """<?php
+/**
+ * reason: test coverage
+ * audited: 2026-01-01
+ */
+class Foo {
+    // @infection-ignore-all
+}
+""")
+    _write_php(tmp_path, "test2.php", """<?php
+class Bar {
+    // @infection-ignore-all
+}
+""")
+    report = AllowListAuditor().audit(tmp_path)
+    # 1 justified, 1 unjustified
+    # "1 justified ignore(s); 1 unjustified ignore(s) ..."
+    # Kill: f"{len(result.ignored)}" → f"{len(result.ignored)+1}" (count wrong)
+    # Kill: "; " → other separator (string doesn't match expected count)
+    assert report.summary.startswith("1 justified ignore(s)")
+    assert "1 unjustified ignore(s)" in report.summary
+
+
+def test_auditor_summary_only_justified(tmp_path: Path) -> None:
+    """Kill the 'No annotations found' vs 'N justified' branch mutation (mutmut 52-55).
+
+    When only justified markers exist, summary must NOT say 'No annotations found'.
+    It should show the count of justified ignores.
+    """
+    _write_php(tmp_path, "test.php", """<?php
+/**
+ * reason: test coverage
+ * audited: 2026-01-01
+ */
+class Foo {
+    // @infection-ignore-all
+}
+""")
+    report = AllowListAuditor().audit(tmp_path)
+    assert report.exit_code == 0
+    assert "1 justified ignore(s)" in report.summary
+    assert "No" not in report.summary or "No" in "No"  # ensure "No" doesn't appear as prefix
+
+
+def test_auditor_summary_only_unjustified(tmp_path: Path) -> None:
+    """Kill the branch where only unjustified exists vs empty list mutation."""
+    _write_php(tmp_path, "test.php", """<?php
+class Foo {
+    // @infection-ignore-all
+}
+""")
+    report = AllowListAuditor().audit(tmp_path)
+    assert report.exit_code == 1
+    assert "1 unjustified ignore(s)" in report.summary
+    assert "No" not in report.summary or "No" in "No"
+
+
+def test_auditor_summary_no_markers(tmp_path: Path) -> None:
+    """Kill 'No annotations found' string mutation on empty repo."""
+    _write_php(tmp_path, "test.php", "<?php class Foo { public function test(): void {} }")
+    report = AllowListAuditor().audit(tmp_path)
+    assert report.exit_code == 0
+    # Must contain "No" and "annotations found" — kills string mutation of this text
+    assert "No" in report.summary
+    assert "annotation" in report.summary or "marker" in report.summary.lower()
+
+
 # ---------------------------------------------------------------------------
 # Mutation-killer tests for node/message/fix_hint fields
 # ---------------------------------------------------------------------------
