@@ -15,6 +15,8 @@ Design: Each test asserts every field of each Finding for completeness.
 
 from __future__ import annotations
 
+import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -868,3 +870,345 @@ class TestKillSurvivedMutants:
         # Message should be 216 chars: "err_long error: " (16) + 200 chars = 216
         assert len(f.message) == 216  # 16 + 200
         assert f.message[-1] == "Y"  # Last char is within 200 limit
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _parse_stdout SURVIVORS (61 survivors — NO existing tests!)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_stdout_empty() -> None:
+    """Empty stdout → no findings.
+
+    Kills mutmut on early return: return findings vs return None.
+    """
+    findings = PhpUnitAdapter()._parse_stdout("")
+    assert isinstance(findings, list)
+    assert len(findings) == 0
+
+
+def test_parse_stdout_whitespace_only() -> None:
+    """Whitespace-only stdout → stripped, no findings."""
+    findings = PhpUnitAdapter()._parse_stdout("   \n\n  ")
+    assert len(findings) == 0
+
+
+def test_parse_stdout_no_match() -> None:
+    """Text that doesn't match PHPUnit pattern → no findings."""
+    findings = PhpUnitAdapter()._parse_stdout("Some random text")
+    assert len(findings) == 0
+
+
+def test_parse_stdout_failed_with_class() -> None:
+    """Failed test with class + test name → correct node and fields.
+
+    Kills mutations on match group extraction and Finding construction.
+    Format: "1) Class::test_name FAILED" - no space before :: means
+    the regex doesn't split class, so node contains full test string.
+    """
+    text = "1) Tests\\FooTest::test_bar FAILED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    # Regex: (\S+)\s+::\s+ requires whitespace BEFORE :: to split
+    # Without whitespace before ::, the whole "Tests\\FooTest::test_bar" goes to group(2)
+    assert f.node == "Tests\\FooTest::test_bar"
+    assert f.severity == "error"
+    assert f.message == "Tests\\FooTest::test_bar failed"
+    assert f.tool == "phpunit"
+    assert f.layer == "layer1"
+    # fix_hint uses node which contains full class::test
+    assert f.fix_hint == "Fix assertion in Tests\\FooTest::test_bar"
+
+
+def test_parse_stdout_no_class() -> None:
+    """Test without class prefix → node uses test_name only."""
+    text = "1) test_name FAILED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "test_name"
+    assert f.message == "test_name failed"
+    assert "Fix assertion in test_name" == f.fix_hint
+
+
+def test_parse_stdout_error() -> None:
+    """Error test → correct fields."""
+    text = "2) test_crash ERROR\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == "error"
+    assert f.message == "test_crash error"
+    assert f.fix_hint == "Fix error in test_crash"
+
+
+def test_parse_stdout_skipped() -> None:
+    """Skipped test → severity=info with correct fix_hint."""
+    text = "3) test_skip SKIPPED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == "info"
+    assert f.message == "test_skip skipped"
+    assert f.fix_hint == "Review skip reason in test_skip"
+
+
+def test_parse_stdout_incomplete() -> None:
+    """Incomplete test → severity=warning with correct fix_hint."""
+    text = "4) test_pending INCOMPLETE\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == "warning"
+    assert f.message == "test_pending incomplete"
+    assert f.fix_hint == "Complete test in test_pending"
+
+
+def test_parse_stdout_multiple_lines() -> None:
+    """Multiple test lines → multiple findings, each verified."""
+    text = (
+        "1) test_a FAILED\n"
+        "2) test_b ERROR\n"
+        "3) test_c SKIPPED\n"
+        "4) test_d INCOMPLETE\n"
+    )
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 4
+    statuses = {f.message: f.severity for f in findings}
+    assert statuses["test_a failed"] == "error"
+    assert statuses["test_b error"] == "error"
+    assert statuses["test_c skipped"] == "info"
+    assert statuses["test_d incomplete"] == "warning"
+    # Verify all have correct tool and layer
+    for f in findings:
+        assert f.tool == "phpunit"
+        assert f.layer == "layer1"
+
+
+def test_parse_stdout_no_class() -> None:
+    """Test without class prefix → node uses test_name only."""
+    text = "1) test_name FAILED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "test_name"
+    assert "Fix assertion in test_name" == f.fix_hint
+
+
+def test_parse_stdout_multiple_lines() -> None:
+    """Multiple test lines → multiple findings, each verified."""
+    text = (
+        "1) test_a FAILED\n"
+        "2) test_b ERROR\n"
+        "3) test_c SKIPPED\n"
+        "4) test_d INCOMPLETE\n"
+    )
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 4
+    statuses = {f.message: f.severity for f in findings}
+    assert statuses["test_a failed"] == "error"
+    assert statuses["test_b error"] == "error"
+    assert statuses["test_c skipped"] == "info"
+    assert statuses["test_d incomplete"] == "warning"
+    # Verify all have correct tool and layer
+    for f in findings:
+        assert f.tool == "phpunit"
+        assert f.layer == "layer1"
+
+
+def test_parse_stdout_with_class_split() -> None:
+    """Test with space before :: → class extracted, node = class/test.
+
+    PHPUnit format with class: "1) Tests\\Foo :: test FAILED"
+    """
+    text = "1) Tests\\Foo :: test_bar FAILED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "Tests\\Foo/test_bar"  # class/test_name
+    assert f.severity == "error"
+    assert f.message == "test_bar failed"
+    assert f.tool == "phpunit"
+    assert f.layer == "layer1"
+    assert "Fix assertion in Tests\\Foo/test_bar" == f.fix_hint
+
+
+def test_parse_stdout_node_when_cls_empty() -> None:
+    """No class → node = test_name (not None).
+
+    Kills mutant on node assignment: node=test_name → node=None.
+    """
+    text = "1) just_a_test FAILED\n"
+    findings = PhpUnitAdapter()._parse_stdout(text)
+    assert len(findings) == 1
+    assert findings[0].node == "just_a_test"
+    assert findings[0].fix_hint == "Fix assertion in just_a_test"
+
+
+def test_parse_stdout_return_type_is_list() -> None:
+    """_parse_stdout always returns a list of findings.
+
+    Kills mutations on 'return findings' → 'return None' / 'return []'.
+    """
+    assert isinstance(PhpUnitAdapter()._parse_stdout(""), list)
+    assert isinstance(PhpUnitAdapter()._parse_stdout("1) test FAILED\n"), list)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _bin_path SURVIVORS (22 survivors — NO existing tests!)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_bin_path_default() -> None:
+    """No composer.json → default 'vendor/bin/phpunit'."""
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        result = PhpUnitAdapter()._bin_path(Path(tmp))
+        assert result == "vendor/bin/phpunit"
+
+
+def test_bin_path_custom_bin_dir() -> None:
+    """composer.json with config.bin-dir → use custom bin path."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "composer.json").write_text(
+            json.dumps({"config": {"bin-dir": "custom/bin"}}),
+            encoding="utf-8"
+        )
+        result = PhpUnitAdapter()._bin_path(repo)
+        assert result == "custom/bin/phpunit"
+
+
+def test_bin_path_bad_json() -> None:
+    """Invalid composer.json → falls back to default."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "composer.json").write_text("not json", encoding="utf-8")
+        result = PhpUnitAdapter()._bin_path(repo)
+        assert result == "vendor/bin/phpunit"
+
+
+def test_bin_path_missing_config_section() -> None:
+    """composer.json without config section → default."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "composer.json").write_text(json.dumps({"name": "test/pkg"}), encoding="utf-8")
+        result = PhpUnitAdapter()._bin_path(repo)
+        assert result == "vendor/bin/phpunit"
+
+
+def test_bin_path_config_no_bin_dir() -> None:
+    """composer.json config present but no bin-dir → default."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "composer.json").write_text(
+            json.dumps({"config": {"vendor-dir": "lib"}}),
+            encoding="utf-8"
+        )
+        result = PhpUnitAdapter()._bin_path(repo)
+        assert result == "vendor/bin/phpunit"
+
+
+def test_bin_path_returns_string_not_none() -> None:
+    """_bin_path always returns a string (not None/empty).
+
+    Kills mutations: return '' → None or 'XXXX'.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path
+        result = PhpUnitAdapter()._bin_path(Path(tmp))
+        assert isinstance(result, str)
+        assert result == "vendor/bin/phpunit"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL verify_strict_mode SURVIVORS (8 survivors — NO existing tests!)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_verify_strict_mode_missing_file() -> None:
+    """No phpunit.xml → all flags reported as missing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        result = PhpUnitAdapter().verify_strict_mode(Path(tmp))
+        assert len(result) == 11  # All strict-mode flags
+        assert "strictCoverage" in result
+        assert "failOnError" in result
+
+
+def test_verify_strict_mode_all_present() -> None:
+    """phpunit.xml with all flags → empty list."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        content = '<phpunit ' + ' '.join(f'{f}="true"' for f in (
+            "strictCoverage", "checkForUnintentionallyCoveredCode",
+            "failOnWarning", "failOnError", "failOnRisky",
+            "failOnFailure", "failOnIncomplete", "failOnSkipped",
+            "failOnEmptyTestSuite", "beStrictAboutCoverageMetadata",
+            "beStrictAboutOutputDuringTests",
+        )) + '/>'
+        (repo / "phpunit.xml").write_text(content, encoding="utf-8")
+        result = PhpUnitAdapter().verify_strict_mode(repo)
+        assert result == []
+
+
+def test_verify_strict_mode_partial_missing() -> None:
+    """phpunit.xml with only some flags → report only missing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "phpunit.xml").write_text(
+            '<phpunit strictCoverage="true" failOnError="true"></phpunit>',
+            encoding="utf-8"
+        )
+        result = PhpUnitAdapter().verify_strict_mode(repo)
+        assert len(result) == 9  # 11 - 2 present = 9 missing
+        assert "strictCoverage" not in result
+        assert "failOnError" not in result
+        assert "failOnWarning" in result
+
+
+def test_verify_strict_mode_flags_exact() -> None:
+    """Verify exact flag names are checked (not just 'strict').
+
+    Kills mutations on flag name → 'XXXXX' or other string mutations.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        # Only have beStrictAboutCoverageMetadata
+        (repo / "phpunit.xml").write_text(
+            '<phpunit beStrictAboutCoverageMetadata="true"></phpunit>',
+            encoding="utf-8"
+        )
+        result = PhpUnitAdapter().verify_strict_mode(repo)
+        assert "beStrictAboutCoverageMetadata" not in result
+        assert "strictCoverage" in result
+        assert "beStrictAboutOutputDuringTests" in result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL parse() SURVIVORS (13 survivors — limited tests for parse method)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_junit_path_not_xml_uses_stdout() -> None:
+    """parse() when stdout is NOT .xml path → calls _parse_stdout.
+
+    Kills mutations on the endswith('.xml') check.
+    """
+    findings = PhpUnitAdapter().parse('Some text output', "", 0)
+    assert isinstance(findings, list)
+    # No PHPUnit text format → empty
+    assert len(findings) == 0
+
+
+def test_parse_returns_list_not_none() -> None:
+    """parse() always returns a list (not mutated to None/False/dict).
+
+    Kills mutations on return statements.
+    """
+    result = PhpUnitAdapter().parse("", "", 0)
+    assert isinstance(result, list)
+    # Even with valid XML that produces findings
+    assert isinstance(PhpUnitAdapter().parse('junit.xml', ""), list)
+    # Or with text output
+    assert isinstance(PhpUnitAdapter().parse('1) test FAILED\n', ""), list)

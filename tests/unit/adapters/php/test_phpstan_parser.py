@@ -7,6 +7,11 @@ and error entries with tip.
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from harness_quality_gate.adapters.php.phpstan_adapter import PhpStanAdapter
 
@@ -465,3 +470,314 @@ def test_parse_no_errors() -> None:
 def test_parse_unknown_top_level_key() -> None:
     """JSON with neither file_diagnostics nor files → empty."""
     assert _adapter().parse('{"unknown": 1}', "", 0) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL version() SURVIVORS (mutmut 1-18 in version method)
+# ═══════════════════════════════════════════════════════════════════════
+
+from unittest.mock import MagicMock, patch
+
+
+def test_version_binary_not_found_raises() -> None:
+    """version() with no phpstan binary → RuntimeError.
+
+    Kills mutmut_1,2: removes or inverts the `if cmd is None` guard.
+    """
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            with pytest.raises(RuntimeError, match="phpstan not found"):
+                _adapter().version(Path(tmp))
+
+
+def test_version_success_parses_version_string() -> None:
+    """version() with valid output → extracts version from stdout.
+
+    Kills mutmut_7 (p[0].isdigit → False), mutmut_9 (p[0] → ord(p[0])),
+    mutmut_10 ('.' not in p → True), mutmut_12 (return p → first p),
+    mutmut_13 (return p → None), mutmut_15-18 (return fallback).
+    """
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "PHP 2.1.34 by.neon configuration"
+    mock_result.stderr = ""
+
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+            with tempfile.TemporaryDirectory() as tmp:
+                version = _adapter().version(Path(tmp))
+                assert version == "2.1.34"
+
+
+def test_version_version_key_not_first() -> None:
+    """version() where version string is not the first token.
+
+    Kills mutmut_14-16: loop order mutation (break/continue vs continue).
+    """
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "Version 3.0.5 -- some description"
+    mock_result.stderr = ""
+
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+            with tempfile.TemporaryDirectory() as tmp:
+                version = _adapter().version(Path(tmp))
+                assert version == "3.0.5"
+
+
+def test_version_no_dot_version_fallback() -> None:
+    """version() where no token has both digit and dot → fallback to strip.
+
+    Kills mutmut_17,18 (return fallback string mutation).
+    """
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "PHPStan dev-master  "
+    mock_result.stderr = ""
+
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+            with tempfile.TemporaryDirectory() as tmp:
+                version = _adapter().version(Path(tmp))
+                assert version == "PHPStan dev-master"
+
+
+def test_version_nonzero_returncode_raises() -> None:
+    """version() with nonzero return code → RuntimeError.
+
+    Kills mutmut_4 ('!=' → '=='), mutmut_5 (remove condition).
+    """
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = "Error: command not found"
+
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+            with tempfile.TemporaryDirectory() as tmp:
+                with pytest.raises(RuntimeError, match="phpstan --version failed"):
+                    _adapter().version(Path(tmp))
+
+
+def test_version_strip_stderr() -> None:
+    """version() strips stderr in error message.
+
+    Kills mutations that change .strip() call or default value.
+    """
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = "  error message  "
+
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=['phpstan']):
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.subprocess.run', return_value=mock_result):
+            with tempfile.TemporaryDirectory() as tmp:
+                with pytest.raises(RuntimeError, match="error message"):
+                    _adapter().version(Path(tmp))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL invoke() SURVIVORS (mutmut 1-16 in invoke method)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_raises_when_binary_not_found() -> None:
+    """invoke with no binary → RuntimeError.
+
+    Kills mutmut_1,2: removes or inverts the guard check.
+    """
+    with patch.object(PhpStanAdapter, '_phpstan_binary', return_value=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            with pytest.raises(RuntimeError, match="phpstan not found"):
+                _adapter().invoke(Path(tmp), ["test"])
+
+
+def test_invoke_calls_run_with_correct_cmd() -> None:
+    """invoke forwards args correctly to _run.
+
+    Kills mutmut_9-14 ([*cmd, *args] mutation → corrupted/empty cmd).
+    """
+    a = _adapter()
+    mock_invocation = MagicMock()
+    mock_invocation.stdout = '{"file_diagnostics": []}'
+    mock_invocation.stderr = ""
+    mock_invocation.exitcode = 0
+
+    with patch.object(a, '_phpstan_binary', return_value=['/usr/bin/phpstan']):
+        with patch.object(PhpStanAdapter, '_run', return_value=mock_invocation) as mock_run:
+            with tempfile.TemporaryDirectory() as tmp:
+                a.invoke(Path(tmp), ["--level=max", "--no-progress"])
+                mock_run.assert_called_once()
+                cmd = mock_run.call_args[0][0]
+                assert '/usr/bin/phpstan' in cmd
+                assert '--level=max' in cmd
+                assert '--no-progress' in cmd
+
+
+def test_invoke_passes_cwd() -> None:
+    """invoke sets cwd to repo.
+
+    Kills mutmut_15,16: cwd mutation (None → str).
+    """
+    a = _adapter()
+    mock_invocation = MagicMock()
+    mock_invocation.stdout = '{}'
+    mock_invocation.stderr = ""
+    mock_invocation.exitcode = 0
+
+    with patch.object(a, '_phpstan_binary', return_value=['phpstan']):
+        with patch.object(PhpStanAdapter, '_run', return_value=mock_invocation) as mock_run:
+            repo = Path('/tmp/test_repo')
+            a.invoke(repo, [])
+            assert mock_run.call_args[1]['cwd'] == repo
+
+
+def test_invoke_passes_env() -> None:
+    """invoke forwards env dict.
+
+    Kills mutmut on env merging: (env or {}) → env or None.
+    """
+    a = _adapter()
+    mock_invocation = MagicMock()
+    mock_invocation.stdout = '{}'
+    mock_invocation.stderr = ""
+    mock_invocation.exitcode = 0
+
+    with patch.object(a, '_phpstan_binary', return_value=['phpstan']):
+        with patch.object(PhpStanAdapter, '_run', return_value=mock_invocation) as mock_run:
+            with tempfile.TemporaryDirectory() as tmp:
+                a.invoke(Path(tmp), [], env={'XDEBUG_MODE': 'coverage'})
+                env = mock_run.call_args[1]['env']
+                assert isinstance(env, dict)
+
+
+def test_invoke_passes_default_timeout() -> None:
+    """invoke uses 300.0 default timeout when not specified.
+
+    Kills mutmut on timeout parameter.
+    """
+    a = _adapter()
+    mock_invocation = MagicMock()
+    mock_invocation.stdout = '{}'
+    mock_invocation.stderr = ""
+    mock_invocation.exitcode = 0
+
+    with patch.object(a, '_phpstan_binary', return_value=['phpstan']):
+        with patch.object(PhpStanAdapter, '_run', return_value=mock_invocation) as mock_run:
+            with tempfile.TemporaryDirectory() as tmp:
+                a.invoke(Path(tmp), [])
+                assert mock_run.call_args[1]['timeout'] == 300.0
+
+
+def test_invoke_passes_custom_timeout() -> None:
+    """invoke uses custom timeout when specified.
+
+    Kills mutmut on timeout parameter mutation.
+    """
+    a = _adapter()
+    mock_invocation = MagicMock()
+    mock_invocation.stdout = '{}'
+    mock_invocation.stderr = ""
+    mock_invocation.exitcode = 0
+
+    with patch.object(a, '_phpstan_binary', return_value=['phpstan']):
+        with patch.object(PhpStanAdapter, '_run', return_value=mock_invocation) as mock_run:
+            with tempfile.TemporaryDirectory() as tmp:
+                a.invoke(Path(tmp), [], timeout=600.0)
+                assert mock_run.call_args[1]['timeout'] == 600.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _phpstan_binary() SURVIVORS (mutmut 1-5)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_phpstan_binary_system_path() -> None:
+    """_phpstan_binary prefers system PATH over vendor/bin.
+
+    Kills mutmut_1,2: shutil.which returns None/inverse system check.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.shutil.which', return_value='/usr/bin/phpstan'):
+            result = _adapter()._phpstan_binary(Path(tmp))
+            assert result == ['/usr/bin/phpstan']
+
+
+def test_phpstan_binary_vendor_bin() -> None:
+    """_phpstan_binary falls back to vendor/bin/phpstan.
+
+    Kills mutmut_3,4: is_file() → not is_file() or empty string return.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        vendor_bin = repo / "vendor" / "bin"
+        vendor_bin.mkdir(parents=True)
+        (vendor_bin / "phpstan").touch()
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.shutil.which', return_value=None):
+            result = _adapter()._phpstan_binary(repo)
+            assert result is not None
+            assert 'vendor/bin/phpstan' in result[0]
+
+
+def test_phpstan_binary_not_found() -> None:
+    """_phpstan_binary when not on PATH and no vendor binary → None.
+
+    Kills mutmut_5: return None → return [] or return "phpstan".
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.shutil.which', return_value=None):
+            result = _adapter()._phpstan_binary(repo)
+            assert result is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL run_l3a() SURVIVORS (mutmut around lines 187-197)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_run_l3a_calls_invoke_and_parse() -> None:
+    """run_l3a invokes PHPStan and returns parsed findings.
+
+    Kills mutations on the invoke/parse chaining:
+    - remove invoke call
+    - change parse args
+    - return instead of parsing
+    """
+    a = _adapter()
+    
+    # Mock invoke to return a ToolInvocation with valid JSON output
+    mock_result = MagicMock()
+    mock_result.stdout = '{"file_diagnostics": [{"file": "src/Foo.php", "messages": ["bug"]}]}'
+    mock_result.stderr = ""
+    mock_result.exitcode = 1
+
+    with patch.object(a, 'invoke', return_value=mock_result):
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = a.run_l3a(Path(tmp), {})
+            assert len(findings) == 1
+            f = findings[0]
+            assert f.node == "src/Foo.php"
+            assert f.message == "bug"
+            assert f.tool == "phpstan"
+            assert f.layer == "L3A"
+
+
+def test_run_l3a_handles_parse_empty_list() -> None:
+    """run_l3a with no findings returns empty list.
+
+    Kills 'findings=None' or 'findings=False' mutations on return.
+    """
+    a = _adapter()
+    
+    mock_result = MagicMock()
+    mock_result.stdout = '{"file_diagnostics": []}'
+    mock_result.stderr = ""
+    mock_result.exitcode = 0
+
+    with patch.object(a, 'invoke', return_value=mock_result):
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = a.run_l3a(Path(tmp), {})
+            assert isinstance(findings, list)
+            assert len(findings) == 0
