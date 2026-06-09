@@ -971,7 +971,62 @@ class TestPhpCsFixerAdapter:
 
     def test_parse_violation_not_dict_skipped(self) -> None:
         data = {"files": [{"name": "x.php", "violations": ["bad"]}]}
-        assert PhpCsFixerAdapter().parse(json.dumps(data), "", 0) == []
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 0
+        assert findings == []
+
+    def test_parse_files_key_missing(self) -> None:
+        """When 'files' key is missing from JSON, returns empty list (kills mutated defaults)."""
+        data = {"foo": "bar"}
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 0
+        assert findings == []
+
+    def test_parse_multi_entry_non_dict_middle(self) -> None:
+        """Multi-entry test verifying non-dict entries are skipped (not causing early exit).
+
+        Data: valid(file with no violations) + non-dict + valid(x.php)
+        - With 'continue': skips non-dict, processes x.php → 1 finding
+        - With 'break': exits at non-dict → 0 findings
+        """
+        data = {
+            "files": [
+                {"name": "src/First.php", "diff": "some diff"},
+                "not-a-dict",
+                {"name": "x.php", "violations": []},
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 2
+        assert findings[0].node == "src/First.php"
+        assert findings[1].node == "x.php"
+
+    def test_parse_multi_entry_empty_name_middle(self) -> None:
+        """Multi-entry test verifying empty-name entries cause skip, not early exit.
+
+        Kills mutmut_22: 'continue' → 'break' at the 'if not name' check.
+
+        Data: valid + empty-name(skip) + valid
+        - With 'continue': skips entry 1, processes 2 → 2 findings total
+        - With 'break': exits at entry 1 → only 1 finding
+        """
+        data = {
+            "files": [
+                {
+                    "name": "src/First.php",
+                    "violations": [{"line": 1, "message": "test"}],
+                },
+                {"violations": []},  # no "name" key → name="" → continue
+                {
+                    "name": "y.php",
+                    "violations": [{"line": 2, "message": "test2"}],
+                },
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 2
+        assert findings[0].node == "src/First.php"
+        assert findings[1].node == "y.php"
 
     # -- version method tests -----------------------------------------------
 
@@ -1820,10 +1875,24 @@ class TestPsalmTaintAdapterGaps:
     def test_name(self) -> None:
         assert PsalmTaintAdapter().name == "psalm-taint"
 
-    def test_version_no_binary_raises(self, tmp_path: Path) -> None:
-        with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="psalm not found"):
+    def test_version_no_binary_raises_exact_message(
+        self, tmp_path: Path
+    ) -> None:
+        """Ensure RuntimeError message is exact (kills mutmut_5 and mutmut_6).
+
+        Mutmut_5:   message gets 'XX' markers → match fails
+        Mutmut_6:   'PATH' → 'path' → match='PATH...' fails
+        """
+        with patch(
+            "harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which",
+            return_value=None,
+        ) as mock_which:
+            with pytest.raises(RuntimeError) as exc_info:
                 PsalmTaintAdapter().version(tmp_path)
+        assert (
+            exc_info.value.args[0]
+            == "psalm not found on PATH or in vendor/bin"
+        )
 
     def test_version_with_binary(self, tmp_path: Path) -> None:
         completed = MagicMock()
@@ -1832,6 +1901,40 @@ class TestPsalmTaintAdapterGaps:
         with patch("harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which", return_value="/usr/bin/psalm"):
             with patch("subprocess.run", return_value=completed):
                 v = PsalmTaintAdapter().version(tmp_path)
+        assert v == "5.26.0"
+
+    def test_version_with_binary_asserts_subprocess_call(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify subprocess.run called with correct args/kwargs.
+
+        Catches mutmut_9:  [*cmd, '--version'] → None (crashes / wrong call)
+        Catches mutmut_10: cwd=str(repo) → cwd=None
+        Catches mutmut_11: env={**os.environ, **(env or {})} → env=None
+        Catches mutmut_12: capture_output=True → capture_output=None
+        """
+        completed = subprocess.CompletedProcess(
+            args=["psalm", "--version"],
+            returncode=0,
+            stdout="Psalm 5.26.0@abc\n",
+            stderr="",
+        )
+        with patch(
+            "harness_quality_gate.adapters.php.psalm_taint_adapter.shutil.which",
+            return_value="/usr/bin/psalm",
+        ):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                v = PsalmTaintAdapter().version(tmp_path)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "--version" in args
+        assert args[0] == "/usr/bin/psalm"
+        kwargs = mock_run.call_args[1]
+        assert kwargs["cwd"] == str(tmp_path)  # mutmut_10
+        assert kwargs["capture_output"] is True  # mutmut_12
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == 30
+        assert isinstance(kwargs["env"], dict)  # mutmut_11: not None
         assert v == "5.26.0"
 
     def test_version_nonzero_exit_raises(self, tmp_path: Path) -> None:

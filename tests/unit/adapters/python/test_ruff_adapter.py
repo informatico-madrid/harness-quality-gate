@@ -7,8 +7,11 @@ every key-missing path and asserting exact Finding field values.
 from __future__ import annotations
 
 import json
+from unittest.mock import patch, MagicMock
+
 import pytest
 
+from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.models import Finding
 from harness_quality_gate.adapters.python.ruff_adapter import RuffAdapter
 
@@ -302,3 +305,95 @@ class TestParseEmptyFields:
         # When message is absent: message="" → detail_message = "" or "" or str(entry)
         # detail should incorporate filename since code is falsy
         assert "src/minimal.py" in f.message
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Invoke method — kill survivors by mocking _run
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestRuffInvokeBinaryNotFound:
+    """Tests for when ruff is not found on PATH.
+
+    Kills mutmut survivors on invoke that remove the early return
+    when binary is None, or remove the _run() call entirely.
+    """
+
+    @patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value=None)
+    def test_invoke_returns_infra_when_ruff_missing(self, mock_which):
+        """Binary not found → return ToolInvocation with exitcode=3.
+
+        Kills:
+          - Remove `if binary is None: return ...` early return
+          - Return None instead of ToolInvocation (if _run removed)
+          - Change exitcode=3 to other values
+        """
+        result = RuffAdapter().invoke(
+            repo=MagicMock(),
+            args=[],
+            env=None,
+        )
+        assert isinstance(result, ToolInvocation)
+        assert result.exitcode == 3
+        assert result.stderr == "ruff not found on PATH"
+        assert result.stdout == ""
+
+
+class TestRuffInvokeNormalPath:
+    """Tests for the normal invoke path with mocked _run.
+
+    Kills mutmut survivors on invoke that change command construction
+    (mutating args, removing repo path append, etc.).
+    """
+
+    def test_invoke_passes_cmd_to_run(self):
+        """Ensure _run is called with correct command structure.
+
+        Kills:
+          - Remove _run() call → returns None/exception
+          - Remove cmd.append(str(repo)) → repo not in args
+          - Mutations on cmd construction (changed binary, flags, etc.)
+        """
+        adapter = RuffAdapter()
+        mock_result = MagicMock()
+        mock_result.stdout = '[]'
+        mock_result.stderr = ''
+        mock_result.returncode = 0
+
+        with patch.object(RuffAdapter, '_run', return_value=mock_result) as mock_run:
+            from pathlib import Path
+            repo = Path('/tmp/test_repo')
+            result = adapter.invoke(repo, args=['--select=E501'])
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]  # First positional arg is the cmd list
+        assert 'ruff' in cmd[0]
+        assert 'check' in cmd
+        assert '--output-format=json' in cmd
+        assert '--select=E501' in cmd
+        assert str(repo) in cmd
+
+    def test_invoke_executes_and_returns_result(self):
+        """Invoke with mocked _run returns ToolInvocation.
+
+        Kills:
+          - Mutant that removes _run() call → returns None
+          - Mutant that changes _run arguments (cwd, env, timeout)
+        """
+        adapter = RuffAdapter()
+        expected = ToolInvocation(
+            stdout='{"results": []}',
+            stderr='',
+            exitcode=0,
+            duration_seconds=0.1,
+        )
+
+        with patch.object(RuffAdapter, '_run', return_value=expected) as mock_run:
+            from pathlib import Path
+            repo = Path('/tmp/test_repo')
+            result = adapter.invoke(repo, args=[])
+
+        assert result.stdout == expected.stdout
+        assert result.exitcode == expected.exitcode
+        assert mock_run.call_args[1]['cwd'] == repo

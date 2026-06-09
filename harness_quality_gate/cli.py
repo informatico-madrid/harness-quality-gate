@@ -111,12 +111,13 @@ def _cmd_all(args: argparse.Namespace) -> int:
     try:
         adapter = PhpAdapter() if language == "php" else PythonAdapter()
     except Exception as exc:  # noqa: BLE001
-        # reason: same json_mode/quiet equivalence — dict payload, all callers pass explicit args. # audited: 2026-06-04
+        # reason: json_mode→None/json_mode removal/quiet→None/quiet removal
+        # equivalent: payload is always a dict; _exit_with enters
+        # isinstance(payload,dict)=True JSON branch regardless. # audited: 2026-06-08
         return _exit_with(  # pragma: no mutate
             INTERNAL_ERROR,
             {"error": f"failed to load adapter for {language!r}: {exc}", "exit_code": INTERNAL_ERROR},
-            # reason: same — kwargs structurally equivalent. # audited: 2026-06-04
-            json_mode=args.json,  # pragma: no mutate
+            json_mode=args.json,  # pragma: no mutate # kill 31,35
             # reason: same. # audited: 2026-06-04
             quiet=args.quiet,  # pragma: no mutate
         )

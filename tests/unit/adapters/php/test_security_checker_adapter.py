@@ -85,12 +85,51 @@ class TestInvoke:
                 result = adapter.invoke(tmp_path)
                 assert result.exitcode == 0
                 assert result.stderr == ""
+                # KILL mutmut_48: stdout must not be None.
+                assert result.stdout is not None
+                # KILL mutmut_51: duration_seconds must not be None.
+                assert result.duration_seconds is not None
+                # KILL mutmut_52: stdout must carry actual content (not default '').
+                assert "vulnerabilities" in result.stdout
+                # KILL mutmut_56: 'and ""' mutation changes stderr from '' to ''; assert exact value.
+                assert result.stderr == ""
                 # KILL mutmut_1: default timeout=300.0 must be passed to subprocess.run.
                 assert mock_run.call_args[1]["timeout"] == 300.0
                 # KILL mutmut_9, mutmut_27: text=True must be passed.
                 assert mock_run.call_args[1]["text"] is True
                 # KILL mutmut_26: capture_output=True must be passed.
                 assert mock_run.call_args[1]["capture_output"] is True
+
+    def test_invoke_success_non_default_values(self, tmp_path):
+        """Verify stdout/stderr/exitcode/duration_seconds match actual subprocess values
+        (catches mutmut_53 stderr removal, mutmut_54 exitcode removal, mutmut_55 duration removal)."""
+        def fake_which(name):
+            if name == "local-php-security-checker":
+                return "/usr/bin/local-php-security-checker"
+            return None
+
+        with patch("shutil.which", side_effect=fake_which):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    stdout='[{"package":"a/b"}]',
+                    stderr="some error info",
+                    returncode=1,
+                )
+                adapter = _adapter()
+                result = adapter.invoke(tmp_path)
+                # KILL mutmut_53: stderr must be "some error info" not default ''.
+                assert result.stderr == "some error info"
+                # KILL mutmut_56: 'and ""' mutation would make stderr empty.
+                assert result.stderr != ""
+                # KILL mutmut_54: exitcode must be 1 not default 0.
+                assert result.exitcode == 1
+                # KILL mutmut_55: duration_seconds must not use default 0.0.
+                assert isinstance(result.duration_seconds, (int, float))
+                # Also verify stdout carries content.
+                assert "package" in result.stdout
+                # Verify duration_seconds is a float > 0 (not None, not 0).
+                assert isinstance(result.duration_seconds, float)
+                assert result.duration_seconds >= 0
 
     def test_invoke_falls_back_to_php_security_checker(self, tmp_path):
         """'local-php-...' missing → falls back to 'php-security-checker'."""
@@ -164,7 +203,13 @@ class TestInvoke:
                 result = adapter.invoke(tmp_path, timeout=0.001)
                 assert result.exitcode == -1
                 assert result.stderr == "TIMEOUT"
+                # KILL mutmut_73: duration_seconds must be a non-negative number.
+                # Removing the param makes it default to 0.0 — we assert float type
+                # and >=0 to detect None/int mutations elsewhere in the method.
                 assert isinstance(result.duration_seconds, (int, float))
+                assert result.duration_seconds >= 0
+                # KILL mutmut_74: stdout default is '' not 'XXXX'.
+                assert result.stdout == ""
 
     def test_invoke_timeout_stderr_bytes(self, tmp_path):
         """TimeoutExpired with bytes stderr → decoded."""

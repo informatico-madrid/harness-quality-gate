@@ -1,24 +1,26 @@
-"""Targeted tests to kill surviving mutmut mutants in DepAnalyserAdapter.parse.
+"""Targeted tests to kill surviving mutmut mutants in DepAnalyserAdapter.
+
+Covers parse and invoke methods with exhaustive mutation testing.
 
 Kills:
-  mutmut_1   : stderr default "" → "XXXX"  → killed by log assertion
-  mutmut_2   : exitcode default 0 → 1      → killed by log assertion
-  mutmut_11  : item.get("type", "") → None → killed by log assertion
-  mutmut_13  : item.get("type", "") → (none) → killed by log assertion
-  mutmut_16  : item.get("type", "") → "XXXX"→ killed by log assertion
-  mutmut_23  : item.get("message", "") → None → killed by message assertion
-  mutmut_27  : item.get("file","?") → None  → killed by log args assertion
-  mutmut_30  : Remove item.get("file","?") arg → killed by arg count assertion
-  mutmut_31  : Format string "parse:..." → "XXparse:...XX" → format string assertion
-  mutmut_33  : item.get("file","?") → item.get(None,"?") → killed by log args assertion
-  mutmut_34  : item.get("file","?") → item.get("file",None) → killed by log args assertion
-  mutmut_35  : item.get("file","?") → item.get("?") → killed by log args assertion
-  mutmut_52  : item.get("file", "") → None          → killed by node assertion
-  mutmut_54  : item.get("file", "") → (no default)  → killed by node assertion
-  mutmut_57  : item.get("file", "") → "XXXX"        → killed by node assertion
-  mutmut_62  : item.get("message", "") → None       → killed by _make_finding mock
-  mutmut_64  : item.get("message", "") → (no default) → killed by _make_finding mock
-  mutmut_67  : item.get("message", "") → "XXXX"     → killed by _make_finding mock
+  parse mutmut_1   : stderr default "" → "XXXX"  → killed by log assertion
+  parse mutmut_2   : exitcode default 0 → 1      → killed by log assertion
+  parse mutmut_11  : item.get("type", "") → None → killed by log assertion
+  parse mutmut_13  : item.get("type", "") → (none) → killed by log assertion
+  parse mutmut_16  : item.get("type", "") → "XXXX"→ killed by log assertion
+  parse mutmut_23  : item.get("message", "") → None → killed by message assertion
+  parse mutmut_27  : item.get("file","?") → None  → killed by log args assertion
+  parse mutmut_30  : Remove item.get("file","?") arg → killed by arg count assertion
+  parse mutmut_31  : Format string "parse:..." → "XXparse:...XX" → format string assertion
+  parse mutmut_33  : item.get("file","?") → item.get(None,"?") → killed by log args assertion
+  parse mutmut_34  : item.get("file","?") → item.get("file",None) → killed by log args assertion
+  parse mutmut_35  : item.get("file","?") → item.get("?") → killed by log args assertion
+  parse mutmut_52  : item.get("file", "") → None          → killed by node assertion
+  parse mutmut_54  : item.get("file", "") → (no default)  → killed by node assertion
+  parse mutmut_57  : item.get("file", "") → "XXXX"        → killed by node assertion
+  parse mutmut_62  : item.get("message", "") → None       → killed by _make_finding mock
+  parse mutmut_64  : item.get("message", "") → (no default) → killed by _make_finding mock
+  parse mutmut_67  : item.get("message", "") → "XXXX"     → killed by _make_finding mock
 """
 
 from __future__ import annotations
@@ -26,10 +28,11 @@ from __future__ import annotations
 import json
 import logging
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
+from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.adapters.php.dep_analyser_adapter import (
     DepAnalyserAdapter,
 )
@@ -429,3 +432,87 @@ class TestParseNestedViolationMissingType:
             f"vtype should be '' not {vtype_logs[0][1]!r} "
             f"(kills mutmut_87 default→None)"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Invoke method — kill survivors by mocking _run
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestDepAnalyserInvokeBinaryNotFound:
+    """Tests for when composer-dependency-analyser is not found.
+
+    Kills mutmut survivors on invoke that remove the early return
+    when binary is None, or remove the _run() call.
+    """
+
+    def test_invoke_returns_infra_when_analyser_missing(self):
+        """Binary missing → return ToolInvocation with exitcode=3.
+
+        Kills:
+          - Remove `if cmd is None: return ...` early return
+          - Return None instead of ToolInvocation if _run removed
+          - Remove logger.warning call
+        """
+        with patch.object(
+            DepAnalyserAdapter, "_binary", return_value=None,
+        ):
+            result = DepAnalyserAdapter().invoke(
+                repo=MagicMock(),
+                args=[],
+                env=None,
+            )
+        assert isinstance(result, ToolInvocation)
+        assert result.exitcode == 3
+        assert result.stderr == "composer-dependency-analyser not found"
+        assert result.stdout == ""
+
+    def test_invoke_calls_binary_and_run(self):
+        """Normal invoke → _run is called with resolved binary path."""
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.dep_analyser_adapter.shutil.which",
+                return_value="/usr/bin/composer-dependency-analyser",
+            ):
+                from pathlib import Path
+                DepAnalyserAdapter().invoke(repo=Path("/tmp/repo"), args=["--json"])
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        assert call_args is not None
+        cmd = call_args[0][0]
+        assert "--json" in cmd
+        # Repo path is in cwd, not in cmd args (handled by _run's cwd param)
+        assert mock_run.call_args[1]["cwd"] == Path("/tmp/repo")
+
+    def test_invoke_when_binary_in_vendor_bin(self):
+        """When system binary not found, fallback to vendor/bin."""
+        import shutil
+        original_which = shutil.which
+
+        def mock_which(name):
+            if name == "composer-dependency-analyser":
+                return None  # Not on PATH
+            return original_which(name)
+
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
+            with patch.object(shutil, "which", side_effect=mock_which):
+                from pathlib import Path
+                vendor_bin = Path("/tmp/repo/vendor/bin/composer-dependency-analyser")
+                vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+                vendor_bin.touch()
+                DepAnalyserAdapter().invoke(repo=Path("/tmp/repo"), args=[])
+
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        assert "vendor/bin/composer-dependency-analyser" in cmd[0]

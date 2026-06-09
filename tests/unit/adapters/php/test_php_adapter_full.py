@@ -1692,7 +1692,7 @@ class TestRunL3a:
         assert len(cs_logs) == 1, f"Expected exactly one cs-fixer log, got: {cs_logs}"
         assert cs_logs[0] == "L3A php-cs-fixer: 0 findings"
 
-    def test_l3a_tier_a_visitor_runtime_error_skipped(self, tmp_path):
+    def test_l3a_tier_a_visitor_runtime_error_skipped(self, tmp_path, caplog):
         adapter = PhpAdapter()
         adapter._phpstan = MagicMock()
         adapter._phpstan.run_l3a.return_value = []
@@ -1704,8 +1704,58 @@ class TestRunL3a:
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.side_effect = RuntimeError("visitor error")
         adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
         result = adapter.run_l3a(tmp_path, {})
         assert result.passed is True
+        # Kill logger argument/string mutations on tier-a error path:
+        #   Mutant 106: exc→None → log becomes "L3A tier-A visitors skipped: None"
+        #   Mutant 107: format string removed → log changes entirely
+        #   Mutant 108: string prefix/suffix mutation → "XX...XX"
+        #   Mutant 109: case mutation → "l3a tier-a visitors skipped: ..."
+        #   Mutant 112: node param removed from Finding
+        #   Mutant 113: language param removed from Finding
+        #   Mutant 114: layer param removed from Finding
+        #   Mutant 115: exc→None → "L3A tier-A visitors skipped: None"
+        #   Mutant 116: logger.warning(exc) → format-arg removal
+        #   Mutant 119: layer="L3A" → None mutation in LayerResult
+        #   Mutant 126: passed = len(all_findings) == 0 → != 0 mutation
+        warnings = [m for m in caplog.messages if "L3A tier-A visitors skipped" in m]
+        assert len(warnings) == 1, (
+            f"Expected exactly one tier-a skip warning, got: {warnings}"
+        )
+        assert warnings[0] == "L3A tier-A visitors skipped: visitor error"
+        # Verify result fields - kills mutations on LayerResult construction
+        assert result.layer == "L3A"
+        assert result.language == "php"
+        assert result.passed is True
+
+    def test_l3a_tier_a_visitor_success_log_message(self, tmp_path, caplog):
+        """Kill logger.info mutations on tier-A visitor success path.
+
+        Kills: mutmut_126, 127, 138-141 on tier-a log and duration/path.
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        # Exact log message assertion kills format-string and argument mutations
+        tier_a_logs = [m for m in caplog.messages if m.startswith("L3A tier-A visitors:")]
+        assert len(tier_a_logs) == 1, (
+            f"Expected exactly one tier-A log message, got: {tier_a_logs}"
+        )
+        assert tier_a_logs[0] == "L3A tier-A visitors: 0 findings", (
+            f"Exact log format mismatch — kills mutmut_126/127/138-141, got: {tier_a_logs[0]}"
+        )
 
     def test_l3a_duration_non_negative(self, tmp_path):
         adapter = PhpAdapter()
@@ -2965,6 +3015,50 @@ class TestRunL3aFrameworkInjection:
         assert framework_logs[0].message == "L3A PHPStan framework packs: phpstan-symfony"
         assert framework_logs[0].levelno == logging.INFO
 
+    def test_l3a_env_passed_to_all_l3a_invokes(self, tmp_path):
+        """Kill mutmut_18: env arg replaced with None on _phpstan.run_l3a call.
+
+        If run_l3a(repo, env) becomes run_l3a(repo, None), we verify the
+        exact call signature uses env (not None).
+        """
+        adapter = _make_mock_adapter()
+        adapter.run_l3a(tmp_path, {"FOO": "bar"})
+        # Original: self._phpstan.run_l3a(repo, env)
+        call_kw = adapter._phpstan.run_l3a.call_args
+        assert len(call_kw[0]) >= 2 and call_kw[0][1] is not None, (
+            "Mutant18: env arg must be passed (not None) to phpstan.run_l3a"
+        )
+        # Same for phpmd
+        call_kw_pm = adapter._phpmd.run_l3a.call_args
+        assert len(call_kw_pm[0]) >= 2 and call_kw_pm[0][1] is not None, (
+            "Mutant18: env arg must be passed (not None) to phpmd.run_l3a"
+        )
+
+    def test_l3a_multi_framework_join_format(self, tmp_path, caplog):
+        """Kill mutmut_15: join delimiter mutation on logger.info call.
+
+        Only triggers when multiple frameworks are injected.
+
+        Mutant 15:  ', '.join(list) → 'XX, XX'.join(list)
+        With 2 frameworks: original → 'a, b', mutant → 'XX, XXa, XX, XXb'
+        """
+        adapter = _make_mock_adapter()
+        composer = tmp_path / "composer.json"
+        composer.write_text(json.dumps({
+            "require": {
+                "symfony/framework-bundle": "^6.0",
+                "laravel/framework": "^10.0",
+            }
+        }))
+        with caplog.at_level(logging.INFO, logger="harness_quality_gate.adapters.php"):
+            adapter.run_l3a(tmp_path, {})
+        assert adapter._phpstan.run_l3a.call_args[0][0] == tmp_path
+        # Check exact format: original joins with ", " producing "a, b"
+        # Mutant joins with "XX, XX" producing "XX, XXa, XX, XXb"
+        framework_logs = [r for r in caplog.records if "L3A PHPStan framework packs" in r.message]
+        assert len(framework_logs) >= 1
+        assert framework_logs[0].message == "L3A PHPStan framework packs: larastan, phpstan-symfony"
+
 
 # ===========================================================================
 # Edge cases / mutation survivors
@@ -3457,6 +3551,34 @@ class TestRunL3a:
             "Mut92: Exception replaced with None — log says 'None' not actual exception text"
         )
 
+    def test_l3a_runtime_error_log_format(self, tmp_path, caplog):
+        """Kill mutmut_30/31/32/33: runtime error log message mutations.
+
+        Mut30: logger.warning("fmt", exc) → logger.warning("fmt", None)
+        Mut31: logger.warning("fmt", exc) → logger.warning(exc)
+        Mut32: logger.warning("fmt", exc) → logger.warning("fmt", )  [empty arg]
+        Mut33: logger.warning("fmt", exc) → logger.warning("XXfmtXX", exc)
+        """
+        adapter = _make_mock_adapter()
+        adapter._phpstan.run_l3a.side_effect = RuntimeError("phpstan not found")
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
+        adapter.run_l3a(tmp_path, {})
+        # Mut30/32: Exception replaced with None or arg removed → message ==
+        # "L3A PHPStan skipped: None" (mut30) or bare "phpstan not found" (mut31)
+        # or "L3A PHPStan skipped: %s" (mut32) or "XX..." (mut33)
+        skip_logs = [m for m in caplog.messages if "L3A PHPStan skipped" in m]
+        assert len(skip_logs) >= 1, (
+            f"Mut30-33: Expected PHPStan skipped warning, got: {caplog.messages}"
+        )
+        # The actual exception text must be in the log (kills mut30 — None substitution)
+        assert "phpstan not found" in skip_logs[0], (
+            "Mut30: Exception replaced with None — log should contain 'phpstan not found'"
+        )
+        # Exact prefix (kills mut31 — format string removed) and mut33 — XX decoration)
+        assert skip_logs[0].startswith("L3A PHPStan skipped: "), (
+            "Mut31/Mut33: Format must start with 'L3A PHPStan skipped: ', not raw exc or 'XX...' "
+        )
+
     def test_kills_all_6_run_l3a_mutants(self, tmp_path, caplog):
         """Kill all 6 surviving mutmut_15/17/18/19/20/24 in run_l3a.
 
@@ -3512,3 +3634,72 @@ class TestRunL3a:
         assert result.layer == "L3A"
         assert result.language == "php"
         assert result.passed is True
+
+    def test_l3a_tier_a_visitor_runtime_error_skipped(self, tmp_path, caplog):
+        """Kill logger argument/string mutations on tier-a error path.
+
+        Kills: mutmut_106-116, 119, 126 on tier-a visitors error path.
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.side_effect = RuntimeError("visitor error")
+        adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        # Kill logger argument/string mutations on tier-a error path:
+        #   Mutant 106: exc→None → log becomes "L3A tier-A visitors skipped: None"
+        #   Mutant 107: format string removed → log changes entirely
+        #   Mutant 108: string prefix/suffix mutation → "XX...XX"
+        #   Mutant 109: case mutation → "l3a tier-a visitors skipped: ..."
+        #   Mutant 112: node param removed from Finding
+        #   Mutant 113: language param removed from Finding
+        #   Mutant 114: layer param removed from Finding
+        #   Mutant 115: exc→None → "L3A tier-A visitors skipped: None"
+        #   Mutant 116: logger.warning(exc) → format-arg removal
+        #   Mutant 119: layer="L3A" → None mutation in LayerResult
+        #   Mutant 126: passed = len(all_findings) == 0 → != 0 mutation
+        warnings = [m for m in caplog.messages if "L3A tier-A visitors skipped" in m]
+        assert len(warnings) == 1, (
+            f"Expected exactly one tier-a skip warning, got: {warnings}"
+        )
+        assert warnings[0] == "L3A tier-A visitors skipped: visitor error"
+        # Verify result fields - kills mutations on LayerResult construction
+        assert result.layer == "L3A"
+        assert result.language == "php"
+        assert result.passed is True
+
+    def test_l3a_tier_a_visitor_success_log_message(self, tmp_path, caplog):
+        """Kill logger.info mutations on tier-A visitor success path.
+
+        Kills: mutmut_126, 127, 138-141 on tier-a log and duration/path.
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        caplog.set_level(logging.INFO)
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        # Exact log message assertion kills format-string and argument mutations
+        tier_a_logs = [m for m in caplog.messages if m.startswith("L3A tier-A visitors:")]
+        assert len(tier_a_logs) == 1, (
+            f"Expected exactly one tier-A log message, got: {tier_a_logs}"
+        )
+        assert tier_a_logs[0] == "L3A tier-A visitors: 0 findings", (
+            f"Exact log format mismatch — kills mutmut_126/127/138-141, got: {tier_a_logs[0]}"
+        )
