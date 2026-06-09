@@ -602,7 +602,7 @@ class TestRunL3B:
         return PythonAdapter()
 
     def test_l3b_no_mutants(self, tmp_path: Path):
-        """All mutants killed -> passed=True."""
+        """All mutants killed -> passed=True, no remediation key."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         mock_mutmut.parse.return_value = MutationStats(
@@ -618,9 +618,10 @@ class TestRunL3B:
         ms = layer.tool_specific["mutation_stats"]
         assert ms.killed == 10
         assert ms.survived == 0
+        assert "remediation" not in layer.tool_specific
 
     def test_l3b_survived_mutants(self, tmp_path: Path):
-        """Some mutants survived -> passed=False."""
+        """Some mutants survived -> passed=False + remediation key present."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         mock_mutmut.parse.return_value = MutationStats(
@@ -633,9 +634,16 @@ class TestRunL3B:
         assert layer.passed is False
         ms = layer.tool_specific["mutation_stats"]
         assert ms.survived == 3
+        rem = layer.tool_specific["remediation"]
+        assert rem["skill"] == "mutation-testing-guide"
+        assert rem["guide"] == "MUTANT_KILLING_GUIDE.md"
+        assert rem["instructions"] == "SUBAGENT_MUTATION_INSTRUCTIONS.md"
+        assert rem["survived"] == 3
+        assert rem["timed_out"] == 0
+        assert "3 mutant(s) survived" in rem["summary"]
 
     def test_l3b_timed_out(self, tmp_path: Path):
-        """Some mutants timed out -> passed=False."""
+        """Some mutants timed out -> passed=False + remediation key present."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         mock_mutmut.parse.return_value = MutationStats(
@@ -648,6 +656,11 @@ class TestRunL3B:
         assert layer.passed is False
         ms = layer.tool_specific["mutation_stats"]
         assert ms.timed_out == 2
+        rem = layer.tool_specific["remediation"]
+        assert rem["skill"] == "mutation-testing-guide"
+        assert rem["timed_out"] == 2
+        assert rem["survived"] == 0
+        assert "2 mutant(s) timed out" in rem["summary"]
 
     def test_l3b_escaped_mutants(self, tmp_path: Path):
         """Escaped mutants -> survived > 0, passed=False."""
@@ -822,6 +835,86 @@ class TestRunL3B:
         assert inv_args[1] == [], "invoke() second arg must be [] (not None/removed)"
         # After mutation 38, real parse(None) raises TypeError and we never get here
 
+
+
+# ---------------------------------------------------------------------------
+# _mutation_remediation (unit tests for the static method)
+# ---------------------------------------------------------------------------
+
+class TestMutationRemediation:
+    """Unit tests for PythonAdapter._mutation_remediation."""
+
+    def _rem(self, **kwargs):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        defaults = dict(total=10, killed=7, survived=3, timed_out=0,
+                        escaped=0, untested=0, msi=0.7, covered_msi=0.7)
+        defaults.update(kwargs)
+        return PythonAdapter._mutation_remediation(MutationStats(**defaults))
+
+    def test_keys_present(self):
+        """All expected keys are present in the remediation dict."""
+        rem = self._rem()
+        assert set(rem.keys()) >= {"skill", "guide", "instructions", "summary", "msi", "survived", "timed_out"}
+
+    def test_skill_name_exact(self):
+        """skill must be exactly 'mutation-testing-guide' — kills string mutations."""
+        assert self._rem()["skill"] == "mutation-testing-guide"
+
+    def test_guide_name_exact(self):
+        """guide must be exactly 'MUTANT_KILLING_GUIDE.md' — kills string mutations."""
+        assert self._rem()["guide"] == "MUTANT_KILLING_GUIDE.md"
+
+    def test_instructions_name_exact(self):
+        """instructions must be exactly 'SUBAGENT_MUTATION_INSTRUCTIONS.md'."""
+        assert self._rem()["instructions"] == "SUBAGENT_MUTATION_INSTRUCTIONS.md"
+
+    def test_survived_only(self):
+        """Only survived > 0: summary mentions survived count, not timed_out."""
+        rem = self._rem(survived=5, timed_out=0)
+        assert rem["survived"] == 5
+        assert rem["timed_out"] == 0
+        assert "5 mutant(s) survived" in rem["summary"]
+        assert "timed out" not in rem["summary"]
+
+    def test_timed_out_only(self):
+        """Only timed_out > 0: summary mentions timed_out count, not survived."""
+        rem = self._rem(survived=0, timed_out=3)
+        assert rem["timed_out"] == 3
+        assert rem["survived"] == 0
+        assert "3 mutant(s) timed out" in rem["summary"]
+        assert "survived" not in rem["summary"]
+
+    def test_both_survived_and_timed_out(self):
+        """Both > 0: summary mentions both issues."""
+        rem = self._rem(survived=2, timed_out=4)
+        assert "2 mutant(s) survived" in rem["summary"]
+        assert "4 mutant(s) timed out" in rem["summary"]
+        assert rem["survived"] == 2
+        assert rem["timed_out"] == 4
+
+    def test_msi_preserved(self):
+        """msi value is passed through exactly."""
+        rem = self._rem(msi=0.7, survived=1, timed_out=0)
+        assert rem["msi"] == 0.7
+
+    def test_summary_contains_guide_reference(self):
+        """summary always references the guide for agent discoverability."""
+        rem = self._rem(survived=1, timed_out=0)
+        assert "mutation-testing-guide" in rem["summary"]
+        assert "MUTANT_KILLING_GUIDE.md" in rem["summary"]
+
+    def test_summary_contains_l3b_label(self):
+        """summary starts with 'L3B FAILED' so agents can grep for it."""
+        rem = self._rem(survived=1, timed_out=0)
+        assert rem["summary"].startswith("L3B FAILED")
+
+    def test_priority_hint_in_summary(self):
+        """summary includes priority section references for agents."""
+        rem = self._rem(survived=1, timed_out=0)
+        summary = rem["summary"]
+        assert "§4.4" in summary
+        assert "§4.1" in summary
+        assert "H1" in summary
 
 
 # ---------------------------------------------------------------------------
@@ -1108,7 +1201,16 @@ def _assert_invoke_and_parse_args(mock_mutmut_adapter: MagicMock, expected_repo:
 # ---------------------------------------------------------------------------
 
 class TestRunRuffHelper:
-    """Test _run_ruff: tool-not-found and invocation branches."""
+    """Test _run_ruff: tool-not-found, invocation branches, env= kwarg.
+
+    Surviving mutants targeted: mutmut 6,7,8,9,19,20,21,22 + others.
+    Strategy:
+      - Non-empty env dict exposes conditional 'X if env else {}' mutations
+        (with env={} both branches yield {}, mutations indistinguishable)
+      - Return type/value assertions kill return []→None mutations
+      - env kwarg assertions kill env=None/removed/conditional mutations
+      - Separate test for tool-not-found path (shutil.which→None)
+    """
 
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
@@ -1117,37 +1219,39 @@ class TestRunRuffHelper:
     def test_run_ruff_tool_found(self, tmp_path: Path, caplog):
         """Ruff on PATH -> invoke + parse called.
 
-        Kills mutmut_6 (False→None assertion), mutmut_7 (True→False)
-        Kills mutmut_8, 9, 12, 18-23, 25-28 (return []→None mutations)
-        Kills mutmut_11: logger.warning call removed (caplog checks warning)
+        With non-empty env, exposes conditional 'dict(env) if env else {}'
+        mutations because env={} (falsy) != {'K':'v'} (truthy).
         """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
-        findings = a._run_ruff(tmp_path, {})
-        # Type assertion: kills mutmut_8, 9, 12, 18-23, 25-28 (return []→None)
-        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
-        assert findings is not None, "findings must not be None"
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            findings = a._run_ruff(tmp_path, {"RUFF_ENV": "val"})
+        assert isinstance(findings, list), "return must be list (kills return→None)"
+        assert findings is not None
         assert len(findings) == 1
         assert findings[0].tool == "ruff"
-        # Assert invoke was called with correct args
+        # Verify invoke() called with env= kwarg matching the dict passed in
         assert a.ruff.invoke.called
         inv_args, inv_kwargs = a.ruff.invoke.call_args
-        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_3, 5)"
-        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_3, 5)"
-        # Assert parse was called with non-None stdout
+        assert inv_args[0] is tmp_path
+        assert inv_args[1] == []
+        assert inv_kwargs["env"] == {"RUFF_ENV": "val"}, \
+            "env kwarg must propagate the exact dict (kills env mutation survivors)"
+        # Verify parse was called with valid stdout/stderr
         assert a.ruff.parse.called
         pars_args = a.ruff.parse.call_args[0]
-        assert pars_args[0] is not None, "parse() stdout must not be None (kills mutmut_13)"
-        assert isinstance(pars_args[0], str), f"parse() stdout must be str, got {type(pars_args[0])}"
+        assert pars_args[0] is not None and isinstance(pars_args[0], str)
 
-    def test_run_ruff_tool_not_found(self, tmp_path: Path, caplog):
-        """Ruff not on PATH -> empty list."""
+    def test_run_ruff_tool_not_found(self, tmp_path: Path):
+        """Ruff not on PATH -> return [] (not None).
+
+        Kills return []→None mutations on the early-return branch.
+        """
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
             findings = a._run_ruff(tmp_path, {})
-        # Kill mutmut_6 (False→None), mutmut_7, 12 (return []→None)
-        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
-        assert findings is not None, "findings must not be None (kills mutmut_12)"
+        assert isinstance(findings, list), "return must be list (kills return→None)"
+        assert findings is not None
         assert findings == []
 
     def test_run_ruff_parse_error(self, tmp_path: Path, caplog):
@@ -1157,13 +1261,12 @@ class TestRunRuffHelper:
         a.ruff.parse = MagicMock(side_effect=RuntimeError("parse err"))
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
             findings = a._run_ruff(tmp_path, {})
-        # Kill mutmut_18, 19, 20 (parse return → None, replaced with empty list path)
-        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert isinstance(findings, list), "return must be list (kills return→None)"
         assert findings is not None
         assert findings == []
-        # Kill logger string mutations in warning (mutmut_14-18 string changes)
-        ruff_warn = [r for r in caplog.records if r.levelname == "WARNING" and "ruff" in r.message.lower()]
-        assert len(ruff_warn) == 1, f"Expected 1 ruff warning log, got {len(ruff_warn)}"
+        ruff_warn = [r for r in caplog.records
+                     if r.levelname == "WARNING" and "ruff" in r.message.lower()]
+        assert len(ruff_warn) == 1
         assert "ruff invocation failed" in ruff_warn[0].getMessage()
 
     def test_run_ruff_oserror_on_invoke(self, tmp_path: Path, caplog):
@@ -1173,14 +1276,74 @@ class TestRunRuffHelper:
         a.ruff.invoke = MagicMock(side_effect=OSError("ruff exec failed"))
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
             findings = a._run_ruff(tmp_path, {})
-        # Kill mutmut_21, 22, 23 (exception path return → None)
-        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert isinstance(findings, list), "return must be list (kills return→None)"
         assert findings is not None
         assert findings == []
-        # Kill logger string mutations in warning path
-        ruff_warn = [r for r in caplog.records if r.levelname == "WARNING" and "ruff" in r.message.lower()]
-        assert len(ruff_warn) == 1, f"Expected 1 ruff warning log, got {len(ruff_warn)}"
+        ruff_warn = [r for r in caplog.records
+                     if r.levelname == "WARNING" and "ruff" in r.message.lower()]
+        assert len(ruff_warn) == 1
         assert "ruff invocation failed" in ruff_warn[0].getMessage()
+
+    def test_run_ruff_env_kwarg_preserved(self, tmp_path: Path):
+        """env dict passed to _run_ruff must appear verbatim in invoke(env=).
+
+        Kills env-related survivors (mutmut_19..22):
+          - env=dict() -> {}
+          - env=dict(env) if env else {} conditional
+          - env=None replacement
+          - env= kwarg removed
+        Uses non-empty env so X if {} else {} evaluates differently from
+        X if {"K":"v"} else {}, making mutations observable.
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
+        env_arg = {"K1": "V1", "K2": "V2"}
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            findings = a._run_ruff(tmp_path, env_arg)
+        assert isinstance(findings, list)
+        assert findings is not None
+        assert len(findings) == 1
+        inv_args, inv_kwargs = a.ruff.invoke.call_args
+        assert "env" in inv_kwargs, "invoke() must include env= keyword"
+        # The exact dict must flow through — catches conditional mutations
+        assert inv_kwargs["env"] == {"K1": "V1", "K2": "V2"}
+
+    def test_run_ruff_env_empty_dict(self, tmp_path: Path):
+        """env={} → invoke received env={} (not None, not missing)."""
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            findings = a._run_ruff(tmp_path, {})
+        assert isinstance(findings, list)
+        assert findings is not None
+        assert len(findings) == 1
+        inv_args, inv_kwargs = a.ruff.invoke.call_args
+        assert "env" in inv_kwargs
+        # Empty env must be passed as empty dict (not None)
+        assert inv_kwargs["env"] is not None
+        assert inv_kwargs["env"] == {}
+
+    def test_run_ruff_invalid_repo_type_triggers_assert(self, tmp_path: Path):
+        """Passing a non-Path repo must raise AssertionError.
+
+        Kills mutmut assertion mutations on line 205 that replace
+        assert isinstance(repo, Path) with assert False / pass.
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        with pytest.raises(AssertionError):
+            a._run_ruff("not_a_path", {})
+
+    def test_run_ruff_none_env_triggers_assert(self, tmp_path: Path):
+        """Passing env=None must raise AssertionError.
+
+        Kills mutmut assertion mutations on line 206 that replace
+        assert env is not None with pass / assert False.
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        with pytest.raises(AssertionError):
+            a._run_ruff(tmp_path, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1217,36 +1380,54 @@ class TestRunPyrightHelper:
         assert isinstance(pars_args[0], str)
 
     def test_run_pyright_tool_not_found(self, tmp_path: Path, caplog):
-        """Pyright not on PATH -> early return empty list."""
+        """Pyright not on PATH -> early return empty list.
+
+        Kills mutmut_5 ("pyright not found"→None → log removed) via caplog message.
+        Kills mutmut_6 ("pyright not found"→garbled string) via exact message check.
+        Kills mutmut_7 (return []→None) via isinstance assertion.
+        Kills mutmut_8 (logger warning call removed) via log record check.
+        """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 findings = a._run_pyright(tmp_path, {})
-        # Type assertion: kills return []→None mutations
+        # Type assertion: kills mutmut_7 (return []→None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None
         assert findings == []
-        # Kill logger string mutations in "not found" warning (mutmut_5-8)
+        # Kill mutmut_5: verify warning was emitted (logger.warning call present)
         pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
         assert len(pyright_warn) == 1, f"Expected warning, got {len(pyright_warn)}"
-        assert "pyright not found on PATH" in pyright_warn[0].getMessage()
+        # Kill mutmut_6: verify exact log message (not garbled/empty)
+        assert pyright_warn[0].getMessage() == "pyright not found on PATH, skipping", \
+            f"Expected exact warning message, got: {pyright_warn[0].getMessage()}"
 
     def test_run_pyright_oserror(self, tmp_path: Path, caplog):
-        """Pyright.invoke raises OSError -> empty list + invoke was called correctly."""
+        """Pyright.invoke raises OSError -> empty list + invoke was called correctly.
+
+        Kills mutmut_8 (return []→None in exception handler) via isinstance assertion.
+        Kills mutmut_10 (logger.warning call removed) via caplog message check.
+        Kills mutmut_11 ("pyright invocation failed"→other string) via message check.
+        Kills mutmut_12 (exc→None in format arg) via str(interpolation) of msg.
+        """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         a.pyright.invoke = MagicMock(side_effect=OSError("pyright exec failed"))
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
             findings = a._run_pyright(tmp_path, {})
-        # Kill mutations: verify invoke was called with repo+[]
-        assert a.pyright.invoke.called
-        inv_args = a.pyright.invoke.call_args[0]
-        assert inv_args[0] is tmp_path
-        assert inv_args[1] == []
-        assert findings == []
-        # Type assertion: kills return None mutations (mutmut_15-19, 22-24)
+        # Type assertion on empty list: kills mutmut_8 (return []→None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
+        assert findings == []
+        # Kill mutmut_10: logger.warning call present, kills call-removed mutation
+        pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
+        assert len(pyright_warn) == 1, f"Expected warning, got {len(pyright_warn)}"
+        assert "pyright invocation failed" in pyright_warn[0].getMessage()
+        # Kill mutmut_11, 12: verify format string has %s interpolated (not None, not empty)
+        msg = pyright_warn[0].getMessage()
+        # mutmut_12: exc→None means "%s" format would fail → msg broken/empty
+        assert "pyright exec failed" in msg, f"exc must be interpolated in log msg (kills mutmut_12), got: {msg}"
         # Kill logger string mutations in "invocation failed" warning
         pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
         assert len(pyright_warn) == 1
@@ -1282,9 +1463,10 @@ class TestRunPytestHelper:
     def test_run_pytest_oserror(self, tmp_path: Path, caplog):
         """Pytest.invoke raises -> empty list.
 
-        Kills return None mutations (mutmut_26-29) via isinstance assertion.
-        Kills invoke-args mutations (mutmut_5-7) via assert invoke called with args.
-        Kills logger string mutations (mutmut_6,7) via caplog message assertion.
+        Kills mutmut_8 (return []→None in exception handler) via isinstance assertion.
+        Kills mutmut_10 (logger.warning call removed) via caplog message check.
+        Kills mutmut_11 ("pytest invocation failed"→other string) via message check.
+        Kills mutmut_12 (exc→None in format arg) via str(interpolation) of msg.
         """
         a = self._adapter()
         mock_pytest = MagicMock()
@@ -1292,22 +1474,26 @@ class TestRunPytestHelper:
         a.pytest = mock_pytest
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
             findings = a._run_pytest(tmp_path, {})
-        # Type assertion: kills return None mutations (mutmut_26-29)
+        # Type assertion on empty list: kills mutmut_8 (return []→None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings).__name__}"
         assert findings is not None, "findings must not be None"
         assert findings == []
-        # Kill invoke-args mutations: verify invoke was called with correct args
-        assert mock_pytest.invoke.called, "invoke() must be called before exception"
-        inv_args = mock_pytest.invoke.call_args[0]
-        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_5,7)"
-        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_5,7)"
-        # Kill logger string mutations in warning path (mutmut_6, 7)
+        # Kill mutmut_10: logger.warning call present, kills call-removed mutation
         pytest_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pytest" in r.message.lower()]
         assert len(pytest_warn) == 1, f"Expected pytest warning, got {len(pytest_warn)}"
         assert "pytest invocation failed" in pytest_warn[0].getMessage()
+        # Kill mutmut_11, 12: verify format string has %s interpolated (not None, not empty)
+        msg = pytest_warn[0].getMessage()
+        assert "pytest failed" in msg, f"exc must be interpolated in log msg (kills mutmut_12), got: {msg}"
 
     def test_run_pytest_tool_not_found(self, tmp_path: Path, caplog):
-        """python3 not found on PATH -> empty list, no invoke called."""
+        """python3 not found on PATH -> empty list, no invoke called.
+
+        Kills mutmut_5 ("python3 not found"→None → log removed) via caplog message.
+        Kills mutmut_6 ("python3 not found"→garbled string) via exact message check.
+        Kills mutmut_7 (return []→None) via isinstance assertion.
+        Kills mutmut_8 (logger warning call removed) via log record check.
+        """
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
         with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
@@ -1316,13 +1502,16 @@ class TestRunPytestHelper:
                 return_value=None,
             ):
                 findings = a._run_pytest(tmp_path, {})
-        # Type assertion: kills return []→None mutations
+        # Type assertion: kills mutmut_7 (return []→None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
         assert findings == []
-        # Kill logger string mutations in "not found" warning
+        # Kill mutmut_5: verify warning was emitted (logger.warning call present)
         pytest_warn = [r for r in caplog.records if r.levelname == "WARNING" and "python" in r.message.lower()]
         assert len(pytest_warn) == 1, f"Expected python not found warning, got {len(pytest_warn)}"
-        assert "python3 not found on PATH" in pytest_warn[0].getMessage()
+        # Kill mutmut_6: verify exact log message (not garbled/empty)
+        assert pytest_warn[0].getMessage() == "python3 not found on PATH, skipping", \
+            f"Expected exact warning message, got: {pytest_warn[0].getMessage()}"
 
     def test_run_pytest_invoke_args_strict(self, tmp_path: Path):
         """Validate invoke() receives (repo, []) — kills argument mutations."""
@@ -1424,6 +1613,113 @@ class TestRunVultureHelper:
         assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_19)"
         assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_19)"
 
+    def test_run_vulture_strict_invoke_and_parse_args(self, tmp_path: Path):
+        """Strict checks on _run_vulture success path: invoke/parse args verified.
+
+        Kills mutmut_5, 6, 7, 8 (return []→None mutations) via isinstance/is-not-None.
+        Kills mutmut_14 (invoke(repo,[])→invoke(None,[])) via invoke first-arg check.
+        Kills mutmut_15 (invoke(repo,[])→invoke(repo,None/removed)) via invoke second-arg check.
+        Kills mutmut_16 (parse(None,inv.stderr,inv.exitcode)) via parse first-arg is not None.
+        Kills mutmut_17 (parse args swapped/removed) via parse positional args check.
+        """
+        from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
+
+        a = self._adapter()
+        real_adapter = VultureAdapter()
+
+        mock_vulture = MagicMock()
+        mock_vulture.invoke.return_value = MagicMock(
+            stdout='{}', stderr='', exitcode=0,
+        )
+        mock_vulture.parse = MagicMock(wraps=real_adapter.parse)
+
+        with patch.object(a, "vulture", mock_vulture):
+            with _all_tools_on_path({"vulture": "/bin/vulture"}):
+                findings = a._run_vulture(tmp_path, {})
+
+        # Type assertions: kills mutmut_5, 6, 7, 8 (return []→None mutations on any path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_5,6,7,8)"
+
+        # Kill mutmut_14, 15: invoke() called with correct positional args (repo, [])
+        assert mock_vulture.invoke.called
+        inv_args = mock_vulture.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_14)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_15)"
+
+        # Kill mutmut_16, 17: parse() called with non-None stdout, stderr, exitcode
+        assert mock_vulture.parse.called
+        pars_args = mock_vulture.parse.call_args[0]
+        assert len(pars_args) >= 3, "parse() called with at least 3 positional args (kills mutmut_17)"
+        assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut_16)"
+        assert isinstance(pars_args[0], str), "parse() arg0=stdout must be str"
+        assert pars_args[1] is not None, "parse() arg1=stderr must not be None"
+        assert pars_args[2] is not None, "parse() arg2=exitcode must not be None"
+
+    def test_run_vulture_runtimeerror(self, tmp_path: Path, caplog):
+        """Vulture.invoke raises RuntimeError -> empty list + warning logged.
+
+        Kills mutmut_5, 6 (return []→None on exception path) via type assertion.
+        Kills mutmut_20 (OSError→RuntimeError exception type mutation).
+        Kills logger warning mutations via caplog check.
+        """
+        a = self._adapter()
+        mock_vulture = MagicMock()
+        mock_vulture.invoke = MagicMock(side_effect=RuntimeError("vulture runtime error"))
+        with patch.object(a, "vulture", mock_vulture):
+            with _all_tools_on_path({"vulture": "/bin/vulture"}):
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    findings = a._run_vulture(tmp_path, {})
+
+        # Type assertion: kills mutmut_5, 6 (return []→None mutations on exception path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_5,6)"
+        assert findings == [], "findings must be empty list on exception path"
+
+        # Kill invoke-args mutations: verify invoke WAS called before exception
+        assert mock_vulture.invoke.called, "invoke() should have been called before RuntimeError"
+        inv_args = mock_vulture.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_21)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_22)"
+
+        # Kill logger mutations: verify warning was logged
+        vulture_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "vulture" in r.message.lower() and "invocation failed" in r.message
+        ]
+        assert len(vulture_warn) >= 1, "Logger must emit vulture invocation warning (kills mutmut_25, 26)"
+
+    def test_run_vulture_strict_not_found(self, tmp_path: Path, caplog):
+        """Vulture not on PATH -> empty list + exact warning message.
+
+        Kills mutmut_5 (return []→None on early-return line) via isinstance assertion.
+        Kills mutmut_6 (return []→None on early-return line) via isinstance assertion.
+        Kills mutmut_7 (return []→None on early-return line) via findings is not None.
+        Kills mutmut_8 (return []→None on early-return line) via findings == [].
+        Kills logger warning removal mutation via caplog assertion.
+        Kills logger message string mutation via exact message check.
+        """
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_vulture(tmp_path, {})
+
+        # Type assertions: kills mutmut_5, 6, 7, 8 (return []→None mutations on early return)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_7,8)"
+        assert findings == [], "findings must be empty list on not-found path"
+
+        # Kill logger warning mutation: verify warning was emitted
+        vulture_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "vulture" in r.message.lower() and "not found" in r.message
+        ]
+        assert len(vulture_warn) >= 1, "Logger must emit vulture not found warning (kills mutmut_10, 11)"
+        # Kill exact-message string mutations (mutmut on log format string)
+        assert any("vulture not found on PATH" in r.getMessage() for r in vulture_warn), (
+            "Warning must contain 'vulture not found on PATH' message"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Private helper: _run_deptry
@@ -1437,29 +1733,116 @@ class TestRunDeptryHelper:
         return PythonAdapter()
 
     def test_run_deptry_tool_found(self, tmp_path: Path):
-        """Deptry on PATH -> parse returns findings."""
-        a = self._adapter()
-        a.deptry = _mock_subadapter(findings=[_make_finding(tool="deptry")])
-        with _all_tools_on_path({"deptry": "/bin/deptry"}):
-            findings = a._run_deptry(tmp_path, {})
-        assert len(findings) == 1
+        """Deptry on PATH -> parse returns findings.
 
-    def test_run_deptry_tool_not_found(self, tmp_path: Path):
-        """Deptry not on PATH -> empty list."""
+        Kills mutmut_5, 6 (return []→None on early return path) via type assertion.
+        Kills mutmut_14, 15 (invoke args: repo→None or []→None) via invoke arg checks.
+        Kills mutmut_16, 17 (parse args → None) via parse arg checks.
+        """
+        from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
+
+        a = self._adapter()
+        real_adapter = DeptryAdapter()
+
+        # Use wraps= to keep MagicMock tracking .call_count for assert_called_once
+        mock_parse = MagicMock(wraps=real_adapter.parse)
+        mock_deptry = MagicMock()
+        mock_deptry.invoke.return_value = MagicMock(
+            stdout='{"errors": {"missing_imports": [{"module": "foobar", "filepath": "/x.py"}]}}',
+            stderr='', exitcode=0,
+        )
+        mock_deptry.parse = mock_parse
+
+        with patch.object(a, 'deptry', mock_deptry):
+            with _all_tools_on_path({"deptry": "/bin/deptry"}):
+                findings = a._run_deptry(tmp_path, {})
+
+        # Type assertion: kills return []→None mutations (mutmut_5, 6 on early path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_5,6,7,8)"
+        assert len(findings) == 1
+        assert findings[0].tool == "deptry"
+
+        # Kill mutmut_14, 15: invoke() called with correct positional args
+        assert mock_deptry.invoke.called
+        inv_args = mock_deptry.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_14, 15)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_14, 15)"
+
+        # Kill mutmut_16, 17: parse() called with non-None args
+        mock_deptry.parse.assert_called_once()
+        pars_args = mock_deptry.parse.call_args[0]
+        assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut_16, 17)"
+        assert pars_args[1] is not None, "parse() arg1=stderr must not be None (kills mutmut_16, 17)"
+        assert pars_args[2] is not None, "parse() arg2=exitcode must not be None (kills mutmut_16, 17)"
+
+    def test_run_deptry_tool_not_found(self, tmp_path: Path, caplog):
+        """Deptry not on PATH -> empty list.
+
+        Kills mutmut_5, 6 (return []→None on early return) via type assertion.
+        Kills mutmut_7, 8 (logger warning string mutations) via message check.
+        """
+        from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
+
         a = self._adapter()
         a.deptry = _mock_subadapter(findings=[])
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            findings = a._run_deptry(tmp_path, {})
-        assert findings == []
 
-    def test_run_deptry_oserror(self, tmp_path: Path):
-        """Deptry.invoke raises -> empty list."""
+        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_deptry(tmp_path, {})
+
+        # Type assertion: kills return []→None mutations on early return path (mutmut_5, 6)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_5,6)"
+        assert findings == [], "findings must be empty list on not-found path"
+
+        # Kill logger warning mutations: verify warning was emitted with expected message.
+        # mutmut_5: logger.warning(None) → no log emitted → len(deptry_warn)=0 → FAIL
+        # mutmut_6: logger.warning("XXdeptry not found on PATH, skippingXX") → startswith fails
+        # mutmut_7: logger.warning("deptry not found on path, skipping") → case mismatch fails
+        # mutmut_8: logger.warning("DEPTRY NOT FOUND ON PATH, SKIPPING") → case mismatch fails
+        deptry_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and r.getMessage().startswith("deptry")
+            and "not found" in r.message.lower()
+        ]
+        assert len(deptry_warn) >= 1, (
+            f"Logger must emit deptry not found warning (kills mutmut_5,7,8), got {len(deptry_warn)}"
+        )
+        # Kill exact-message string mutations (mutmut_6: XX...XX prefix/suffix mutation)
+        assert any(r.getMessage().startswith("deptry not found on PATH") for r in deptry_warn), (
+            "Warning must start with 'deptry not found on PATH' (kills mutmut_6)"
+        )
+
+    def test_run_deptry_oserror(self, tmp_path: Path, caplog):
+        """Deptry.invoke raises -> empty list.
+
+        Kills mutmut_7, 8 (return []→None on exception path) via type assertion.
+        Kills mutmut_14, 15 (invoke args: repo→None or []→None) via invoke arg checks.
+        Kills mutmut_16, 17 (logger string mutation) via caplog assertion.
+        """
         a = self._adapter()
         a.deptry = _mock_subadapter(findings=[])
         a.deptry.invoke = MagicMock(side_effect=OSError("deptry exec failed"))
         with _all_tools_on_path({"deptry": "/bin/deptry"}):
-            findings = a._run_deptry(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_deptry(tmp_path, {})
+
+        # Type assertion: kills return None mutations on exception path (mutmut_7, 8)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_7, 8)"
         assert findings == []
+
+        # Kill invoke-args mutations: verify invoke was called with correct args
+        assert a.deptry.invoke.called
+        inv_args = a.deptry.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_14)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_15)"
+
+        # Kill logger string mutations via caplog (mutmut_7, 8 warning path)
+        deptry_warn = [r for r in caplog.records if r.levelname == "WARNING" and "deptry" in r.message.lower()]
+        assert len(deptry_warn) == 1, f"Expected 1 deptry warning log, got {len(deptry_warn)}"
+        assert "deptry invocation failed" in deptry_warn[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -1492,19 +1875,289 @@ class TestRunBanditHelper:
             findings = a._run_bandit(tmp_path, {})
         assert findings == []
 
-    def test_run_bandit_oserror(self, tmp_path: Path):
-        """Bandit.invoke raises -> empty list."""
+    def test_run_bandit_oserror(self, tmp_path: Path, caplog):
+        """Bandit.invoke raises -> empty list + warning logged."""
         a = self._adapter()
         a.bandit = _mock_subadapter(findings=[])
         a.bandit.invoke = MagicMock(side_effect=OSError("bandit exec failed"))
         with _all_tools_on_path({"bandit": "/bin/bandit"}):
-            findings = a._run_bandit(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_bandit(tmp_path, {})
         assert findings == []
+        # Kill logger mutation: warning must be logged on invocation failure
+        bandit_warn = [r for r in caplog.records if r.levelname == "WARNING" and "bandit" in r.message.lower()]
+        assert len(bandit_warn) >= 1, "Logger must emit warning on invocation failure (kills mutmut_10)"
+
+    def test_run_bandit_runtimeerror(self, tmp_path: Path, caplog):
+        """Bandit.invoke raises RuntimeError -> empty list + warning logged.
+
+        Kills mutmut_12 (OSError→RuntimeError exception type mutation in except clause).
+        """
+        a = self._adapter()
+        mock_bandit = MagicMock()
+        mock_bandit.invoke = MagicMock(side_effect=RuntimeError("bandit runtime error"))
+        with patch.object(a, "bandit", mock_bandit):
+            with _all_tools_on_path({"bandit": "/bin/bandit"}):
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    findings = a._run_bandit(tmp_path, {})
+
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings == []
+        bandit_warn = [r for r in caplog.records if r.levelname == "WARNING" and "bandit" in r.message.lower()]
+        assert len(bandit_warn) >= 1, "Logger must emit warning on RuntimeError (kills mutmut_12)"
+
+    def test_run_bandit_tool_found_strict(self, tmp_path: Path, caplog):
+        """Strict checks on _run_bandit success path: type, invoke args, parse args.
+
+        Kills mutmut_5 (return []→None mutmut_288) via isinstance assertion.
+        Kills mutmut_6 (return []→None mutmut_294) via isinstance assertion.
+        Kills mutmut_7 (return []→None mutmut_294) via findings is not None.
+        Kills mutmut_8 (return []→None mutmut_294) via findings == [].
+        Kills mutmut_10 (logger.warning on line 293 removed) via caplog check.
+        Kills mutmut_13 (return []→None mutmut_294) via findings is not None.
+        Kills invoke-arg mutations: assert first arg is repo, second is [].
+        Kills parse-arg mutations: assert parse receives non-None str args.
+        """
+        a = self._adapter()
+        # Wrap real parse in a MagicMock so we can assert on call_args
+        from harness_quality_gate.adapters.python.bandit_adapter import BanditAdapter
+        real_adapter = BanditAdapter()
+        mock_bandit = MagicMock()
+        mock_bandit.invoke.return_value = MagicMock(
+            stdout="{}", stderr="", exitcode=0,
+        )
+        mock_bandit.parse = MagicMock(wraps=real_adapter.parse)
+
+        with patch.object(a, "bandit", mock_bandit):
+            with _all_tools_on_path({"bandit": "/bin/bandit"}):
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    findings = a._run_bandit(tmp_path, {})
+
+        # Type assertion: kills mutmut_5,6,7,8,13 (return []→None on any code path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_7,13)"
+
+        # Kill invoke-arg mutations: assert invoke was called with (repo, [])
+        inv_args, inv_kwargs = mock_bandit.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg must be repo (kills mutmut on invoke arg)"
+        assert inv_args[1] == [], "invoke() second arg must be [] (kills mutmut on invoke arg)"
+
+        # Kill parse-arg mutations: assert parse was called with stdout, stderr, exitcode
+        assert mock_bandit.parse.called, "parse() must be called (kills mutmut_10 on parse call removed)"
+        pars_args = mock_bandit.parse.call_args[0]
+        assert len(pars_args) >= 3, "parse() called with at least 3 args"
+        assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut on parse arg)"
+        assert pars_args[1] is not None, "parse() arg1=stderr must not be None (kills mutmut on parse arg)"
+        assert pars_args[2] is not None, "parse() arg2=exitcode must not be None (kills mutmut on parse arg)"
+
+    def test_run_bandit_tool_not_found_strict(self, tmp_path: Path, caplog):
+        """Bandit not on PATH -> empty list, warning logged.
+
+        Kills mutmut_5 (return []→None mutmut_288) via isinstance assertion.
+        Kills mutmut_7 (return []→None mutmut_288) via findings is not None.
+        Kills mutmut_10 (logger.warning on line 287 removed) via caplog check.
+        Kills mutmut_11 (log message string mutation: "PATH"→"XX...XX") via exact msg check.
+        Kills mutmut_13 (return []→None mutmut_288) via findings == [].
+        """
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_bandit(tmp_path, {})
+
+        # Type assertion: kills mutmut_5,7,8,13 (return []→None mutations)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_7,13)"
+        assert findings == [], "findings must be empty list"
+
+        # Kill logger mutations: assert warning was logged with correct message
+        bandit_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "bandit" in r.message.lower() and "not found" in r.message
+        ]
+        assert len(bandit_warn) >= 1, "Logger must emit warning about bandit not found (kills mutmut_10)"
+        # Kill mutmut_11: format string mutation "PATH"→"XX...XX" (exact message)
+        assert any("bandit not found on PATH" in r.getMessage() for r in bandit_warn), (
+            "Warning must contain 'bandit not found on PATH' message (kills mutmut_11)"
+        )
+
+    def test_run_bandit_oserror_strict(self, tmp_path: Path, caplog):
+        """Bandit.invoke raises OSError -> empty list + invoke was called + warning logged.
+
+        Kills mutmut_5 (return []→None mutmut_294) via isinstance assertion.
+        Kills mutmut_6 (return []→None mutmut_294) via isinstance assertion.
+        Kills mutmut_7 (return []→None mutmut_294) via findings is not None.
+        Kills mutmut_8 (return []→None mutmut_294) via findings == [].
+        Kills mutmut_12 (OSError→RuntimeError mutation) by testing OSError explicitly.
+        Kills mutmut_10 (logger.warning on line 293 removed) via caplog check.
+        Kills mutmut_13 (return []→None mutmut_294) via findings == [].
+        Verifies invoke WAS called before exception (kills exception-path arg mutations).
+        """
+        a = self._adapter()
+        mock_bandit = MagicMock()
+        mock_bandit.invoke = MagicMock(side_effect=OSError("bandit exec failed"))
+        with patch.object(a, "bandit", mock_bandit):
+            with _all_tools_on_path({"bandit": "/bin/bandit"}):
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    findings = a._run_bandit(tmp_path, {})
+
+        # Type assertion: kills mutmut_5,6,7,8,13 (return []→None mutations on exception path)
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None, "findings must not be None (kills mutmut_7,13)"
+        assert findings == [], "findings must be empty list"
+
+        # Kill invoke-args mutations: verify invoke WAS called before exception
+        assert mock_bandit.invoke.called, "invoke() should have been called before raising (kills mutmut on invoke removed)"
+        inv_args = mock_bandit.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg must be repo"
+        assert inv_args[1] == [], "invoke() second arg must be []"
+
+        # Kill logger mutations: verify warning was logged with correct message
+        bandit_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "bandit" in r.message.lower() and "invocation failed" in r.message
+        ]
+        assert len(bandit_warn) >= 1, "Logger must emit invocation warning (kills mutmut_10)"
 
 
 # ---------------------------------------------------------------------------
 # PythonAdapter instantiation and basic properties
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Private helper: _run_mutmut — direct mutations on _run_mutmut (mutmut_39-48)
+# ---------------------------------------------------------------------------
+
+class TestRunMutmutDirect:
+    """Target mutations on _run_mutmut: mutmut_39 through mutmut_48.
+
+    These mutations are on _run_mutmut itself (not through run_l3b):
+    - mutmut_39: shutil.which("mutmut") → None (already in test_l3b_mutmut_not_on_path)
+    - mutmut_40: shutil.which("mutmut") → True
+    - mutmut_42: logger.warning("mutmut not found on PATH, ") → removed
+    - mutmut_43: "PATH, " → "XX...XX"
+      Returns early with default MutationStats → assert all-zero fields.
+    - mutmut_45: return MutationStats() → replaced with None
+      Successful return path → assert exact MutationStats values.
+    - mutmut_46: self.mutmut.invoke(repo, []) → self.mutmut.invoke(None, [])
+    - mutmut_47: invoke(repo, []) → invoke(repo,) (2nd arg removed)
+    - mutmut_48: parse(None, ...) → parse(inv.stdout, ...)
+    """
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_run_mutmut_not_on_path(self, tmp_path: Path, caplog):
+        """mutmut not on PATH → returns default empty MutationStats.
+
+        Kills:
+        - mutmut_39: shutil.which("mutmut") → None branch → assert all fields are 0
+        - mutmut_40: shutil.which("mutmut") → True (mutated guard) → still returns default stats
+        - mutmut_42: logger.warning() call removed → asserts warning is present kills removal
+        - mutmut_43: format string "PATH, " → "XX...XX" → asserts exact log message
+        """
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                stats = a._run_mutmut(tmp_path, {})
+
+        # Type assertion: kills mutmut_40 (return None instead of MutationStats)
+        assert isinstance(stats, MutationStats), f"return must be MutationStats, got {type(stats)}"
+        # Full zero-field assertion: kills mutmut_39 (any field mutated to non-zero)
+        assert stats.total == 0
+        assert stats.killed == 0
+        assert stats.survived == 0
+        assert stats.timed_out == 0
+        # Mutmut_42: logger.warning must be called (not removed)
+        # Mutmut_43: exact log message (format string not corrupted)
+        warn = [r for r in caplog.records if r.levelname == "WARNING" and "mutmut not found" in r.message]
+        assert len(warn) == 1, "logger.warning must be called (kills mutmut_42)"
+        assert warn[0].getMessage() == "mutmut not found on PATH, returning empty stats"
+
+    def test_run_mutmut_oserror_fallback(self, tmp_path: Path):
+        """mutmut.invoke raises OSError → returns default empty MutationStats.
+
+        Kills mutmut_44: OSError → exception handler returns None.
+        Type assertion: kills mutmut_44 (return None instead of MutationStats).
+        """
+        a = self._adapter()
+        mock_mutmut = MagicMock()
+        mock_mutmut.invoke = MagicMock(side_effect=OSError("mutmut broken"))
+        with patch.object(a, "mutmut", mock_mutmut):
+            with _all_tools_on_path():
+                stats = a._run_mutmut(tmp_path, {})
+
+        # Type assertion: kills mutmut_44 (exception path returns None)
+        assert isinstance(stats, MutationStats), f"exception path must return MutationStats, got {type(stats)}"
+        assert stats.total == 0
+        assert stats.killed == 0
+
+    def test_run_mutmut_successful_path_args(self, tmp_path: Path):
+        """Successful mutation-stats return path: invoke + parse correctly chained.
+
+        Kills:
+        - mutmut_45: return MutationStats() → None
+          Success path returns real parsed stats → assert exact field values.
+        - mutmut_46: invoke(repo, []) → invoke(None, [])
+          assert invoke first arg is tmp_path (not None).
+        - mutmut_47: invoke(repo, []) → invoke(repo,)  (2nd arg removed)
+          assert invoke second arg is [] (not removed).
+        - mutmut_48: parse(None, ...) → parse(inv.stdout, inv.stderr, inv.exitcode)
+          assert parse first arg is not None.
+        """
+        from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter
+
+        a = self._adapter()
+        real_adapter = MutmutAdapter()
+        mock_mutmut = MagicMock()
+        mutation_payload = '{"total":5,"killed":5,"survived":0,"timeout":0,"escaped":0,"untested":0}'
+        mock_mutmut.invoke.return_value = MagicMock(
+            stdout=mutation_payload,
+            stderr="",
+            exitcode=0,
+        )
+        # Wrap real parse in MagicMock so we can assert on call_args too
+        mock_mutmut.parse = MagicMock(wraps=real_adapter.parse)
+
+        with patch.object(a, "mutmut", mock_mutmut):
+            with _all_tools_on_path():
+                stats = a._run_mutmut(tmp_path, {})
+
+        # Assert kill mutmut_45: return value is not None, has correct stats
+        assert isinstance(stats, MutationStats), f"success path must return MutationStats, got {type(stats)}"
+        assert stats.total == 5
+        assert stats.killed == 5
+        assert stats.survived == 0
+
+        # Assert kill mutmut_46: invoke first arg is repo (not None)
+        inv_args, _ = mock_mutmut.invoke.call_args
+        assert inv_args[0] is tmp_path, "invoke() first arg must be repo (kills mutmut_46)"
+
+        # Assert kill mutmut_47: invoke second arg is []
+        assert inv_args[1] == [], "invoke() second arg must be [] (kills mutmut_47)"
+
+        # Assert kill mutmut_48: parse first arg (stdout) is not None
+        pars_args = mock_mutmut.parse.call_args[0]
+        assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut_48)"
+        assert isinstance(pars_args[0], str)
+
+    def test_run_mutmut_runtimeerror_fallback(self, tmp_path: Path):
+        """mutmut.invoke raises RuntimeError → returns default MutationStats.
+
+        Completes exception-path coverage alongside test_run_mutmut_oserror_fallback.
+        """
+        a = self._adapter()
+        mock_mutmut = MagicMock()
+        mock_mutmut.invoke = MagicMock(side_effect=RuntimeError("boom"))
+        with patch.object(a, "mutmut", mock_mutmut):
+            with _all_tools_on_path():
+                stats = a._run_mutmut(tmp_path, {})
+
+        assert isinstance(stats, MutationStats)
+        assert stats.total == 0
+        assert stats.survived == 0
+        assert stats.timed_out == 0
+
 
 class TestPythonAdapterBasics:
     """Test constructor and basic properties."""

@@ -167,14 +167,42 @@ class PythonAdapter(BaseAdapter):
         duration = time.monotonic() - t0
         passed = mutation_stats.survived == 0 and mutation_stats.timed_out == 0
 
+        tool_spec: dict[str, object] = {"mutation_stats": mutation_stats}
+        if not passed:
+            tool_spec["remediation"] = self._mutation_remediation(mutation_stats)
+
         return LayerResult(
             layer="L3B",
             language="python",
             passed=passed,
             findings=[],
             duration_sec=round(duration, 3),
-            tool_specific={"mutation_stats": mutation_stats},
+            tool_specific=tool_spec,
         )
+
+    @staticmethod
+    def _mutation_remediation(stats: MutationStats) -> dict[str, object]:
+        """Build remediation guidance for agents when the L3B mutation gate fails."""
+        issues: list[str] = []
+        if stats.survived > 0:
+            issues.append(f"{stats.survived} mutant(s) survived")
+        if stats.timed_out > 0:
+            issues.append(f"{stats.timed_out} mutant(s) timed out")
+        return {
+            "skill": "mutation-testing-guide",
+            "guide": "MUTANT_KILLING_GUIDE.md",
+            "instructions": "SUBAGENT_MUTATION_INSTRUCTIONS.md",
+            "summary": (
+                f"L3B FAILED — {', '.join(issues)}. "
+                "Read skill 'mutation-testing-guide' or MUTANT_KILLING_GUIDE.md Part II "
+                "(cases H1-H12). "
+                "Priority: assert_called_once_with complete (§4.4), dense assertions (§4.1), "
+                "boundary tests (§4.2). H1=passthrough to mocked deps is the dominant pattern."
+            ),
+            "msi": stats.msi,
+            "survived": stats.survived,
+            "timed_out": stats.timed_out,
+        }
 
     # -- L4 (security + architecture) -------------------------------------
 
