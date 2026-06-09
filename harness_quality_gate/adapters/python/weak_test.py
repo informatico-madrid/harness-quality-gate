@@ -295,7 +295,7 @@ def run_weak_test_analysis(tests_dir: str, src_dir: str) -> dict[str, Any]:
 
     error_count = sum(
         1 for w in all_weak_tests
-        if any(v["severity"] == "ERROR" for v in w.get("violations", []))
+        if any(v["severity"] == "ERROR" for v in w.get("violations"))
     )
     warning_count = len(all_weak_tests) - error_count
 

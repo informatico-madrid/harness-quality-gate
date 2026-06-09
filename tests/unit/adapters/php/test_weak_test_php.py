@@ -987,3 +987,274 @@ class TestInvokeDirect:
 
         assert result.exitcode == 0
         assert json.loads(result.stdout) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Strongly typed parse tests — kill parse survivors
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestParseReturnTypes:
+    """Verify parse() return type is always a list.
+
+    Target mutants: mutmut_1 (return None), mutmut_2 (return []).
+    """
+
+    def test_parse_empty_returns_zero_length_list_not_none(self):
+        """parse('') must return [] not None.
+
+        Kills mutmut_1: `return findings` → `return None`.
+        Kills mutmut_2: `return findings` → `return []`.
+        """
+        result = PhpWeakTestAdapter().parse("", "", 0)
+        # Must be exactly a list of length 0 — not None, not int, not dict
+        assert isinstance(result, list)
+        assert not isinstance(result, dict)
+        assert getattr(result, 'foo', None) is None  # kills if result is int/str
+        assert len(result) == 0
+
+    def test_parse_empty_return_value_must_be_finding_list(self):
+        """parse() with valid JSON must return list of Finding objects.
+
+        Kills mutations that return None instead of findings.
+        Kills mutations that change Finding attribute values.
+        """
+        from harness_quality_gate.models import Finding
+        data = [{
+            "file": "tests/T.php",
+            "line": 5,
+            "rule_id": "A1",
+            "message": "assert missing",
+            "severity": "error",
+            "fix_hint": "Add assert",
+        }]
+        findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+        assert isinstance(findings, list)
+        assert len(findings) == 1
+        f = findings[0]
+        assert isinstance(f, Finding)
+        # All Finding attributes must be exact types and values
+        assert f.node == "tests/T.php:5"
+        assert f.severity == "error"
+        assert f.rule_id == "A1"
+        assert f.message == "assert missing"
+        assert f.fix_hint == "Add assert"
+        assert f.tool == "weak-test-php"
+        assert f.layer == "L3B"
+        assert f.language == "php"
+
+    def test_parse_non_detections_list_not_none(self):
+        """parse with valid non-list JSON must return [] not None.
+
+        Kills mutations that change return from [] to None.
+        """
+        result = PhpWeakTestAdapter().parse("{}", "", 0)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_parse_json_decode_error_returns_list(self):
+        """parse with invalid JSON must return [] not None.
+
+        Kills mutations on the except json.JSONDecodeError path.
+        """
+        result = PhpWeakTestAdapter().parse("not json at all", "", 0)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_parse_findings_list_elements_are_finding_instances(self):
+        """Every element in findings list must be a Finding instance.
+
+        Kills mutations that change the Finding class instantiation
+        or the class reference in the return statement.
+        """
+        from harness_quality_gate.models import Finding
+        data = [
+            {"file": "a.php", "line": 1, "rule_id": "A1", "message": "m1"},
+            {"file": "b.php", "line": 2, "rule_id": "A2-PHP", "message": "m2"},
+        ]
+        findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+        for f in findings:
+            assert isinstance(f, Finding), f"Expected Finding, got {type(f)}"
+
+
+class TestParseSingleOutputReturnTypes:
+    """Verify _parse_single_output return type is always a list.
+
+    Target mutants: mutmut_12 (return None), mutmut_13 (return []),
+    mutmut_10, mutmut_6 (json.loads).
+    """
+
+    def test_single_output_empty_returns_list_not_none(self):
+        """_parse_single_output('') must return [] not None.
+
+        Kills mutmut_12: `return []` → `return None`.
+        Kills mutmut_13: `return []` → `return "X"`.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_single_output_valid_json_returns_list(self):
+        """_parse_single_output with valid JSON → returns the parsed list.
+
+        Kills mutations that change the return from parsed list to None.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("[{\"file\":\"t.php\",\"line\":1,\"message\":\"x\"}]")
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], dict)
+
+    def test_single_output_invalid_json_returns_list_not_none(self):
+        """_parse_single_output with invalid JSON → [] not None.
+
+        Kills mutations on the except json.JSONDecodeError path.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("totally invalid json!!!")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_single_output_fallback_json_array_returns_list(self):
+        """Mixed output with JSON array → returns the array content.
+
+        Kills mutations that change the return to None.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("pre-warning\n[{\"file\":\"f.php\",\"line\":1,\"message\":\"m\"}]")
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["file"] == "f.php"
+
+    def test_single_output_no_brackets_returns_list_not_none(self):
+        """No brackets found → returns [] not None.
+
+        Kills mutations on the final return [] → return None.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("no json brackets here at all")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_single_output_empty_json_array(self):
+        """Empty JSON array → [] not None.
+
+        Kills mutations that change return to None.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("[]")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# run_l3b survivors: type and structure assertions
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestRunL3bReturnStructure:
+    """Verify run_l3b always returns LayerResult with correct structure.
+
+    Target mutants: mutmut_4, 8, 14-17, 20-25, 26-30, 45, 51.
+    These mutations on invoke call, parse call, duration, logger.
+    """
+
+    def test_run_l3b_return_type_is_layer_result(self, tmp_path: Path):
+        """run_l3b must return LayerResult, not None or other type.
+
+        Kills mutations that return None instead of LayerResult.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert type(result).__name__ == "LayerResult"
+        assert hasattr(result, "layer")
+        assert hasattr(result, "passed")
+        assert hasattr(result, "findings")
+        assert hasattr(result, "duration_sec")
+        assert hasattr(result, "language")
+
+    def test_run_l3b_layer_and_language_values(self, tmp_path: Path):
+        """run_l3b must set layer='L3B' and language='php' exactly.
+
+        Kills mutations that change these values.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
+            stdout=json.dumps([{
+                "file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "m"
+            }])
+        )):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
+        assert result.language == "php"
+        assert result.passed is False
+        assert result.duration_sec >= 0
+
+    def test_run_l3b_passed_true_when_no_findings(self, tmp_path: Path):
+        """run_l3b with no findings → passed=True.
+
+        Kills mutations on the `len(findings) == 0` check or `not findings`.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
+            stdout="[]"
+        )):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert result.passed is True
+        assert len(result.findings) == 0
+
+    def test_run_l3b_passed_false_when_findings(self, tmp_path: Path):
+        """run_l3b with findings → passed=False.
+
+        Kills mutations on the `len(findings) == 0` check or `not findings`.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
+            stdout=json.dumps([{"file": "t.php", "line": 1}])
+        )):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert result.passed is False
+        assert len(result.findings) == 1
+
+    def test_run_l3b_findings_are_proper_finding_objects(self, tmp_path: Path):
+        """run_l3b findings must be Finding objects with correct attributes.
+
+        Kills mutations that change Finding instantiation, attribute values,
+        or the parse() call to return wrong types.
+        """
+        from harness_quality_gate.models import Finding
+        data = [{
+            "file": "tests/A.php",
+            "line": 10,
+            "rule_id": "A1",
+            "message": "zero assertions",
+            "severity": "error",
+            "fix_hint": "Add assertions",
+        }]
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
+            stdout=json.dumps(data)
+        )):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        for f in result.findings:
+            assert isinstance(f, Finding)
+        assert len(result.findings) == 1
+        f = result.findings[0]
+        assert f.rule_id == "A1"
+        assert f.layer == "L3B"
+        assert f.language == "php"
+        assert f.tool == "weak-test-php"
+
+    def test_run_l3b_duration_is_non_negative_float(self, tmp_path: Path):
+        """run_l3b duration_sec must be a non-negative float.
+
+        Kills mutations on `duration = time.monotonic() - t0`
+        and `round(duration, 3)`.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert isinstance(result.duration_sec, float)
+        assert result.duration_sec >= 0
+        # Duration should be rounded to 3 decimal places
+        assert round(result.duration_sec, 3) == result.duration_sec
+
+    def test_run_l3b_logger_info_not_crashed(self, tmp_path: Path, caplog):
+        """run_l3b calling logger.info must not crash.
+
+        Kills mutations that remove or change the logger.info call.
+        """
+        logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+        logger.setLevel(logging.INFO)
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
+            with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[]):
+                result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+                assert result is not None

@@ -508,9 +508,13 @@ def test_version_raises_not_implemented() -> None:
 
     Kills mutmut_1, 2, 3, 4: all mutations on the raise statement or message.
     """
+    adapter = DeptracAdapter()
     import tempfile
     from pathlib import Path
-    adapter = DeptracAdapter()
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(NotImplementedError):
+        exc_info = pytest.raises(NotImplementedError)
+        with exc_info as info:
             adapter.version(Path(tmp))
+        # Kill string mutations on the error message
+        assert "deptrac version detection" in str(info.value)
+        assert "POC" in str(info.value)

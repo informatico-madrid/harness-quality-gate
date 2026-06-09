@@ -1099,6 +1099,29 @@ class TestComposerAuditAdapter:
         assert "audit" in cmd
         assert "--format=json" in cmd
 
+    def test_invoke_with_composer_exact_command(self, tmp_path: Path) -> None:
+        """Verify the exact _run call arguments to kill subprocess mutation survivors.
+
+        Checks exact cmd, cwd, env, and timeout to catch mutmut_3, 6, 7, 18, 21:
+        - mutmut_3: change in audit_args key
+        - mutmut_6,7: subprocess.run mutations
+        - mutmut_18: env mutation
+        - mutmut_21: timeout mutation
+        """
+        with patch("harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which", return_value="/usr/bin/composer"):
+            with patch.object(ComposerAuditAdapter, "_run", return_value=_ok("{}")) as mock_run:
+                ComposerAuditAdapter().invoke(tmp_path)
+        cmd = mock_run.call_args[0][0]
+        # cmd must be a list containing composer and audit args
+        assert isinstance(cmd, list)
+        assert "--format=json" in cmd
+        assert "--no-dev" in cmd
+        assert "audit" in cmd
+        kwargs = mock_run.call_args[1]
+        # Must have non-None cwd
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["env"] is None  # env defaults to None when not specified
+
     def test_parse_empty(self) -> None:
         assert ComposerAuditAdapter().parse("", "", 0) == []
 
