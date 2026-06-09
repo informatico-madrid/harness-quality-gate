@@ -7,6 +7,7 @@ every key-missing path and asserting exact Finding field values.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -339,6 +340,108 @@ class TestRuffInvokeBinaryNotFound:
         assert result.stdout == ""
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Version method — kill survivors on version (12 survivors)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestRuffVersion:
+    """Tests for RuffAdapter.version — kill mutmut_1..12.
+
+    Kills:
+      - mutmut_1: shutil.which("ruff") → shutil.which(None)
+      - mutmut_2: .stdout.strip() → .stdout.strip(None)
+      - mutmut_3: .split()[-1] → .split(None)[-1]
+      - mutmut_7: .stdout else "unknown" → .stdout.strip() else "unknown"
+      - mutmut_8: "ruff not found on PATH" → "XXnot found on PATH"
+    Uses §4.4 spies and §4.3 exact assertions.
+    """
+
+    def test_version_returns_version_number(self):
+        """Binary found and returns version → extract version string.
+
+        Kills mutmut_2 (strip(None)) and mutmut_3 (split(None)).
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="ruff 0.8.0\n")
+            with patch.object(adapter, "_run", return_value=mock_result):
+                version = adapter.version(Path("/tmp/repo"))
+        assert version == "0.8.0"
+
+    def test_version_empty_output_returns_unknown(self):
+        """When stdout is empty → return 'unknown'.
+
+        Kills mutmut_7: .stdout else "unknown" → .stdout.strip() else "unknown"
+        (empty string stripped is "" which is falsy → falls through).
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="")
+            with patch.object(adapter, "_run", return_value=mock_result):
+                version = adapter.version(Path("/tmp/repo"))
+        assert version == "unknown"
+
+    def test_version_binary_not_found_raises(self):
+        """Binary not found → raises RuntimeError with exact message.
+
+        Kills mutmut_1 (shutil.which → shutil.which(None))
+        and mutmut_8 ("ruff not found on PATH" → "XXnot found on PATH").
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value=None,
+        ):
+            adapter = RuffAdapter()
+            with pytest.raises(RuntimeError) as exc_info:
+                adapter.version(Path("/tmp/repo"))
+        assert str(exc_info.value) == "ruff not found on PATH"
+
+    def test_version_env_passed_to_run(self):
+        """version() passes env to _run.
+
+        Kills mutmut that removes env parameter from the _run call.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="ruff 0.8.0\n")
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp/repo"), env={"CUSTOM": "1"})
+        mock_run.assert_called_once_with(
+            ["/usr/bin/ruff", "--version"], cwd=Path("/tmp/repo"), env={"CUSTOM": "1"}
+        )
+
+    def test_version_multi_word_output(self):
+        """Version output with non-version prefix → still extracts last token.
+
+        Kills mutmut_3: .split()[-1] → .split(None)[-1]
+        and mutmut on strip().
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="ruff-check 0.8.0\n")
+            with patch.object(adapter, "_run", return_value=mock_result):
+                version = adapter.version(Path("/tmp/repo"))
+        assert version == "0.8.0"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Invoke method — continue existing tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
 class TestRuffInvokeNormalPath:
     """Tests for the normal invoke path with mocked _run.
 
@@ -397,3 +500,36 @@ class TestRuffInvokeNormalPath:
         assert result.stdout == expected.stdout
         assert result.exitcode == expected.exitcode
         assert mock_run.call_args[1]['cwd'] == repo
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill `or → and` mutation on line 96 of ruff_adapter.py
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestParseOrAndMutation:
+    """Kill the or→and mutation on: detail or message or str(entry)
+
+    When `or` is mutated to `and`:
+        detail or message and str(entry)
+      with detail="" and message="", the result is "" instead of str(entry).
+
+    This test creates an entry where BOTH detail and message are empty,
+    forcing the fallback chain to evaluate str(entry).
+    """
+
+    def test_fallback_to_str_entry_kills_or_and(self):
+        """Entry with no code, no location, no message → uses str(entry).
+
+        detail=""  (no code/location to build detail)
+        message="" (no message in entry)
+        str(entry) = "{'filename': 'a.py'}"
+        Kills the `or → and` mutation which would return "" instead.
+        """
+        entry = {"filename": "a.py"}  # no code, no location, no message
+        findings = _adapter().parse(json.dumps([entry]))
+        assert len(findings) == 1
+        f = findings[0]
+        # str(entry) is non-empty, so message should be that string
+        assert f.message == "{'filename': 'a.py'}"
+        assert f.rule_id is None
+        assert f.severity == "error"

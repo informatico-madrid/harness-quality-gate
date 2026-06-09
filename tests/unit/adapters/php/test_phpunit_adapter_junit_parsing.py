@@ -1212,3 +1212,68 @@ def test_parse_returns_list_not_none() -> None:
     assert isinstance(PhpUnitAdapter().parse('junit.xml', ""), list)
     # Or with text output
     assert isinstance(PhpUnitAdapter().parse('1) test FAILED\n', ""), list)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL version SURVIVORS (mutmut_1, 3, 4 — mutmut_2 is timeout)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_version_raises_not_implemented() -> None:
+    """Version → raises NotImplementedError.
+
+    Kills mutmut_1 and mutmut_3: mutations that remove or change the
+    NotImplementedError raise (e.g., return "unknown" instead).
+    """
+    with pytest.raises(NotImplementedError):
+        PhpUnitAdapter().version(Path("/tmp"))
+
+
+def test_version_error_message() -> None:
+    """Version error message is exact.
+
+    Kills mutmut_4: error message mutation (e.g., "XXPOCXX").
+    """
+    import pytest
+    adapter = PhpUnitAdapter()
+    with pytest.raises(NotImplementedError) as exc_info:
+        adapter.version(Path("/tmp"))
+    assert str(exc_info.value) == "phpunit version detection not implemented (POC)"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL invoke SURVIVORS (mutmut_1, 11, 13, 14 — mutmut_3,10 are timeouts)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_passes_bin_path_and_args_to_run() -> None:
+    """Invoke constructs correct command from bin_path and passes to _run.
+
+    Kills mutmut_11: bin_path mutation (changed default path to "XXvendorXX"),
+    mutmut_13, mutmut_14: mutations on the cmd list construction
+    ("--log-junit" → "XXlog-junitXX", "junit.xml" → "XXjunit.xmlXX").
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = PhpUnitAdapter()
+    expected_invocation = MagicMock(
+        stdout='[]', stderr='', exitcode=0, duration_seconds=0.0
+    )
+
+    with patch.object(adapter, '_bin_path', return_value='vendor/bin/phpunit'):
+        with patch.object(adapter, '_run', return_value=expected_invocation) as mock_run:
+            result = adapter.invoke(
+                Path("/tmp/repo"),
+                args=["--filter", "TestFoo"],
+                timeout=120.0,
+            )
+
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    # Command should be: [bin_path, "--log-junit", "junit.xml", ...args]
+    cmd = call_args[0][0]
+    assert cmd == ["vendor/bin/phpunit", "--log-junit", "junit.xml", "--filter", "TestFoo"]
+    # Timeout should be custom value
+    assert call_args[1]["timeout"] == 120.0
+    # CWD should be the repo
+    assert call_args[1]["cwd"] == Path("/tmp/repo")

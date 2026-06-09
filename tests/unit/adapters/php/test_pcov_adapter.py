@@ -383,3 +383,148 @@ class TestName:
 
     def test_name_type_str(self) -> None:
         assert isinstance(PcovAdapter().name, str)
+
+
+# ===========================================================================
+# Direct probe_layer_result() tests — exercise mutations NOT covered by
+# existing proxy tests (which mock probe() and skip ALL probe_layer_result mutants).
+# ===========================================================================
+
+
+class TestProbeLayerResultDirect:
+    """Call probe_layer_result() with subprocess.run mocked — NOT probe().
+
+    Existing tests proxy through `patch.object(PcovAdapter, "probe", ...)`.
+    This skips ALL probe_layer_result mutations (lines 141-178).
+    These tests exercise the real code path, catching mutations in:
+      - return LayerResult(...) at line 153 (→ mutmut_X: return None/False)
+      - if driver == "xdebug" at line 159 (→ not / or mutations)
+      - findings.append(...) at line 160-169
+      - return LayerResult(...) at line 172 (→ mutmut: return None, swap True↔False)
+      - Finding(...) constructor field mutations (lines 148-153, 161-169)
+      - logger calls at lines 163, 168
+      - duration_sec field mutations
+    """
+
+    def _make_completed(self, stdout: str, rc: int = 0) -> MagicMock:
+        c = MagicMock()
+        c.returncode = rc
+        c.stdout = stdout
+        return c
+
+    def test_layerresult_pcov_exact_object(self) -> None:
+        """probe() → 'pcov' → passed=True, findings=[], kills return-path mutations."""
+        with patch("subprocess.run", return_value=self._make_completed("pcov\nCore")):
+            result = PcovAdapter().probe_layer_result(Path("/tmp"))
+
+        # Exact object comparison kills all field mutations (node, severity,
+        # message, fix, layer, language, ruleId) in the success return path.
+        assert isinstance(result, LayerResult)
+        assert result == LayerResult(
+            layer="L1",
+            language="php",
+            passed=True,
+            findings=[],
+            duration_sec=0.0,
+        )
+
+    def test_layerresult_xdebug_exact_object_with_warning(self) -> None:
+        """probe() → 'xdebug' → passed=True with warning Finding.
+
+        Kills mutations in:
+          - line 159: if driver == "xdebug" → not has_pcov / or mutations
+          - line 160-169: Finding constructor mutations (all fields)
+          - line 172: return LayerResult mutation (swap True↔False)
+          - logger.info at line 157 (string mutation "coverage_driver="→...)
+        """
+        with patch("subprocess.run", return_value=self._make_completed("xdebug 3\nCore")):
+            with patch("glob.glob", return_value=[]):
+                result = PcovAdapter().probe_layer_result(Path("/tmp"))
+
+        assert isinstance(result, LayerResult)
+        assert result.passed is True
+        assert len(result.findings) == 1
+        f = result.findings[0]
+        assert isinstance(f, Finding)
+        assert f.severity == "warning"
+        # Exact message kills string mutations everywhere in Finding constructor
+        assert f.message == (
+            "coverage_driver=xdebug; "
+            "Xdebug is a debugger, not a coverage tool — "
+            "disable Xdebug and install PCOV for reliable mutation testing"
+        )
+        assert f.node == "pcov"
+
+    def test_layerresult_probe_error_exact_object(self) -> None:
+        """probe() → RuntimeError → passed=False, error Finding.
+
+        Kills mutations in error return at lines 144-155:
+          - return LayerResult(...) → return None (mutmut: change return value)
+          - Finding constructor field mutations (node, severity, message)
+          - F-string mutation in message
+          - passed=False → passed=True mutation
+        """
+        with patch("subprocess.run", side_effect=RuntimeError("php not found")):
+            with patch("glob.glob", return_value=[]):
+                result = PcovAdapter().probe_layer_result(Path("/tmp"))
+
+        assert isinstance(result, LayerResult)
+        assert result == LayerResult(
+            layer="L1",
+            language="php",
+            passed=False,
+            findings=[
+                Finding(
+                    node="pcov",
+                    severity="error",
+                    message="Coverage driver probe failed: php not found",
+                )
+            ],
+            duration_sec=0.0,
+        )
+
+    def test_subprocess_args_exact_probe_layer_result(self) -> None:
+        """Verify subprocess.run args inside probe() called by probe_layer_result().
+
+        Kills mutations in subprocess.run args:
+          - line 83: ["php", "-m"] → ["XXphpXX", "-m"]
+          - line 84: capture_output=True → False
+          - line 85: text=True → False
+        """
+        completed = self._make_completed("pcov\nCore")
+        with patch("shutil.which", return_value="/usr/bin/php"):
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                result = PcovAdapter().probe_layer_result(Path("/tmp"))
+
+        assert result.passed is True
+        # Verify exact args kill subprocess.run mutations
+        mock_run.assert_called_once_with(
+            ["/usr/bin/php", "-m"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def test_globs_killed_by_direct_probe_layer_result(self) -> None:
+        """Glob fallback path in probe() via probe_layer_result().
+
+        Kills mutations in glob path:
+          - line 111: glob.glob("/tmp/...") → glob.glob(None)
+          - line 113: glob.glob("/usr/...") → glob.glob(XX...)
+          - line 116: found = glob.glob(...) → found = None
+          - line 117: if found: → if not found:
+          - line 118: logger.info(...) → string mutations
+          - line 119: return "pcov" → return None
+        """
+        completed = self._make_completed("Core\ndate")
+        with patch("shutil.which", return_value="/usr/bin/php"):
+            with patch("subprocess.run", return_value=completed):
+                with patch(
+                    "glob.glob",
+                    return_value=["/tmp/pcov-extract/usr/lib/php/20210902/pcov.so"],
+                ):
+                    result = PcovAdapter().probe_layer_result(Path("/tmp"))
+
+        assert result.passed is True
+        # Must be from glob path (no xdebug, no pcov in module output)
+        assert result.findings == []  # pcov found via glob → no findings

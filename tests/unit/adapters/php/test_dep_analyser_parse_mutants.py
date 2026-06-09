@@ -751,3 +751,114 @@ class TestDepAnalyserInvokeWithArgs:
         assert "--json" in cmd
         assert "--quiet" in cmd
         assert "vendor/bin/composer-dependency-analyser" in cmd[0]
+
+
+# ===========================================================================
+# Kill remaining _make_finding survivors (mutmut_13-29, 30-35).
+# These all relate to the replace(), ternary, and node construction.
+# The existing test_make_finding_desc_with_empty_message covers mutmut_19
+# but not mutmut_13-18 (replace mutations) or mutmut_27-35 (line/node).
+# ===========================================================================
+
+
+class TestMakeFindingReplaceAndLineMutations:
+    """Kill _make_finding mutations not caught by existing tests.
+
+    Replaces existing test that only checks message="" → "class".
+    These tests ensure:
+      - replace('dep-', '') mutations kill via TypeError or wrong prefix
+      - if line: → if not line: mutations kill via wrong node
+      - node construction mutations kill via exact node string
+    """
+
+    def test_make_finding_replace_kills_typeerror(self) -> None:
+        """replace('dep-', '') is called with string args.
+
+        Mutmut_13: replace(None, '') → TypeError
+        Mutmut_14: replace(False, '') → TypeError
+        Mutmut_15: replace('', '') → same (no-op, prefix="dep-class" stays)
+        Mutmut_16-18: string mutations → wrong prefix
+
+        All killed by assert exact:
+          - TypeError would crash parse → no Finding
+          - Empty prefix would yield "unused class" (no "dep-" removed)
+          - XX prefix would yield "XXunused class"
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="src/Main.php",
+            line=42,
+            violation_type="dep-class",
+            message="unused class",
+        )
+        assert f.message == "class: unused class"
+        assert f.rule_id == "dep-class"
+        assert f.fix_hint == "dep-class"
+        assert f.layer == "L4"
+        assert f.language == "php"
+        assert f.tool == "composer-dependency-analyser"
+
+    def test_make_finding_line_present_adds_suffix(self) -> None:
+        """line=42 → node='src/File.php:42'.
+
+        Kills mutmut_27-29:
+          - if line: → if not line: → node='src/File.php' (no ':42')
+          - if line: → if None: → always falsy → node='src/File.php'
+          - if line: → if False: → always falsy → node='src/File.php'
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="src/File.php",
+            line=42,
+            violation_type="dep-function",
+            message="call to undefined",
+        )
+        assert f.node == "src/File.php:42", (
+            "mutmut_27-29: if line: mutations would remove ':42' suffix"
+        )
+
+    def test_make_finding_line_zero_no_suffix(self) -> None:
+        """line=0 (falsy) → node='src/File.php', no ':0' suffix.
+
+        This confirms the condition checks 'truthiness' not just 'is not None'.
+        Kills: if line: → if line is not None: (would include ':0')
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="src/File.php",
+            line=0,
+            violation_type="dep-class",
+            message="bad class",
+        )
+        assert f.node == "src/File.php", "line=0 should NOT produce ':0' suffix"
+
+    def test_make_finding_node_no_line(self) -> None:
+        """line=None → node='src/File.php' without suffix.
+
+        Kills: if line: → if True: (always adds suffix) → node='src/File.php:None'
+        Kills: line mutations in f-string (mutmut_30-35)
+        """
+        f = DepAnalyserAdapter._make_finding(
+            file_name="src/File.php",
+            line=None,
+            violation_type="dep-antipattern",
+            message="bad pattern",
+        )
+        # Mutations to node construction: f"{file_name}:{line}" → f"{file_name}{line}" → "src/File.phpNone"
+        assert f.node == "src/File.php"
+        assert f.message == "antipattern: bad pattern"
+
+    def test_parse_vtype_not_in_violation_types_continues(self) -> None:
+        """Items with unknown vtype are skipped via 'continue'.
+
+        Kills mutmut_36, 37: 'continue' → 'break' in vtype check.
+        With break: first unknown vtype exits loop → 0 findings.
+        With continue: skips unknown, processes known → N findings.
+        """
+        data = [
+            {"type": "unknown-type", "file": "skip.php", "line": 1},
+            {"type": "dep-class", "file": "keep.php", "line": 2, "message": "class"},
+        ]
+        findings = DepAnalyserAdapter().parse(json.dumps(data))
+        # With continue: 1 finding from keep.php
+        # With break: 0 findings (loop exits at unknown-type)
+        assert len(findings) == 1
+        assert findings[0].node == "keep.php:2"
+        assert findings[0].message == "class: class"

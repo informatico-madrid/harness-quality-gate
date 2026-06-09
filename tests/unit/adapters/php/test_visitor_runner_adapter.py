@@ -462,6 +462,299 @@ class TestName:
 
 
 # ===========================================================================
+# invoke() — subprocess call assertions (H7: argv and kwarg mutation targets)
+# ===========================================================================
+
+class TestInvokeSubprocessAssertions:
+    """H7: Assert exact subprocess.run calls to kill argv and kwarg mutations.
+
+    Kills mutmut_73..mutmut_84 — mutations on command args, env, timeout,
+    capture_output, text, check parameters in the subprocess.run call.
+    Technique: §4.4 — assert_called_once_with with exact args.
+    """
+
+    def test_invoke_subprocess_called_with_exact_command(self, tmp_path: Path) -> None:
+        """Visitor runs subprocess with exact command structure.
+
+        Kills:
+          - mutmut_73: "php" → "XXphpXX"
+          - mutmut_74: visitor_name → "XXvisitorXX"
+          - mutmut_75: visitor_script path → mutated string
+          - mutmut_76: repo → "XXrepoXX"
+        Using identity check (is) to catch repo → None mutmut_76.
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "god_class.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php class Foo {}")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0, stdout=json.dumps([]), stderr="",
+                    )
+                    result = adapter.invoke(tmp_path, [])
+
+        mock_run.assert_called()
+        # First call positional arg is always the command list
+        first_call_args = mock_run.call_args_list[0]
+        cmd = first_call_args[0][0]
+        assert cmd == ["php", str(visitor_script), str(php_file)]
+
+    def test_invoke_subprocess_cwd_is_repo(self, tmp_path: Path) -> None:
+        """subprocess.run is called with cwd=str(repo).
+
+        Kills:
+          - mutmut_76: cwd=repo → cwd="XXrepoXX" or cwd=None
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "god_class.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0, stdout=json.dumps([]), stderr="",
+                    )
+                    adapter.invoke(tmp_path, [])
+
+        mock_run.assert_called()
+        kw = mock_run.call_args_list[0][1]
+        assert kw["cwd"] == str(tmp_path)
+
+    def test_invoke_subprocess_kwargs_correct(self, tmp_path: Path) -> None:
+        """subprocess.run receives capture_output=True, text=True, check=False,
+        and the correct timeout.
+
+        Kills:
+          - mutmut_77: capture_output=True → False (reverses stdout/stderr behavior)
+          - mutmut_78: text=True → False (changes type of stdout/stderr)
+          - mutmut_79: check=False → check=True (would raise on non-zero exit)
+          - mutmut_80: timeout=300.0 → timeout=301.0
+          - mutmut_81: capture_output → captured_output (typo mutation)
+          - mutmut_82..84: text/capture_output/timeout parameter mutations
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "god.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0, stdout=json.dumps([]), stderr="",
+                    )
+                    adapter.invoke(tmp_path, [])
+
+        mock_run.assert_called()
+        kw = mock_run.call_args_list[0][1]
+        assert kw["capture_output"] is True
+        assert kw["text"] is True
+        assert kw["check"] is False
+        assert kw["timeout"] == 300.0
+
+    def test_invoke_subprocess_env_includes_os_environ(self, tmp_path: Path) -> None:
+        """subprocess.run env merges os.environ with adapter env.
+
+        Kills:
+          - mutmut_81: env parameter mutation (e.g., __import__ or os.environ references)
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "v.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0, stdout=json.dumps([]), stderr="",
+                    )
+                    adapter.invoke(tmp_path, [], env={"CUSTOM_VAR": "xyz"})
+
+        mock_run.assert_called()
+        kw = mock_run.call_args_list[0][1]
+        assert kw["env"]["CUSTOM_VAR"] == "xyz"
+        # os.environ keys should also be present
+        assert "PATH" in kw["env"]
+
+    def test_invoke_custom_timeout_passed(self, tmp_path: Path) -> None:
+        """Custom timeout value is forwarded to subprocess.run.
+
+        Kills:
+          - mutmut_82: timeout hardcoded mutation to 301
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "v.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0, stdout=json.dumps([]), stderr="",
+                    )
+                    adapter.invoke(tmp_path, [], timeout=60.0)
+
+        mock_run.assert_called()
+        kw = mock_run.call_args_list[0][1]
+        assert kw["timeout"] == 60.0
+
+
+# ===========================================================================
+# _parse_visitor_output() — edge cases for mutmut_6, 12-26
+# ===========================================================================
+
+class TestParseVisitorOutputEdgeCases:
+    """Edge cases for _parse_visitor_output to kill survivors mutmut_6, 12-26.
+
+    These mutants target:
+    - mutmut_6: strip() → strip(None) → still works (not observable)
+    - mutmut_12: json.loads(text) → json.loads(text)[:50] → partial JSON
+    - mutmut_13: text[:50]:text → [:50:51] / [:149:] (slice mutations)
+    - mutmut_14: return [] → return None
+    - mutmut_15: return results → return results + []
+    - mutmut_18,20..26: bracket extraction mutations
+    """
+
+    def test_parse_visitor_output_none_stdin(self) -> None:
+        """Pass None to _parse_visitor_output — should return [].
+
+        Kills mutmut_14 (return [] → return None).
+        When text is None, strip() would raise, caught by the None check
+        before json.loads. The return must be [] not None.
+        """
+        # strip() on None would raise AttributeError, so we test what happens
+        # when the text becomes None after strip (empty string after strip)
+        result = VisitorRunnerAdapter._parse_visitor_output("   \n\t  ")
+        assert result == []
+
+    def test_parse_visitor_output_bracket_extractor_edge_cases(self) -> None:
+        """Bracket extraction with valid JSON inside brackets.
+
+        Kills mutmut_18 (end >= start → end > start): brackets at
+        position 0 and 0 wouldn't pass end > start but would pass end >= start.
+        Also mutmut_20..26 (find/ rfind mutations).
+        """
+        # Valid JSON with bracket extraction: leading text + ["valid"]
+        result = VisitorRunnerAdapter._parse_visitor_output('warn: ["valid"]')
+        assert result == ["valid"]
+
+    def test_parse_visitor_output_bracket_only_open(self) -> None:
+        """Only open bracket, no close → returns [].
+
+        Kills mutmut_20: find("[") → find(None) which would raise.
+        Or the end > start check being changed.
+        """
+        result = VisitorRunnerAdapter._parse_visitor_output("[[")
+        assert result == []
+
+    def test_parse_visitor_output_bracket_only_close(self) -> None:
+        """Only close bracket, no open → returns []."""
+        result = VisitorRunnerAdapter._parse_visitor_output("]]")
+        assert result == []
+
+    def test_parse_visitor_output_brackets_reversed(self) -> None:
+        """']' appears before '[' → end < start → returns [].
+
+        Kills mutmut_21: end > start → end >= start (would find "[]]" as valid)
+        """
+        result = VisitorRunnerAdapter._parse_visitor_output("]abc[")
+        assert result == []
+
+    def test_parse_visitor_output_nested_brackets(self) -> None:
+        """rfind finds the LAST ']' which is correct for nested JSON.
+
+        Kills mutmut_22: rfind("]") → rfind("XXXX]XXXX") or similar.
+        """
+        # The fallback correctly extracts [1,2] from nested text
+        result = VisitorRunnerAdapter._parse_visitor_output('warn {"a": "[1,2]"}')
+        assert result == [1, 2]
+
+    def test_parse_visitor_output_valid_after_fallback(self) -> None:
+        """Valid JSON after leading non-JSON text → fallback extracts it.
+
+        Kills mutmut_23: start = text.find("[") → start = text.find(None) → error,
+        or start = -1, which breaks detection of valid JSON after warning text.
+        """
+        text = "Warning: some message\n[{\"file\":\"x.php\",\"line\":1}]"
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["file"] == "x.php"
+
+    def test_parse_visitor_output_bracket_mid_text(self) -> None:
+        """JSON array embedded in the middle of text.
+
+        Kills mutmut_24: end = text.rfind("]") → end = text.rfind(None) → error,
+        or rfind("X]") etc.
+        """
+        text = "before\n[{\"k\":\"v\"}]after"
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert len(result) == 1
+        assert result[0]["k"] == "v"
+
+    def test_parse_visitor_output_return_is_list_not_none(self) -> None:
+        """Return value is always a list, never None.
+
+        Kills mutmut_14: return [] → return None.
+        """
+        result = VisitorRunnerAdapter._parse_visitor_output("")
+        assert isinstance(result, list)
+        assert result == []
+
+        result = VisitorRunnerAdapter._parse_visitor_output("   ")
+        assert isinstance(result, list)
+
+        result = VisitorRunnerAdapter._parse_visitor_output("not json")
+        assert isinstance(result, list)
+
+
+# ===========================================================================
 # version()
 # ===========================================================================
 

@@ -1282,6 +1282,124 @@ class TestPhpCsFixerAdapter:
 
 
 # ===========================================================================
+# Kill ~20 parse() survivors (mutmut_34-37, 39-53, 55, 32, 33).
+# Target mutations in detailed-violation path: or↔and, continue↔break,
+# field extraction, hint type checks.
+# ===========================================================================
+
+
+class TestPhpCsFixerParseDetailedFieldMutants:
+    """Dense assertions on detailed-violation findings kill field-level mutations.
+
+    Kills:
+      - mutmut_39-40: v.get("message", "") → None/XXmessageXX → message assertion fails
+      - mutmut_41-42: line number mutations → "line {n}:" format assertion fails
+      - mutmut_46-53: hint if isinstance(hint, str) → hint is not isinstance → wrong hint
+      - mutmut_34-37: detail = msg; detail = msg "and/ or" mutations → message assertion fails
+    """
+
+    def test_detailed_violation_exact_message_and_line(self) -> None:
+        """Full Finding comparison for detailed format kills message/line mutations.
+
+        Kills mutmut_39-40, 41-42: string mutations in get("message", "") or line.
+        """
+        data = {
+            "files": [
+                {
+                    "name": "src/A.php",
+                    "violations": [{"line": 15, "message": "Unexpected token", "fix": None}],
+                }
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "src/A.php"
+        assert f.severity == "warning"
+        # "line 15: Unexpected token" — exact match kills all string mutations
+        assert f.message == "line 15: Unexpected token"
+        # fix=None at data level, hint=None (not isinstance(str))
+        assert f.fix_hint is None
+
+    def test_detailed_violation_hint_string_isinstance(self) -> None:
+        """hint as string → isinstance(hint, str) → hint kept as fix_hint.
+
+        Kills mutmut_53: isinstance → is not isinstance
+        With original: hint="Add semicolon" is str → fix_hint="Add semicolon"
+        With mutant: hint="Add semicolon" is not str (mutated check) → fix_hint=None
+        """
+        data = {
+            "files": [
+                {
+                    "name": "src/B.php",
+                    "violations": [{"line": 20, "message": "Bad format", "fix": "Add semicolon"}],
+                }
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 1
+        assert findings[0].fix_hint == "Add semicolon", (
+            "isinstance(hint, str) must return True for string hints. "
+            "mutmut_53 mutation (is → is not) would return None instead."
+        )
+
+    def test_detailed_violation_non_string_hint_is_none(self) -> None:
+        """hint as int/bool → isinstance(hint, str) → None.
+        Tests the 'else None' branch.
+        """
+        data = {
+            "files": [
+                {
+                    "name": "src/C.php",
+                    "violations": [{"line": 1, "message": "bad", "fix": 42}],
+                }
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 1
+        assert findings[0].fix_hint is None, (
+            "isinstance(42, str) is False → fix_hint must be None"
+        )
+
+    def test_detailed_violation_missing_fix_key(self) -> None:
+        """No 'fix' key → hint=None → isinstance → None."""
+        data = {
+            "files": [
+                {
+                    "name": "src/D.php",
+                    "violations": [{"line": 5, "message": "bad"}],
+                }
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 1
+        assert findings[0].fix_hint is None
+
+    def test_multi_violation_continue_not_break(self) -> None:
+        """Multi-violation in same file: continue past non-dict items.
+
+        Kills mutmut_22 continuation path (if not dict → break instead of continue).
+        Also exercises violations list mutations.
+        """
+        data = {
+            "files": [
+                {
+                    "name": "src/E.php",
+                    "violations": [
+                        {"line": 1, "message": "first"},
+                        "not_a_dict",  # continue skips this
+                        {"line": 3, "message": "second"},
+                    ],
+                }
+            ]
+        }
+        findings = PhpCsFixerAdapter().parse(json.dumps(data), "", 8)
+        assert len(findings) == 2, "non-dict must not cause early exit (continue≠break)"
+        assert findings[0].message == "line 1: first"
+        assert findings[1].message == "line 3: second"
+
+
+# ===========================================================================
 # composer_audit_adapter.py
 # ===========================================================================
 
@@ -4124,6 +4242,112 @@ class TestPhpAntipatternTierAAdapter:
 
     def test_parse_not_list(self) -> None:
         assert PhpAntipatternTierAAdapter().parse('{"key": "val"}') == []
+
+    # -----------------------------------------------------------------------
+    # Logging mutations in the JSONDecodeError except-block (targets mutmut_8
+    # through mutmut_14).  caplog assertions on the EXACT log message format
+    # kill format-string, arg-removal, XX-prefix, and lowercase mutations in
+    # a single test.  Technique: §4.3 exact strings.
+    def test_parse_invalid_json_logging_exact(self, caplog: pytest.LogCaptureFixture) -> None:
+        """parse('not valid json') must emit a specific INFO log.
+
+        Kills:  mutmut_8   format="...", None            — None doesn't interpolate
+        Kills:  mutmut_10  format string mutated          — arg removal
+        Kills:  mutmut_11  "XXAntipattern...XX" prefix    — exact match fails
+        Kills:  mutmut_12  lowercase "antipattern..."     — exact match fails
+        Kills:  mutmut_14  stdout[:200] → :[:201]         — log contains same prefix
+        Kills:  mutmut_9   logger.warning() without fmt   — no "Antipattern" message
+        """
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.antipattern_tier_a_php")
+        result = PhpAntipatternTierAAdapter().parse("not valid json")
+        assert result == []
+        # Exactly one warning must have the correct format string.
+        # Mutant 9: log without format string → no "Antipattern" in message
+        # Mutant 8: None arg → "Antipattern" still appears (format stays) BUT
+        #   the full message format will differ from original.
+        warn_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        # The format string must start with the exact original prefix
+        assert any(
+            m.startswith("Antipattern output is not valid JSON:")
+            for m in warn_msgs
+        ), f"Expected exact format prefix in logs, got: {warn_msgs}"
+        # No XX decoration survived
+        for m in warn_msgs:
+            assert "XX" not in m, f"XX-prefix mutation in log: {m}"
+
+    # -----------------------------------------------------------------------
+    # break/continue loop mutation (target mutmut_17).  Technique: §4.7.
+    def test_parse_non_dict_then_dict_continues(self) -> None:
+        """A non-dict item followed by a valid dict must BOTH be attempted.
+
+        With 'continue' (original) the loop processes all 4 items → 1 finding.
+        With 'break' (mutant) the loop stops at index 1 → 0 findings.
+        Technique: §4.7 iterated break ≠ continue observable by result count.
+        """
+        data = ["not-a-dict", 42, True, {"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 3}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        # With continue: 1 finding from last item  → killed by this assert
+        # With break: 0 findings → killed because findings is empty
+        assert len(findings) == 1, (
+            f"Expected 1 finding (continue skips non-dicts). "
+            f"Got {len(findings)} — mutant: continue → break?"
+        )
+        assert findings[0].rule_id == "R"
+
+    # -----------------------------------------------------------------------
+    # .get() default mutations (targets mutmut_20-22, 25-26, 29, 31, 34).
+    # Technique: §4.3 exact defaults via missing keys.
+    def test_parse_keys_missing_defaults(self) -> None:
+        """Items missing source/file/rule keys exercise .get() defaults.
+
+        Kills: mutmut_20   source default "unknown" → None
+        Kills: mutmut_22   source default "unknown" → ""
+        Kills: mutmut_25   source default "unknown" → "XXunknownXX"
+        Kills: mutmut_26   source default "unknown" → "UNKNOWN"
+        Kills: mutmut_29   file default "" → None
+        Kills: mutmut_31   file default "" → None (empty)
+        Kills: mutmut_34   file default "" → "XXXX"
+        """
+        # All keys 'source', 'file', 'rule', 'rule_id' are ABSENT.
+        # source → "unknown" (default); file → "" (default); rule → "" (default)
+        data = [{}]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        # source default "unknown" kills mutants 20/22/25/26:
+        #   None/""/XXunknownXX/UNKNOWN are != "unknown"
+        # Since source == "unknown", severity becomes "info"
+        assert f.severity == "info"
+        # file default "" + no line → node must be ""
+        assert f.node == "", (
+            f"Expected node '' (file=''), got '{f.node}' — default for 'file' mutated?"
+        )
+        # rule is "" too → fix_hint is None
+        assert f.fix_hint is None
+        assert f.rule_id == ""
+
+    # -----------------------------------------------------------------------
+    # int(None) mutation in the line=int() block (target mutmut_76).
+    # Technique: §4.1 dense assertion — assert message content with line.
+    def test_parse_with_valid_line_kills_int_none(self) -> None:
+        """Line field exists and is a valid int exercises int(line) path.
+
+        Mutant 76 calls int(None) → TypeError → caught by except → line_int = None →
+        message becomes "Line None: ..." instead of "Line 42: ...".
+        Technique: §4.3 exact string matching on message kills this.
+        """
+        data = [
+            {"source": "phpmd", "file": "app.php", "rule": "R", "description": "test", "priority": 2, "line": 42}
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        # With original: message == "Line 42: test"
+        # With mutmut_76: line → None → TypeError → line_int = None → "Line None: test"
+        assert f.message == "Line 42: test", (
+            f"Message should be 'Line 42: test', got '{f.message}' — int(None) mutation?"
+        )
+        assert f.node == "app.php:42"
 
     def test_parse_phpmd_findings(self) -> None:
         data = [

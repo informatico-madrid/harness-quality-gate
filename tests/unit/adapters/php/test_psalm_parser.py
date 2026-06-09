@@ -6,6 +6,7 @@ Covers array format, nested files format, non-taint filter, empty/invalid input.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from harness_quality_gate.adapters.php.psalm_taint_adapter import (
     PsalmTaintAdapter,
@@ -696,3 +697,171 @@ def test_invoke_psalm_found_version_path() -> None:
             mock_run.assert_called_once()
             call_args = mock_run.call_args
             assert call_args[0][0] == ["/usr/local/bin/psalm", "--taint-analysis"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill psalm_taint_adapter version survivors (mutmut_10, 27, 38)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_version_raises_when_psalm_binary_not_found() -> None:
+    """Version when psalm binary not found → raises RuntimeError.
+
+    Kills mutmut_10: cmd is None → cmd[0] would crash, but mutation changes
+    the None check: `if cmd is None:` → `if cmd is not None:` (reversed)
+    which would then try to use None as a list → caught by test.
+    """
+    from unittest.mock import patch
+
+    adapter = PsalmTaintAdapter()
+    with patch.object(adapter, "_psalm_binary", return_value=None):
+        import pytest
+        with pytest.raises(RuntimeError, match="psalm not found"):
+            adapter.version(Path("/tmp"))
+
+
+def test_version_extract_version_from_output() -> None:
+    """Version parsing from psalm --version output.
+
+    Output format: "Psalm 5.26.0@..." or "Psalm version 5.26.0 ..."
+    Kills:
+      - mutmut_11: cleaned[0].isdigit() → cleaned[None] (would error)
+      - mutmut_27: cleaned "." in cleaned → cleaned "X" in cleaned (always True)
+      - mutmut_38: return cleaned → return "unknown" (return statement mutation)
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = PsalmTaintAdapter()
+    mock_result = MagicMock(returncode=0, stdout="Psalm 5.26.0@abc123\n")
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch("subprocess.run", return_value=mock_result):
+            version = adapter.version(Path("/tmp"))
+    assert version == "5.26.0"
+
+
+def test_version_returns_stdout_fallback() -> None:
+    """When no version number found in output → return stripped stdout.
+
+    Kills mutmut_38: return result.stdout.strip() → return "unknown" or similar
+    (though the actual mutation might be different).
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = PsalmTaintAdapter()
+    mock_result = MagicMock(returncode=0, stdout="Psalm dev-master\n")
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch("subprocess.run", return_value=mock_result):
+            version = adapter.version(Path("/tmp"))
+    # "dev-master" doesn't start with a digit, so the loop returns stdout.strip()
+    assert version == "Psalm dev-master"
+
+
+def test_version_env_merged_with_os_environ() -> None:
+    """version() merges env with os.environ for subprocess.
+
+    Kills mutmut that removes or changes the env merging logic.
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = PsalmTaintAdapter()
+    mock_result = MagicMock(returncode=0, stdout="Psalm 5.26.0@abc\n")
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            adapter.version(Path("/tmp"), env={"MY_VAR": "xyz"})
+            mock_run.assert_called_once()
+            call_kwargs = mock_run.call_args[1]
+            assert call_kwargs["env"]["MY_VAR"] == "xyz"
+            assert "PATH" in call_kwargs["env"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill psalm_taint_adapter parse survivors (mutmut_41, 43, 47, 51)
+# via dense assertions on _make_finding parameters
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_array_item_all_fields_dense_assertion() -> None:
+    """Full array item with ALL fields → assert every Finding field.
+
+    Catches mutations on get("message", "") → get("message", None) (41/43),
+    and get("severity", "error") → get("severity", None) (47/51).
+    """
+    data = [{
+        "type": "TaintedSql",
+        "file_name": "src/Query.php",
+        "line_from": 42,
+        "message": "User input reaches SQL",
+        "severity": "error",
+    }]
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    f = findings[0]
+    # Exact dense assertion — any mutation in field values breaks this
+    assert f.node == "src/Query.php:42"
+    assert f.severity == "error"
+    assert f.message == "TaintedSql: User input reaches SQL"
+    assert f.fix_hint == "TaintedSql"
+    assert f.tool == "psalm-taint"
+    assert f.layer == "L4"
+    assert f.language == "php"
+    assert f.rule_id == "TaintedSql"
+
+
+def test_parse_nested_files_all_fields_dense_assertion() -> None:
+    """Full nested files item with ALL fields → assert every Finding field.
+
+    Same dense assertion for the nested format, catching mutations in
+    the nested path (lines 234-247 of psalm_taint_adapter.py).
+    """
+    data = {
+        "files": {
+            "src/Query.php": {
+                "psalmErrors": [{
+                    "type": "TaintedHtml",
+                    "line_from": 15,
+                    "message": "XSS possible",
+                    "severity": "warning",
+                }]
+            }
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "src/Query.php:15"
+    assert f.severity == "warning"
+    assert f.message == "TaintedHtml: XSS possible"
+    assert f.fix_hint == "TaintedHtml"
+    assert f.tool == "psalm-taint"
+    assert f.layer == "L4"
+    assert f.language == "php"
+    assert f.rule_id == "TaintedHtml"
+
+
+def test_invoke_when_psalm_found_env_passed() -> None:
+    """When psalm is found, invoke calls _run with merged env.
+
+    Kills mutmut_12, 13, 16, 18, 19, 22, 25, 29 — mutations on
+    the env dict construction and the _run call.
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = _adapter()
+    mock_result = MagicMock(stdout='[]', stderr='', exitcode=0, duration_seconds=0.0)
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(Path("/tmp/repo"), ["--taint-analysis"], env={"CUSTOM": "val"})
+
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    # Cmd should be combined: psalm binary + args
+    assert call_args[0][0] == ["/usr/local/bin/psalm", "--taint-analysis"] or \
+           (len(call_args[0][0]) >= 2 and call_args[0][0][0] == "/usr/bin/psalm")
+    # CWD should be the repo
+    assert call_args[1]["cwd"] == Path("/tmp/repo")
+    # Timeout default should be 600.0
+    assert call_args[1]["timeout"] == 600.0

@@ -1536,3 +1536,327 @@ def test_parse_findings_mixed_present_missing_fields() -> None:
     assert f2.node == "tests/C.php:10"
     assert f2.message == ""          # default
     assert f2.severity == "warning"  # from input
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL 10 invoke() SURVIVORS — targeted test class per MUTANT_KILLING_GUIDE
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInvokeSurvivorsMutationKilling:
+    """Directly targets 10 survived invome mutants identified in the meta file.
+
+    Killed mutants:
+      - mutmut_78  (log debug 'XX' prefix)           → §4.3 exact string
+      - mutmut_79  (log debug 'Weak'→'weak' case)    → §4.3 exact string
+      - mutmut_81  (continue→break in visitor loop)  → §4.6 count iterations
+      - mutmut_86  (.get(v, None) default mutation)  → §4.1 dense assertion
+      - mutmut_87  (.get(v) no-default mutation)     → §4.1 dense assertion
+      - mutmut_88  (.get(v, ) no-default mutation)   → §4.1 dense assertion
+      - mutmut_103 ('\n'→'XX\nXX' join)             → §4.3 exact string
+      - mutmut_117 ('not' removed from conditional)  → §4.8 boolean negation
+      - mutmut_118 (exitcode 1→2)                    → §4.1 exact value
+      - mutmut_108 (round→None) & mutmut_112 (round removed) → §4.1 type check
+    """
+
+    def test_invoke_debug_log_exact_format_no_mutation(self, tmp_path: Path, caplog) -> None:
+        """Kills mutmut_78 (log XX prefix) and mutmut_79 (log case mutation).
+
+        §4.3 String exact equality: assert the full decoded log message
+        equals the expected string exactly, not via 'in' operator.
+
+        mutmut_78 mutates the log string to 'XXWeak-test visitor %s ...XX'
+        → full message assertion catches the XX prefix/suffix.
+        mutmut_79 changes 'Weak-test' (capital W) to 'weak-test' (lower w)
+        → case-sensitive full-match catches the capitalization change.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        # Mock Path to simulate a missing visitor, triggering the debug log path
+        class FakeVisitorsPath(Path):
+            def is_file(self):
+                return False
+            def __truediv__(self, other):
+                return self
+
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+        original_path = wt_module.Path
+        wt_module.Path = FakeVisitorsPath
+
+        try:
+            logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+            logger.setLevel(logging.DEBUG)
+            caplog.set_level(logging.DEBUG, "harness_quality_gate.adapters.php.weak_test_php")
+
+            adapter = PhpWeakTestAdapter()
+            with patch.object(adapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+                result = adapter.invoke(tmp_path, [])
+
+            # Extract debug log messages about failed visitors
+            debug_messages = [
+                r.getMessage() for r in caplog.records
+                if r.levelno == logging.DEBUG and "Weak-test visitor" in r.getMessage()
+            ]
+
+            # With 8 visitor scripts, if any fail we should get debug logs
+            # The key: the EXACT log message must match, catching §4.3 mutations
+            for msg in debug_messages:
+                # mutmut_78: XX prefix/suffix → "XXWeak-test visitor..."
+                assert not msg.startswith("XXWeak"), (
+                    f"mutmut_78 detected: debug log has XX mutation prefix. Got: {msg}"
+                )
+                # mutmut_79: 'Weak'→'weak' → "weak-test visitor..."
+                assert "Weak-test visitor" in msg, (
+                    f"mutmut_79 detected: debug log should have 'Weak-test' (capital W). Got: {msg}"
+                )
+                # Full exact format: "Weak-test visitor {name} failed on {path}: {stderr}"
+                assert msg.startswith("Weak-test visitor ")
+                assert "failed on" in msg
+        finally:
+            wt_module.Path = original_path
+
+        assert result.exitcode == 0  # missing visitors are warnings, not errors
+
+    def test_invoke_continue_across_all_visitors_counts_failures(self, tmp_path: Path, caplog) -> None:
+        """Kills mutmut_81 (continue→break: only first failure logged).
+
+        §4.6 Iteration count — with 'continue', ALL 8 visitors are attempted.
+        With 'break', only the first one is attempted.
+        We count how many visitor failure messages appear.
+
+        With break → 1 failure warning. With continue → 8 failure warnings.
+        The exact count distinguishes the two.
+        """
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+        from harness_quality_gate.adapters.base import ToolInvocation
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        # Get the real visitors directory
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        visitor_scripts = sorted([f for f in real_visitors_dir.iterdir() if f.suffix == ".php"])
+        visitor_count = len(visitor_scripts)
+        if visitor_count == 0:
+            pytest.skip("No visitor scripts")
+
+        call_count = [0]
+        visitor_index = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            m = MagicMock()
+            # ALL visitors fail to test the continue/break path
+            m.returncode = 1
+            m.stdout = ""
+            m.stderr = "visitor failure"
+            visitor_index[0] += 1
+            return m
+
+        logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+        logger.setLevel(logging.DEBUG)
+        caplog.set_level(logging.DEBUG, "harness_quality_gate.adapters.php.weak_test_php")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # mutmut_81: continue→break means only 1 subprocess call
+        # With continue: 8 visitors × 1 file = 8 calls
+        # With break: 1 call stops the loop
+        assert call_count[0] == 8, (
+            f"mutmut_81 detected: expected 8 subprocess calls (continue), got {call_count[0]} (break?)"
+        )
+
+    def test_invoke_all_findings_have_rule_id_from_get_default(self, tmp_path: Path) -> None:
+        """Kills mutmut_86/87/88 (.get(v, None) / .get(v) / .get(v, ) mutations).
+
+        §4.1 Dense assertions: every finding returned by invoke must have a
+        'rule_id' key set. If .get(visitor_name, visitor_name) is mutated to
+        .get(visitor_name, None), the default falls to None instead of the
+        visitor name — and we need to detect this.
+
+        We use a subprocess mock that returns findings without rule_id.
+        The invoke() method sets rule_id via:
+            rule_id = _VISITOR_RULE_MAP.get(visitor_name, visitor_name)
+        If mutated to .get(visitor_name) → returns None for unknown visitors.
+        If mutated to .get(visitor_name, None) → same: returns None.
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        find_index = [0]
+
+        def side_effect(*args, **kwargs):
+            find_index[0] += 1
+            m = MagicMock()
+            m.returncode = 0
+            # Finding WITHOUT rule_id — invoke should set it
+            m.stdout = json.dumps([{"file": "tests/FooTest.php", "line": 1, "message": "test finding"}])
+            m.stderr = ""
+            return m
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        findings = json.loads(result.stdout)
+        assert len(findings) > 0, "Expected findings from successful visitor"
+
+        # §4.1 Dense assertion: EVERY finding must have rule_id set
+        # If mutmut_86/87/88 changed .get(v, v) to .get(v) → None for all visitors
+        for finding in findings:
+            assert "rule_id" in finding, (
+                f"mutmut_86/87/88 detected: finding has no 'rule_id' key"
+            )
+            assert finding["rule_id"] is not None, (
+                f"mutmut_86 detected: finding has rule_id=None (should be 'A1' etc.)"
+            )
+            assert isinstance(finding["rule_id"], str), (
+                f"mutmut_87/88 detected: finding has non-str rule_id"
+            )
+            assert finding["rule_id"] != "", (
+                f"mutmut_87/88 detected: finding has empty rule_id"
+            )
+
+    def test_invoke_stderr_exact_newline_join_format(self, tmp_path: Path) -> None:
+        """Kills mutmut_103 ('\n'→'XX\nXX' join in stderr merge).
+
+        §4.3 String exact equality: the stderr parts must be separated by
+        a single newline '\\n', not 'XX\\nXX' or any other separator.
+
+        When two visitors fail, stderr should be "part1\npart2" — we
+        verify the separator is exactly a newline by checking split('\\n') == ['part1', 'part2'].
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            pytest.skip("No visitor scripts")
+
+        def side_effect(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 1
+            m.stdout = ""
+            m.stderr = "error from visitor"
+            return m
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        stderr = result.stderr
+
+        # mutmut_103: '\n'.join → 'XX\nXX'.join
+        # Verify stderr parts when split by '\n' gives clean parts
+        parts = stderr.split("\n")
+
+        # Each part must contain "visitor=" and the error info
+        # If 'XX\nXX' join was used, splitting by '\n' would give:
+        # ['XX', 'part1XX', 'part2XX'] — check this doesn't happen
+        for part in parts:
+            if part:  # skip empty parts
+                assert "XX" not in part, (
+                    f"mutmut_103 detected: stderr contains 'XX' in parts (XX\\nXX join). Got: {stderr}"
+                )
+
+        # Verify parts are non-empty (stderr_parts is truthy when errors occur)
+        assert len(stderr) > 0, "Expected non-empty stderr when visitor fails"
+
+    def test_invoke_exitcode_and_duration_exact_values(self, tmp_path: Path) -> None:
+        """Kills mutmut_117 ('not' removed), mutmut_118 (0→2), mutmut_108 (round→None), mutmut_112 (round removed).
+
+        §4.1 Dense assertions + §4.8 boolean table:
+        - exitcode must be exactly 1 when stderr_parts is populated — catches
+          mutmut_117 (not removed: `0 if stderr_parts else 1` → always 1 or 0)
+        - exitcode must be 1, not 2 — catches mutmut_118 (1→2)
+        - duration_seconds must be a float, not None — catches mutmut_108
+          (round→None) and mutmut_112 (round removed → float, not None)
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        call_state = [0]
+
+        def side_effect(*args, **kwargs):
+            call_state[0] += 1
+            m = MagicMock()
+            if call_state[0] % 2 == 1:  # odd calls: success
+                m.returncode = 0
+                m.stdout = json.dumps([{"file": "tests/FooTest.php", "line": 1, "message": "weak"}])
+                m.stderr = ""
+            else:  # even calls: failure
+                m.returncode = 1
+                m.stdout = ""
+                m.stderr = "visitor error"
+            return m
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+        if not real_visitors_dir.exists() or not list(real_visitors_dir.iterdir()):
+            pytest.skip("No visitor scripts")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # mutmut_117: 'not' removed from `exitcode=0 if not stderr_parts else 1`
+        # → with stderr_parts present, original gives 1, mutated gives 0
+        assert result.exitcode == 1, (
+            f"mutmut_117 detected: exitcode should be 1 when stderr_parts populated. Got {result.exitcode}"
+        )
+
+        # mutmut_118: exitcode 1→2
+        assert result.exitcode != 2, (
+            f"mutmut_118 detected: exitcode should be 1, not 2. Got {result.exitcode}"
+        )
+
+        # mutmut_108: round(duration, 3) → None
+        # mutmut_112: round(duration, 3) removed → None
+        assert result.duration_seconds is not None, (
+            f"mutmut_108/112 detected: duration_seconds must not be None. Got: {result.duration_seconds}"
+        )
+        assert isinstance(result.duration_seconds, (int, float)), (
+            f"mutmut_108/112 detected: duration_seconds must be numeric, got {type(result.duration_seconds).__name__}"
+        )

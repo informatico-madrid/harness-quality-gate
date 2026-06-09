@@ -232,3 +232,134 @@ def test_invoke_passes_cwd_env_timeout(tmp_path: Path) -> None:
     assert kwargs["cwd"] == tmp_path
     assert kwargs.get("env") == {"CI": "true"}
     assert kwargs["timeout"] == 42.0
+
+
+# ===========================================================================
+# Kill parse_stats __surviving__ mutations with dense assertions.
+# Target: mutations where existing JSON/text tests have weak or partial asserts.
+# ===========================================================================
+
+
+def test_parse_stats_text_fallback_computation() -> None:
+    """Text output with MSI=0 but killed>0 → triggers fallback computation.
+
+    Kills text-path mutations:
+      - line 224: if msi == 0.0 → if not msi / or mutations
+      - line 226: covered = killed + survived + timed_out
+      - line 228: k/c * 100 arithmetic mutations (+↔-, *↔/, round)
+      - line 228: if covered → if not covered / or
+      - line 230: covered_msi = msi alias mutation
+      - line 234: total or (k+s+t+u) or/fallback mutations
+      - line 232: return MutationStats(...) → return None/False
+    """
+    # MSI line is "0%" so fallback computes it
+    text = """
+10 mutations were generated:
+       5 mutants were killed
+       0 covered mutants were not detected
+       0 mutants were not covered by tests
+       5 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 0%
+          Covered Code MSI: 0%
+"""
+    stats = _adapter().parse_stats(text)
+    # computed = 5 / (5+0+5) * 100 = 50.0
+    assert stats.msi == 50.0
+    assert stats.total == 10
+    assert stats.killed == 5
+    assert stats.covered_msi == 50.0
+    assert isinstance(stats.msi, float), "round(msi, 4) must return float (kill round↔int mutation)"
+    assert isinstance(stats.covered_msi, float)
+
+
+def test_parse_stats_json_nonzero_msi_is_float_precision() -> None:
+    """JSON path msi → round(msi, 4) returns float, killed if round↔int.
+
+    Also kills arithmetic mutation on total line 169 by verifying exact total.
+    Fixes original test: covered_msi is always None in JSON path (line 165),
+    so we assert msi type and value instead.
+    """
+    json_str = json.dumps({
+        "killed": 9, "survived": 3, "timed_out": 1,
+        "escaped": 1, "untested": 2, "msi": 75.0,
+    })
+    stats = _adapter().parse_stats(json_str)
+    assert stats.total == 16  # 9+3+1+1+2 — kills total arithmetic (line 169)
+    assert stats.msi == 75.0
+    assert isinstance(stats.msi, float), (
+        "round(msi, 4) must return float — round(msi, None) would return int (kills mutmut)"
+    )
+
+
+def test_parse_stats_json_mutation_stats_exact_full_object() -> None:
+    """Full MutationStats comparison — dense assertion kills every field mutation.
+
+    Kills:
+      - killed, survived, timed_out, escaped, untested int mutations (data.get())
+      - msi round mutation (round(mutmut, 4) → int)
+      - total arithmetic mutation (line 169)
+    """
+    json_str = json.dumps({
+        "killed": 7, "survived": 2, "timed_out": 0,
+        "escaped": 1, "untested": 3, "msi": 63.636363,
+    })
+    stats = _adapter().parse_stats(json_str)
+    # Dense assertion: every field must match exact value
+    assert stats.total == 13          # 7+2+0+1+3
+    assert stats.killed == 7
+    assert stats.survived == 2
+    assert stats.timed_out == 0
+    assert stats.escaped == 1
+    assert stats.untested == 3
+    assert stats.msi == 63.6364         # round(63.636363, 4) = 63.6364
+    assert isinstance(stats.msi, float), "round(msi, 4) must return float (kills round↔int)"
+    assert stats.covered_msi == 0.0    # JSON path always 0.0 (covered_msi=None placeholder)
+
+
+def test_parse_stats_garbage_returns_all_zeros_detailed() -> None:
+    """Non-parseable text → MutationStats with ALL fields zero.
+
+    Kills parse_stats mutations in:
+      - Line 234: total = total or (...) → total = None/False
+      - Line 236-248: all field propagation mutations (→ None, → wrong default)
+      - Line 187, 194: int(m.group(1)) if m else 0 → int(m) else 1
+    """
+    stats = _adapter().parse_stats("completely invalid infection output xyz")
+    assert stats.total == 0
+    assert stats.killed == 0
+    assert stats.survived == 0
+    assert stats.timed_out == 0
+    assert stats.escaped == 0
+    assert stats.untested == 0
+    assert stats.msi == 0.0
+    assert stats.covered_msi == 0.0
+    assert isinstance(stats.msi, float)
+    assert isinstance(stats.covered_msi, float)
+
+
+def test_parse_stats_text_msi_line_precision() -> None:
+    """Text output with non-round MSI → round(msi, 4) must preserve decimal.
+
+    Kills:
+      - round(msi, 4) → round(msi, None) → int
+      - _extract_pct regex float mutation
+    """
+    text = """
+12 mutations were generated:
+       7 mutants were killed
+       0 covered mutants were not detected
+       0 mutants were not covered by tests
+       2 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 58.3333%
+          Covered Code MSI: 58.3333%
+"""
+    stats = _adapter().parse_stats(text)
+    # round(58.3333, 4) retains decimal precision as float
+    assert stats.msi == 58.3333
+    assert stats.covered_msi == 58.3333
+    assert isinstance(stats.msi, float)
+    assert isinstance(stats.covered_msi, float)

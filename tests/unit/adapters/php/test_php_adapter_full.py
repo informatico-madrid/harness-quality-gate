@@ -3780,8 +3780,166 @@ class TestRunL3a:
             f"Exact log format mismatch — kills mutmut_126/127/138-141, got: {tier_a_logs[0]}"
         )
 
+    # ===========================================================================
+    # H1 — Wiring tests for run_l3a sub-call arguments
+    # Kills mutmut_17 (detect_frameworks repo→None), mutmut_37 (detect_frameworks env→None),
+    # mutmut_45-48 (PHPStan run_l3a arg mutations),
+    # mutmut_49-51 (PHPMD run_l3a arg mutations),
+    # mutmut_59-62 (cs_fixer invoke arg mutations),
+    # mutmut_117-120 (antipattern invoke arg mutations)
+    # ===========================================================================
 
-# ===========================================================================
+    def test_run_l3a_wiring_all_sub_calls(self, tmp_path, monkeypatch):
+        """Kill ALL wiring mutant groups 17/37/45-51/59-62/117-120 in one shot.
+
+        Technique: H1 — exact call-argument assertions with identity checks.
+
+        Each sub-method call in run_l3a receives repo and env.  Mutants replace
+        one of these with None or remove the arg entirely.  The test asserts
+        exact positional + keyword args for every tool.
+        """
+        adapter = _make_mock_adapter()
+        # Use sentinel values so `is` checks are meaningful (not identity with tmp_path/{}).
+        repo = tmp_path
+        # Sentinel dict — not None, not literal {} — identity check kills None-mutation
+        env = {"X_TEST_ENV_SENTINEL": "a7k9"}
+        result = adapter.run_l3a(repo, env)
+
+        # === Framework detection (fruits of mutmut_17: repo→None) ===
+        # detect_frameworks(repo) is a static method — cannot spy, but its
+        # return value determines the framework injection path.  The default
+        # (empty composer.json) yields empty frameworks, so this is implicitly
+        # killed when the full result is correct.
+
+        # === PHPStan call (mutmut_45: repo→None, 46: env→None, 47: repo removed, 48: env removed) ===
+        cs = adapter._phpstan.run_l3a.call_args
+        assert cs is not None, "PHPStan.run_l3a must be called"
+        assert cs[0][0] == repo, (
+            "Mut45: PHPStan.run_l3a first arg must be repo, not mutated to None"
+        )
+        assert cs[0][0] is repo, (
+            "Mut45: Identity — repo argument must be the same object passed to run_l3a"
+        )
+        assert len(cs[0]) == 2, (
+            "Mut47/48: PHPStan.run_l3a must receive 2 positional args (repo, env), not 1"
+        )
+        assert cs[0][1] is env or cs[0][1] == env, (
+            "Mut46: PHPStan.run_l3a second arg must be env, not mutated to None"
+        )
+
+        # === PHPMD call (mutmut_49: repo→None, 50: env→None, 51: env removed) ===
+        pm = adapter._phpmd.run_l3a.call_args
+        assert pm is not None, "PHPMD.run_l3a must be called"
+        assert pm[0][0] is repo, (
+            "Mut49: PHPMD.run_l3a first arg must be repo"
+        )
+        assert len(pm[0]) == 2, (
+            "Mut51: PHPMD.run_l3a must receive 2 positional args"
+        )
+        assert pm[0][1] is env or pm[0][1] == env, (
+            "Mut50: PHPMD.run_l3a second arg must be env, not mutated to None"
+        )
+
+        # === php-cs-fixer invoke (mutmut_59: repo→None, 60: env→None,
+        #     61: repo removed, 62: env removed) ===
+        ci = adapter._cs_fixer.invoke.call_args
+        assert ci is not None, "cs_fixer.invoke must be called"
+        assert ci[0][0] is repo, (
+            "Mut59: cs_fixer.invoke first arg must be repo"
+        )
+        assert len(ci[0]) == 2, (
+            "Mut61/62: cs_fixer.invoke must receive 2 positional args (repo, args)"
+        )
+        assert ci[1].get("env") is env or ci[1].get("env") == env, (
+            "Mut60/62: cs_fixer.invoke env kwarg must be env"
+        )
+
+        # === Antipattern invoke (mutmut_117: repo→None, 118: env→None) ===
+        # Note: _antipattern_invoke_and_parse calls:
+        #   self._antipattern.invoke(repo, args=["analyse"], env=env)
+        # So 1 positional arg + 2 keyword args (args=, env=). Mutants change
+        # repo→None (117) or env→None (118).
+        ai = adapter._antipattern.invoke.call_args
+        assert ai is not None, "antipattern.invoke must be called"
+        assert ai[0][0] is repo, (
+            "Mut117: antipattern.invoke first arg must be repo"
+        )
+        assert ai[1].get("env") is env or ai[1].get("env") == env, (
+            "Mut118: antipattern.invoke env kwarg must be env, not mutated"
+        )
+        assert ai[1].get("args") == ["analyse"], (
+            "antipattern.invoke must pass args=['analyse']"
+        )
+
+        assert result.layer == "L3A"
+
+    def test_run_l3a_framework_detection_wiring(self, tmp_path, monkeypatch):
+        """Kill mutmut_37 specifically: detect_frameworks(repo) → detect_frameworks(None).
+
+        Technique: H1 — spy on detect_frameworks to capture the exact arg.
+
+        detect_frameworks is a @staticmethod, so we monkeypatch it to record calls.
+        """
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+
+        # Spy on the static method
+        original_df = PhpAdapter.detect_frameworks
+        call_args = []
+
+        def spy_detect_frameworks(repo, *_args, **_kwargs):
+            call_args.append(repo)
+            return original_df(repo)
+
+        monkeypatch.setattr(PhpAdapter, 'detect_frameworks', staticmethod(spy_detect_frameworks))
+
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+
+        # The call_args must contain tmp_path (not None) — kills mutmut_37
+        assert len(call_args) == 1, (
+            f"Expected exactly one detect_frameworks call, got {call_args}"
+        )
+        assert call_args[0] == tmp_path, (
+            "Mut37: detect_frameworks called with tmp_path, not None"
+        )
+
+    def test_run_l3a_phpstan_log_format(self, tmp_path, caplog):
+        """Kill mutmut_44: logger.info('L3A PHPStan: %d findings', len(...))
+        → logger.info(len(...)) — format-arg removal mutation.
+
+        Technique: H3 — exact log-message assertion via caplog.
+
+        Mutant 44 replaces the format+arg pair with bare len() → log message
+        becomes just "0" (or "N" findings).  Original is
+        "L3A PHPStan: 0 findings".  Exact equality kills it.
+        """
+        adapter = _make_mock_adapter()
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.passed is True
+
+        # Extract the PHPStan log message
+        stan_logs = [m for m in caplog.messages if "L3A PHPStan" in m and "findings" in m]
+        assert len(stan_logs) == 1, (
+            f"Mut44: Expected exactly one PHPStan log message, got: {stan_logs}"
+        )
+        # Original: "L3A PHPStan: 0 findings"
+        # Mut44: "0" (bare number, no format prefix)
+        assert stan_logs[0] == "L3A PHPStan: 0 findings", (
+            f"Mut44: Log format mutated — expected 'L3A PHPStan: 0 findings', got '{stan_logs[0]}'"
+        )
+
 # _mutation_remediation — static method (PHP / Infection flavor)
 # ===========================================================================
 
