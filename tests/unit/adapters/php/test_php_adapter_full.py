@@ -3779,3 +3779,169 @@ class TestRunL3a:
         assert tier_a_logs[0] == "L3A tier-A visitors: 0 findings", (
             f"Exact log format mismatch — kills mutmut_126/127/138-141, got: {tier_a_logs[0]}"
         )
+
+
+# ===========================================================================
+# _mutation_remediation — static method (PHP / Infection flavor)
+# ===========================================================================
+
+class TestPhpMutationRemediation:
+    """Unit tests for PhpAdapter._mutation_remediation."""
+
+    def _rem(self, **kwargs):
+        defaults = dict(total=100, killed=97, survived=0, timed_out=0,
+                        escaped=3, untested=0, msi=97.0, covered_msi=97.0)
+        defaults.update(kwargs)
+        return PhpAdapter._mutation_remediation(MutationStats(**defaults))
+
+    def test_keys_present(self):
+        """All expected keys are present in the remediation dict."""
+        rem = self._rem()
+        assert set(rem.keys()) >= {
+            "skill", "guide", "instructions", "summary",
+            "msi", "covered_msi", "escaped", "timed_out",
+        }
+
+    def test_skill_name_exact(self):
+        """skill must be exactly 'mutation-testing-guide'."""
+        assert self._rem()["skill"] == "mutation-testing-guide"
+
+    def test_guide_name_exact_php(self):
+        """guide must be the PHP-specific guide, not the Python one."""
+        assert self._rem()["guide"] == "MUTANT_KILLING_GUIDE_PHP.md"
+
+    def test_instructions_name_exact(self):
+        """instructions must be exactly 'SUBAGENT_MUTATION_INSTRUCTIONS.md'."""
+        assert self._rem()["instructions"] == "SUBAGENT_MUTATION_INSTRUCTIONS.md"
+
+    def test_escaped_only(self):
+        """escaped > 0 with 100 MSI: summary mentions escaped, not timeouts."""
+        rem = self._rem(escaped=5, timed_out=0, msi=100.0, covered_msi=100.0)
+        assert rem["escaped"] == 5
+        assert rem["timed_out"] == 0
+        assert "5 mutant(s) escaped" in rem["summary"]
+        assert "timed out" not in rem["summary"]
+        assert "MSI" not in rem["summary"].replace("covered MSI", "")
+
+    def test_timed_out_only(self):
+        """timed_out > 0: summary mentions timeouts, not escaped."""
+        rem = self._rem(escaped=0, timed_out=2, msi=100.0, covered_msi=100.0)
+        assert rem["timed_out"] == 2
+        assert rem["escaped"] == 0
+        assert "2 mutant(s) timed out" in rem["summary"]
+        assert "escaped" not in rem["summary"]
+
+    def test_msi_below_gate(self):
+        """msi < 100: summary contains the exact MSI percentage."""
+        rem = self._rem(escaped=0, timed_out=0, msi=97.5, covered_msi=100.0)
+        assert "MSI 97.5% < 100%" in rem["summary"]
+
+    def test_covered_msi_below_gate(self):
+        """covered_msi < 100: summary contains the exact covered MSI percentage."""
+        rem = self._rem(escaped=0, timed_out=0, msi=100.0, covered_msi=98.2)
+        assert "covered MSI 98.2% < 100%" in rem["summary"]
+
+    def test_all_issues_combined(self):
+        """All four gate violations appear together in the summary."""
+        rem = self._rem(escaped=3, timed_out=1, msi=96.0, covered_msi=97.0)
+        summary = rem["summary"]
+        assert "3 mutant(s) escaped" in summary
+        assert "1 mutant(s) timed out" in summary
+        assert "MSI 96.0% < 100%" in summary
+        assert "covered MSI 97.0% < 100%" in summary
+
+    def test_stats_passed_through(self):
+        """Numeric stats are passed through exactly."""
+        rem = self._rem(escaped=3, timed_out=1, msi=96.0, covered_msi=97.0)
+        assert rem["msi"] == 96.0
+        assert rem["covered_msi"] == 97.0
+        assert rem["escaped"] == 3
+        assert rem["timed_out"] == 1
+
+    def test_summary_starts_with_l1_label(self):
+        """summary starts with 'L1 Infection gate FAILED' for grep-ability."""
+        assert self._rem()["summary"].startswith("L1 Infection gate FAILED")
+
+    def test_summary_contains_php_hints(self):
+        """summary references PHP-specific traps (T1-T3) and the iterate command."""
+        summary = self._rem()["summary"]
+        assert "assertSame not assertEquals (T1)" in summary
+        assert "identicalTo()" in summary
+        assert "--filter=<file> --show-mutations" in summary
+
+    def test_summary_references_guides(self):
+        """summary names the skill and the PHP guide file."""
+        summary = self._rem()["summary"]
+        assert "mutation-testing-guide" in summary
+        assert "MUTANT_KILLING_GUIDE_PHP.md" in summary
+
+
+# ===========================================================================
+# run_l1 — remediation wiring (gate fail → remediation in tool_specific)
+# ===========================================================================
+
+class TestRunL1RemediationWiring:
+    """run_l1 must attach remediation metadata when the Infection gate fails."""
+
+    def test_gate_fail_attaches_remediation(self, tmp_path):
+        """Failing stats (escaped > 0, MSI < 100) → remediation in tool_specific."""
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=100, killed=97, survived=0, escaped=3, timed_out=0,
+                untested=0, msi=97.0, covered_msi=97.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert result.passed is False
+        rem = result.tool_specific["remediation"]
+        assert rem["skill"] == "mutation-testing-guide"
+        assert rem["guide"] == "MUTANT_KILLING_GUIDE_PHP.md"
+        assert rem["escaped"] == 3
+        assert rem["msi"] == 97.0
+        assert "3 mutant(s) escaped" in rem["summary"]
+        # mutation block still present alongside remediation
+        assert result.tool_specific["mutation"]["escaped"] == 3
+
+    def test_gate_pass_no_remediation(self, tmp_path):
+        """Perfect stats (100/100, 0 escaped/timeout) → no remediation key."""
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert result.passed is True
+        assert "remediation" not in result.tool_specific
+        assert result.tool_specific["mutation"]["killed"] == 50
+
+    def test_no_stats_no_remediation(self, tmp_path):
+        """Infection unavailable (stats=None) → no remediation, no mutation block."""
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=None,
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert "remediation" not in result.tool_specific
+        assert "mutation" not in result.tool_specific
+
+    def test_timeout_only_attaches_remediation(self, tmp_path):
+        """timed_out > 0 with perfect MSI still fails gate → remediation present."""
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=100, killed=99, survived=0, escaped=0, timed_out=1,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert result.passed is False
+        rem = result.tool_specific["remediation"]
+        assert rem["timed_out"] == 1
+        assert "1 mutant(s) timed out" in rem["summary"]

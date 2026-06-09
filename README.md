@@ -28,7 +28,8 @@
 11. [Usage](#usage)
 12. [Contributing](#contributing)
 13. [Mutation Testing Workflow](MUTATION_TESTING.md) — how to run mutmut, read `mutmut results` vs `mutmut-cicd-stats.json`, close survivors honestly
-14. [Mutant Killing Guide](MUTANT_KILLING_GUIDE.md) — **operative handbook for subagents**: techniques to kill mutants (dense assertions, boundary testing, spies), equivalence classification A-I with refactor solutions, 12 hard cases from real survivors
+14. [Mutant Killing Guide (Python)](MUTANT_KILLING_GUIDE.md) — **operative handbook for subagents**: techniques to kill mutmut mutants (dense assertions, boundary testing, spies), equivalence classification A-I with refactor solutions, 12 hard cases from real survivors
+15. [Mutant Killing Guide (PHP)](MUTANT_KILLING_GUIDE_PHP.md) — **PHP-native handbook for the L1 Infection 100/100 gate**: Infection mutator table, the assertSame/assertEquals trap, strict mock expectations, visibility mutants as design feedback, `@infection-ignore-all` audit policy
 14. [License](#license)
 
 ---

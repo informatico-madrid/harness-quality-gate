@@ -303,6 +303,35 @@ class PhpAdapter(BaseAdapter):
 
         return findings
 
+    @staticmethod
+    def _mutation_remediation(stats: MutationStats) -> dict[str, object]:
+        """Build remediation guidance for agents when the L1 Infection gate fails."""
+        issues: list[str] = []
+        if stats.escaped > 0:
+            issues.append(f"{stats.escaped} mutant(s) escaped")
+        if stats.timed_out > 0:
+            issues.append(f"{stats.timed_out} mutant(s) timed out")
+        if stats.msi < _INFECTION_MIN_MSI:
+            issues.append(f"MSI {stats.msi:.1f}% < {_INFECTION_MIN_MSI}%")
+        if stats.covered_msi < _INFECTION_MIN_COVERED_MSI:
+            issues.append(f"covered MSI {stats.covered_msi:.1f}% < {_INFECTION_MIN_COVERED_MSI}%")
+        return {
+            "skill": "mutation-testing-guide",
+            "guide": "MUTANT_KILLING_GUIDE_PHP.md",
+            "instructions": "SUBAGENT_MUTATION_INSTRUCTIONS.md",
+            "summary": (
+                f"L1 Infection gate FAILED — {', '.join(issues)}. "
+                "Read skill 'mutation-testing-guide' or MUTANT_KILLING_GUIDE_PHP.md. "
+                "Priority: assertSame not assertEquals (T1), strict mock "
+                "expects()->with(identicalTo()) (T2), full coverage before killing (T3). "
+                "Iterate with: vendor/bin/infection --filter=<file> --show-mutations."
+            ),
+            "msi": stats.msi,
+            "covered_msi": stats.covered_msi,
+            "escaped": stats.escaped,
+            "timed_out": stats.timed_out,
+        }
+
     # -- private helpers ----------------------------------------------------
 
     @staticmethod
@@ -471,6 +500,7 @@ class PhpAdapter(BaseAdapter):
         # --- 3. Mutation testing (FR-13, FR-14, TD-6) ---------------------
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
+        mutation_gate_failed = False
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -524,6 +554,8 @@ class PhpAdapter(BaseAdapter):
                     # Gate check (FR-14)
                     gate_findings = self._validate_infection_stats(mutation_stats)
                     all_findings.extend(gate_findings)
+                    if gate_findings:
+                        mutation_gate_failed = True
                     logger.info(
                         "L1 Infection MSI=%.1f coveredMsi=%.1f escaped=%d",
                         mutation_stats.msi,
@@ -550,6 +582,8 @@ class PhpAdapter(BaseAdapter):
                 "msi": round(mutation_stats.msi, 4),
                 "covered_msi": round(mutation_stats.covered_msi, 4),
             }
+            if mutation_gate_failed:
+                mutation_meta["remediation"] = self._mutation_remediation(mutation_stats)
 
         passed = len(all_findings) == 0
 

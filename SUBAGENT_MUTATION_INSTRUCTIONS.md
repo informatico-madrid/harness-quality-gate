@@ -1,5 +1,13 @@
 # Instrucciones para subagentes: Matar mutantes
 
+> **¿Repo PHP?** Este protocolo es para Python/mutmut. Si el gate que falló es
+> **L1 Infection (PHP)** — escaped > 0, MSI < 100, covered MSI < 100 o
+> timeouts — sigue **[MUTANT_KILLING_GUIDE_PHP.md](MUTANT_KILLING_GUIDE_PHP.md)**:
+> bucle con `vendor/bin/infection --filter=<file> --show-mutations`, trampas
+> T1 (`assertSame`, nunca `assertEquals`/`toEqual`), T2 (mocks con
+> `expects()->with($this->identicalTo(...))`) y T3 (covered MSI = cobertura
+> primero). Supresión solo con `@infection-ignore-all` + `reason:` + `audited:`.
+
 Cuando el coordinador te envíe a cerrar supervivientes de mutmut, sigue este protocolo:
 
 ## 0. Preparación (2 min)
