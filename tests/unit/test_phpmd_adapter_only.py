@@ -313,6 +313,30 @@ class TestPhpMdAdapter:
         assert "Test desc" in f.message
         assert "None" not in f.message
 
+    def test_parse_missing_violations_key_returns_empty_list(self) -> None:
+        """Kills mutmut_23 and mutmut_25 (violations default mutations).
+
+        The parse() function uses `file_entry.get("violations", [])` for
+        the violations list. If key is missing, default is [] and the loop
+        iterates over nothing, returning no findings. This test verifies
+        that the function handles the missing key gracefully.
+
+        Kill targets:
+        - mutmut_23: default `[]` → `None` (would raise TypeError on `for v in None`)
+        - mutmut_25: default `[]` → missing default (same effect)
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/MissingViolations.php",
+                    # NO "violations" key
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert findings == []  # Empty list, not None, not crash
+        assert isinstance(findings, list)  # type check (kills None-return mutants)
+
     def test_parse_violation_with_no_begin_line(self) -> None:
         data = {
             "files": [
@@ -441,13 +465,11 @@ class TestPhpMdAdapter:
         Stricter assertions kill _run_phpmd survivors:
         - m14: str(repo)→None → call_args[0][0] check fails
         - m15,m16,m17: "json"→"XML"/None → args_list[1] check fails
-        - m18,m19: rulesets→None → args_list[2] check fails
-        - m20: rulesets→wrong value → args_list[2] check fails
-        - m21: invoke args mutated → call_args fails
-        - m22: env kwarg mutated → check_calls kwargs fails
-        - m25,m26: + → - → string comparison fails
-        - m28: invocation.exitcode→0 → logger message changes
-        - m29: logger.info→logger.debug → assertInfo/NotNotInfo check
+
+        NEW: Also kills:
+        - m15: invocation.exitcode→None in logger → call_args[0][1] != 0 check fails
+        - m24: format string → "XX...XX" → exact format string check fails
+        - m28: invocation.stderr→None in parse call → mock_parse check fails
         """
         rulesets = "cleancode,codesize"
         findings_data = {
@@ -455,8 +477,16 @@ class TestPhpMdAdapter:
                 {"file": "src/X.php", "violations": [{"rule": "R", "description": "D", "priority": 2}]}
             ]
         }
+        # Use a real ToolInvocation so wraps= works
+        from harness_quality_gate.adapters.base import ToolInvocation
+        real_inv = ToolInvocation(
+            stdout=json.dumps(findings_data),
+            stderr="",
+            exitcode=0,
+            duration_seconds=0.5,
+        )
         with (
-            patch.object(PhpMdAdapter, "invoke", return_value=_ok(json.dumps(findings_data))) as mock_invoke,
+            patch.object(PhpMdAdapter, "invoke", return_value=real_inv) as mock_invoke,
             patch("harness_quality_gate.adapters.php.phpmd_adapter.logger") as mock_logger,
         ):
             adapter = PhpMdAdapter()
@@ -473,20 +503,27 @@ class TestPhpMdAdapter:
         # Verify kwargs
         assert call_args.kwargs["env"] == {"APP": "T"}
         assert call_args.kwargs["timeout"] == 60.0
-        # Verify parse produces expected result
+        # Verify parse produces expected result (parse is called with the real args, not wrapped)
         assert len(result) == 1
         assert result[0].node == "src/X.php"
         assert result[0].severity == "major"
         # Verify exact log severity info was called NOT debug (kills mutation 29)
         mock_logger.info.assert_called_once()
         mock_logger.debug.assert_not_called()
-        # Verify logger.info was called with the correct format string
-        # (catches mutation 28 on exitcode, mutation on format string keys)
-        call_msg = mock_logger.info.call_args[0][0]
-        assert "PHPMD exit=" in call_msg
-        assert "stdout=" in call_msg
-        assert "stderr=" in call_msg
-        assert "duration=" in call_msg
+        # === STRICT logger info assertions to kill m15, m24 ===
+        # m15: invocation.exitcode→None → 2nd arg would be None not 0
+        # Using exact args tuple comparison (H7 — full argv equality on call args)
+        logger_call_args = mock_logger.info.call_args
+        # Format string is 1st positional arg
+        assert logger_call_args[0][0] == "PHPMD exit=%d stdout=%dchars stderr=%dchars duration=%.1fs"
+        # Args: (exitcode, len(stdout), len(stderr), duration) — 2nd, 3rd, 4th, 5th
+        # 2nd arg is exitcode — killed mutation (exitcode→None)
+        assert logger_call_args[0][1] == 0
+        # 3rd arg is len(stdout), 4th is len(stderr) — ensure int not None
+        assert isinstance(logger_call_args[0][2], int)
+        assert isinstance(logger_call_args[0][3], int)
+        # 5th arg is duration — ensure float not None
+        assert isinstance(logger_call_args[0][4], float)
 
     # -- version() tests (kill version survivors 5,11,13,17,18,19,28,29,33,35)
 
