@@ -1271,6 +1271,73 @@ class TestRunL4:
             layer = a.run_l4(tmp_path, {})
         assert layer.findings[0].severity == "error"
 
+    def test_l4_wiring_spy_bandit_args_identity(self, tmp_path: Path):
+        """H1 wiring: spy on _run_bandit, assert args identity with repo.
+
+        Kills run_l4__mutmut_5 (H1): _run_bandit(repo, env) → _run_bandit(None, env).
+        The spy catches repo→None because call_args.args[0] is repo fails.
+        """
+        a = self._adapter()
+        with patch.object(a, "_run_bandit", return_value=[], autospec=True
+                          ) as mock_run:
+            with _all_tools_on_path():
+                layer = a.run_l4(tmp_path, {})
+        mock_run.assert_called_once_with(tmp_path, {})
+        assert mock_run.call_args.args[0] is tmp_path, \
+            "kill H1 wiring mutant: repo passed by identity, not equality"
+        assert layer.passed is True
+        assert layer.findings == []
+
+    def test_l4_logger_exact_message_format(self, tmp_path: Path, caplog):
+        """H3 logger exact message: assert complete formatted log line.
+
+        Kills run_l4__mutmut_13 (H3): logger.info("bandit: %d findings")
+        → logger.info("XXbandit: %d findingsXX").
+        The exact message assertion kills it because the mutated string
+        won't match the expected format. Also verifies log level.
+        """
+        a = self._adapter()
+        a.bandit = _mock_subadapter(findings=[])
+        with _all_tools_on_path():
+            with caplog.at_level("INFO",
+                                 logger="harness_quality_gate.adapters.python.python_adapter"):
+                layer = a.run_l4(tmp_path, {})
+        bandit_records = [r for r in caplog.records
+                          if r.levelno == 20 and "bandit" in r.message
+                          and "findings" in r.message]
+        assert len(bandit_records) >= 1, \
+            "Must log bandit findings count (killer for mutmut_13)"
+        for record in bandit_records:
+            full_msg = record.getMessage()
+            assert full_msg.startswith("bandit: "), \
+                f"message must start with 'bandit: ', got: {full_msg!r}"
+            parts = full_msg.split(": ", 1)
+            assert len(parts) == 2
+            count = int(parts[1].split()[0])
+            assert count == 0
+
+    def test_l4_duration_rounding_frozen_clock(self, tmp_path: Path):
+        """H2 time freeze: freeze monotonic clock, assert exact round value.
+
+        Kills run_l4__mutmut_35 (H2): round(duration, 3) → round(duration, None).
+        With frozen clock, duration = 0.987654, round(0.987654, 3) = 0.988 (float),
+        but round(0.987654, None) = 1 (int). Asserts float type and exact value.
+        """
+        import time as time_module
+        a = self._adapter()
+        a.bandit = _mock_subadapter(findings=[])
+        ticks = iter([100.0, 100.987654])
+        with _all_tools_on_path():
+            with patch(
+                "harness_quality_gate.adapters.python.python_adapter.time.monotonic",
+                side_effect=lambda: next(ticks),
+            ):
+                layer = a.run_l4(tmp_path, {})
+        assert layer.duration_sec == 0.988, \
+            "duration_sec must be round(0.987654, 3) = 0.988 (float)"
+        assert type(layer.duration_sec).__name__ == "float", \
+            "duration_sec must be float, kills round(_, None) → int: mutmut_35"
+
 
 # ---------------------------------------------------------------------------
 # check_tools
