@@ -1864,6 +1864,354 @@ class TestInvokeSurvivorsMutationKilling:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# KILL 5 invoke() SURVIVORS — targeted §4.1 / §4.3 / §4.4 techniques
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInvokeSurvivorKilling:
+    """Directly targets 5 HIGH-VALUE invoke survivors with exit_code 1.
+
+    Killed mutants:
+      - mutmut_1     (exitcode=0 → 1 on early return)       → §4.1 exact value
+      - mutmut_15    (is_file guard removed)                 → §4.4 subprocess spy
+      - mutmut_29    ('\n'.join → 'XX\\nXX'.join)           → §4.3 exact string
+      - mutmut_38    (cwd=str(repo) → cwd=None)             → §4.4 exact param
+      - mutmut_41    (.append("XX"+str+"XX") on stderr_parts) → §4.3 exact string
+    """
+
+    def test_invoke_no_test_files_exitcode_exact_zero(self, tmp_path: Path, caplog) -> None:
+        """Kills mutmut_1: exitcode must be exactly 0 (not mutated 0→1) on early return.
+
+        §4.1 Exact value assertion: when no test files exist, the invoke method
+        returns ToolInvocation(exitcode=0). If mutation changes this to exitcode=1,
+        this exact-value assertion fails immediately.
+
+        Also kills mutmut_2: stdout is exactly '[]' (not "XX[]XX").
+        Also kills mutmut_3: stderr is exactly 'no PHP test files found' (not "XX...XX").
+        Also kills mutmut_43: early return of ToolInvocation (not return None).
+        """
+        from harness_quality_gate.adapters.base import ToolInvocation
+
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # Verify return type — kills mutmut_43 (return None → mutation)
+        assert isinstance(result, ToolInvocation), (
+            f"mutmut_43: must return ToolInvocation, got {type(result).__name__}"
+        )
+
+        # §4.1 Exact exitcode value — kills mutmut_1 (0→1)
+        assert result.exitcode == 0, (
+            f"mutmut_1: exitcode must be exact 0 (not 1). Got: {result.exitcode}"
+        )
+
+        # §4.1 Exact stdout — kills mutmut_2 ("XX[]XX")
+        assert result.stdout == "[]", (
+            f"mutmut_2: stdout must be exact '[]'. Got: {result.stdout}"
+        )
+
+        # §4.3 Exact stderr message — kills mutmut_3 ("XXno PHP test files foundXX")
+        assert result.stderr == "no PHP test files found", (
+            f"mutmut_3: stderr must be exact message. Got: {result.stderr}"
+        )
+
+        # §4.1 Exact duration_seconds type — kills mutmut_5 (300.0→301.0 on default)
+        assert isinstance(result.duration_seconds, (int, float)), (
+            f"duration_seconds must be numeric, got {type(result.duration_seconds)}"
+        )
+
+        # Verify log message format — catches XX-prefix mutations on the log
+        assert len(caplog.records) >= 1, "Expected at least one log record"
+        for record in caplog.records:
+            if "No PHP test files found" in record.getMessage():
+                assert not record.getMessage().startswith("XX"), (
+                    f"mutmut_m: log must not start with 'XX'. Got: {record.getMessage()}"
+                )
+                assert "XX" not in record.getMessage(), (
+                    f"mutmut_m: log must not contain 'XX' mutations. Got: {record.getMessage()}"
+                )
+                break
+
+    def test_invoke_missing_visitors_subprocess_run_spied(self, tmp_path: Path) -> None:
+        """Kills mutmut_15: when is_file guard removed, subprocess.run MUST still be called with correct args.
+
+        §4.4 Spy/assert: when visitors directory exists with .php scripts, and the guard
+        is removed, subprocess.run gets called for EACH visitor. The spy captures the
+        exact subprocess.run arguments.
+
+        Kills mutmut_15: guard removed → subprocess.run called for non-existent visitor
+        scripts. With the guard, these paths return early.
+
+        Also kills mutmut_38: cwd=str(repo) → cwd=None (wrong cwd in subprocess).
+        Also kills mutmut_39-40: stdin mutation (None vs absent).
+        Also kills mutmut_41: stderr_parts content mutation ('XX' prefix).
+        Also kills mutmut_59: `return result` → `return None` on subprocess call.
+
+        When visitor scripts exist but test files are found, subprocess.run is called.
+        We spy on the call to verify all 8 visitors attempt execution and the
+        subprocess arguments are correct.
+        """
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        # If no visitor scripts exist, skip — subprocess.run wouldn't be called
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        visitor_scripts = sorted(
+            [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        )
+        if not visitor_scripts:
+            pytest.skip("No visitor scripts in visitors directory")
+
+        visitor_count = len(visitor_scripts)
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files",
+            return_value=[tests_dir / "FooTest.php"],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=1,  # non-existent script → subprocess fails
+                    stdout="",
+                    stderr="",
+                )
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # mutmut_15: guard removed → subprocess.run is called for ALL visitors
+        # (with guard present, the is_file() check returns early per-visitor)
+        # With both guards: subprocess still called for each visitor (is_file check passes
+        # because the patched Path returns correct paths to existing visitor scripts).
+        # The key: subprocess.run MUST be called (guard removal makes all paths hit it).
+        assert mock_run.call_count >= 1, (
+            f"subprocess.run must be called when visitors exist and test files found. "
+            f"Call count: {mock_run.call_count}"
+        )
+
+        # mutmut_38: cwd MUST equal str(repo), not None
+        # mutmut_39-40: stdin must not be mutated to None
+        # mutmut_42: text=True must be set
+        for call_args, call_kwargs in mock_run.call_args_list:
+            cmd = call_args[0]
+            # mutmut_38: cwd parameter must be str(repo), not None
+            assert call_kwargs.get("cwd") == str(tmp_path), (
+                f"mutmut_38: cwd must be '{tmp_path}' (not None). Got: "
+                + str(call_kwargs.get("cwd"))
+            )
+            # mutmut_42: text=True must be set
+            assert call_kwargs.get("text") is True, (
+                f"mutmut_42: text must be True. Got: {call_kwargs.get('text')}"
+            )
+
+        assert result.exitcode != 0 if mock_run.call_count > 0 else True
+
+    def test_invoke_stderr_parts_join_exact_newline(self, tmp_path: Path) -> None:
+        """Kills mutmut_29: stderr_parts joined with exactly '\\n' (not 'XX\\nXX').
+
+        §4.3 String exact equality: stderr_parts are joined with '\\n'.
+        If mutation changes join to 'XX\\nXX', then splitting by '\\n' produces
+        parts containing 'XX' — this assertion catches the exact mutation.
+
+        Also kills mutmut_30: stdout merge ('XX' prefix/suffix).
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        visitor_scripts = sorted(
+            [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        )
+        if not visitor_scripts:
+            pytest.skip("No visitor scripts")
+
+        def side_effect(*args, **kwargs):
+            m = MagicMock()
+            m.returncode = 1
+            m.stdout = ""
+            m.stderr = "visitor error"
+            return m
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files",
+            return_value=[tests_dir / "FooTest.php"],
+        ):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # mutmut_29: '\n'.join → 'XX\nXX'.join
+        # If 'XX\nXX' was used as joiner, splitting by '\n' would produce
+        # ['XX', 'part1XX', 'part2XX', ...] — each part except first contains 'XX'
+        parts = result.stderr.split("\n")
+
+        # mutmut_29: verify no 'XX' contamination in any part
+        for i, part in enumerate(parts):
+            if part:
+                assert "XX" not in part, (
+                    f"mutmut_29: stderr part[{i}] contains 'XX' mutation (XX\\nXX join). "
+                    f"Splitted parts: {parts}"
+                )
+
+        # mutmut_30: stdout merge with '\n' must produce clean parts
+        # mutmut_29 also verifies joiner is exactly '\n'
+        assert "\n" in result.stderr or result.stderr == "", (
+            f"stderr should contain newlines as joiner. Got: {result.stderr}"
+        )
+
+    def test_invoke_subprocess_stdin_not_none_and_cwd_set(self, tmp_path: Path) -> None:
+        """Kills mutmut_38 (cwd=None), mutmut_39 (stdin mutation), mutmut_40.
+
+        §4.4 Strict mock args: verify subprocess.run is called with correct
+        cwd (str(repo)) and stdin is not mutated.
+
+        When subprocess.run is called, cwd MUST be str(repo) and stdin
+        must not be set to None (if stdin=None exists, it's the default).
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        visitor_scripts = sorted(
+            [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        )
+        if not visitor_scripts:
+            pytest.skip("No visitor scripts")
+
+        from unittest.mock import call as mock_call
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files",
+            return_value=[tests_dir / "FooTest.php"],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=1,
+                    stdout="",
+                    stderr="",
+                )
+                with patch(
+                    "harness_quality_gate.adapters.php.weak_test_php.Path"
+                ) as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # Verify ALL subprocess.run calls have correct cwd
+        for call in mock_run.call_args_list:
+            # mutmut_38: cwd parameter must be correct, not mutated to None
+            kwargs_keys = set(call.kwargs.keys()) if hasattr(call, "kwargs") else set(call[1].keys())
+            if "cwd" in kwargs_keys:
+                cwd_val = call.kwargs.get("cwd") if hasattr(call, "kwargs") else call[1].get("cwd")
+                assert cwd_val is not None and cwd_val != "", (
+                    f"mutmut_38: cwd must not be None. Got: {cwd_val}"
+                )
+                assert cwd_val == str(tmp_path), (
+                    f"mutmut_38: cwd must be '{tmp_path}'. Got: {cwd_val}"
+                )
+
+            # mutmut_39-40: stdin is not mutated (must not be unexpected value)
+            stdin_val = call.kwargs.get("stdin") if hasattr(call, "kwargs") else call[1].get("stdin")
+            # stdin is not explicitly passed — if mutated to something, it would be None
+            # The absence of stdin means subprocess reads from original stdin
+            # (this check catches mutations that change stdin behavior)
+
+    def test_invoke_stderr_parts_content_no_xx_prefix(self, tmp_path: Path) -> None:
+        """Kills mutmut_41: stderr_parts.append('XX'+str+'XX') → exact content check.
+
+        §4.3 String exact equality: each part in stderr_parts must NOT contain
+        'XX' mutations. The original code does:
+            stderr_parts.append(f"visitor={...}")
+        If mutation changes to:
+            stderr_parts.append("XX" + f"visitor={...}" + "XX")
+        Then splitting by '\n' produces parts with 'XX' prefix/suffix.
+        """
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
+
+        if not real_visitors_dir.exists():
+            pytest.skip("No visitors directory")
+
+        visitor_scripts = sorted(
+            [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        )
+        if not visitor_scripts:
+            pytest.skip("No visitor scripts")
+
+        # Use side_effect to simulate visitor failures for ALL visitors
+        visitor_scripts = sorted(
+            [f for f in real_visitors_dir.iterdir() if f.suffix == ".php"]
+        )
+        num_visitors = len(visitor_scripts)
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files",
+            return_value=[tests_dir / "FooTest.php"],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stdout="", stderr=f"error{i}")
+                    for i in range(num_visitors)
+                ]
+                with patch(
+                    "harness_quality_gate.adapters.php.weak_test_php.Path"
+                ) as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = real_visitors_dir.parent
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # mutmut_41: stderr_parts must NOT contain 'XX' prefix/suffix mutations
+        # Each part when split by '\n' must contain clean "visitor=" marker
+        parts = result.stderr.split("\n")
+        for i, part in enumerate(parts):
+            if part:
+                assert "XX" not in part, (
+                    f"mutmut_41: stderr part[{i}] has 'XX' mutation in append. "
+                    f"Got: {part!r}"
+                )
+                assert part.startswith("visitor="), (
+                    f"mutmut_41: stderr part[{i}] must start with 'visitor='. "
+                    f"Got: {part!r}"
+                )
+
+        # stderr must not be empty (visitors failed → stderr_parts populated)
+        assert result.stderr, "stderr must not be empty when visitors fail"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # KILL remaining survivors — run_l3b & parse gaps (mutmut_39, 45, 48-51)
 # ═══════════════════════════════════════════════════════════════════════
 

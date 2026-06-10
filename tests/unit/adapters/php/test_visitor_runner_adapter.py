@@ -9,6 +9,7 @@ Design: Each public method exercised with granular separate asserts.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -470,8 +471,66 @@ class TestInvokeSubprocessAssertions:
 
     Kills mutmut_73..mutmut_84 — mutations on command args, env, timeout,
     capture_output, text, check parameters in the subprocess.run call.
-    Technique: §4.4 — assert_called_once_with with exact args.
+    Technique: §4.4 — assert_called_once_with with exact args + identity checks.
     """
+
+    def test_invoke_subprocess_full_call_assertion(
+        self, tmp_path: Path
+    ) -> None:
+        """Full assert_called_once_with to kill mutmut_73–84 (H7 + §4.4).
+
+        Kills all invoke subprocess.run survivors simultaneously:
+          mutmut_73:  "php" → "XXphpXX"              (string arg mutation)
+          mutmut_74:  visitor_name → "XXvisitorXX"   (string arg mutation)
+          mutmut_75:  visitor_script → mutated path  (string arg mutation)
+          mutmut_76:  cwd=str(repo) → cwd=None       (pass-through mutation)
+          mutmut_77:  capture_output=True→False       (bool mutation)
+          mutmut_78:  text=True→False                 (bool mutation)
+          mutmut_79:  check=False→check=True          (bool mutation)
+          mutmut_80:  timeout=300.0→301.0             (number mutation)
+          mutmut_81:  capture_output→captured_output  (kwarg name mutation)
+          mutmut_82:  text→mutated kwarg              (kwarg mutation)
+          mutmut_83:  timeout kwarg mutation          (kwarg mutation)
+          mutmut_84:  env parameter mutation          (kwarg mutation)
+
+        Technique: §4.4 (spies on dependencies — exact mock args) + H1
+        (wiring identity check on cwd) + H7 (full argv list equality).
+        """
+        adapter = VisitorRunnerAdapter()
+        visitor_script = tmp_path / "visitors" / "visitor_a.php"
+        visitor_script.parent.mkdir(parents=True, exist_ok=True)
+        visitor_script.write_text("<?php")
+        php_file = tmp_path / "src" / "Foo.php"
+        php_file.parent.mkdir(parents=True, exist_ok=True)
+        php_file.write_text("<?php class Foo {}")
+
+        with patch.object(
+            VisitorRunnerAdapter, "_collect_php_files",
+            return_value=[php_file],
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.visitor_runner_adapter.VISITORS_DIR",
+                tmp_path / "visitors",
+            ):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(
+                        returncode=0,
+                        stdout=json.dumps([]),
+                        stderr="",
+                    )
+                    adapter.invoke(tmp_path, [])
+
+        # Verify the FULL subprocess.run call in ONE assertion
+        # This kills all positional + keyword mutations atomically
+        mock_run.assert_called_once_with(
+            ["php", str(visitor_script), str(php_file)],
+            cwd=str(tmp_path),
+            env={**os.environ, **{}},
+            capture_output=True,
+            text=True,
+            timeout=300.0,
+            check=False,
+        )
 
     def test_invoke_subprocess_called_with_exact_command(self, tmp_path: Path) -> None:
         """Visitor runs subprocess with exact command structure.

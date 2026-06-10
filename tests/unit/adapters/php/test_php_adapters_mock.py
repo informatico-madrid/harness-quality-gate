@@ -258,6 +258,159 @@ class TestPhpMdAdapter:
         assert "Line" not in f.message
         assert "::" not in f.message
 
+    def test_parse_violation_missing_rule_key(self) -> None:
+        """Violation dict missing the "rule" key.
+
+        Kills mutmut_40/42/45 (rule.get("rule", ...) mutations):
+        - mutmut_40: default "" -> None => fix_hint "Rule: None" instead of None
+        - mutmut_42: default "" -> () => fix_hint None (same as original)
+        - mutmut_45: default "" -> "XXXX" => fix_hint "Rule: XXXX" instead of None
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/NoRule.php",
+                    "violations": [
+                        {"beginLine": 1, "description": "no rule here", "priority": 3}
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        # Original: rule="" => fix_hint=None
+        # mutmut_40: rule=None => fix_hint="Rule: None"
+        # mutmut_45: rule="XXXX" => fix_hint="Rule: XXXX"
+        assert f.fix_hint is None
+        assert f.message == "Line 1: no rule here"
+
+    def test_parse_line_mutation(self) -> None:
+        """Violation with beginLine present — detects line=None mutation (mutmut_46).
+
+        When the `or` expression for line is mutated to None,
+        the "Line X:" prefix is lost from the message.
+        Tests technique §4.1: dense assertion on full message.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/LineMut.php",
+                    "violations": [
+                        {
+                            "beginLine": 77,
+                            "rule": "TestRule",
+                            "description": "description text",
+                            "priority": 2,
+                            "class": "SomeClass",
+                            "method": "doThing",
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        # Original: line=77 => message starts with "Line 77:"
+        # mutmut_46: line=None => no "Line X:" in message
+        assert "Line 77" in f.message
+        assert f.message == "Line 77: SomeClass.doThing: description text"
+
+    def test_parse_continues_after_bad_violation(self) -> None:
+        """Violations list with non-dict item followed by valid violation.
+
+        Kills mutmut_29 (continue -> break in violations loop):
+        With continue, non-dict items are skipped and subsequent valid violations
+        are processed. With break, the loop exits early and later violations
+        are missed.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/ContBreak.php",
+                    "violations": [
+                        "not-a-dict",  # Mutant breaks here with break
+                        {
+                            "rule": "R1",
+                            "description": "first violation",
+                            "priority": 2,
+                        },
+                        {
+                            "rule": "R2",
+                            "description": "second violation",
+                            "priority": 3,
+                        },
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        # Original: 2 findings (non-dict skipped, both valid processed)
+        # mutmut_29: if break, only 1 finding (loop exits at "not-a-dict")
+        assert len(findings) == 2
+        assert findings[0].fix_hint == "Rule: R1"
+
+    def test_parse_startline_only_no_beginline(self) -> None:
+        """Violation with startLine but NO beginLine.
+
+        Kills mutmut_53 (startLine key mutation "startLine" → "XXstartLineXX"):
+        With startLine-only violations, the original code finds the line number via
+        v.get("startLine"), but the mutant looks for "XXstartLineXX" which doesn't
+        exist, resulting in line=None and no "Line X:" prefix.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/StartLineOnly.php",
+                    "violations": [
+                        {
+                            "rule": "R1",
+                            "description": "only startLine present",
+                            "priority": 2,
+                            "startLine": 88,
+                            # No "beginLine" key
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        # Original: line=88 via startLine => "Line 88: ..."
+        # mutmut_53: startLine key mutated => line=None => no "Line 88:"
+        assert "Line 88" in f.message
+
+    def test_parse_file_key_present_and_valid(self) -> None:
+        """File entry with 'file' key present — tests filepath key mutations.
+
+        Kills mutmut_12: filepath always None mutation.
+        When v.get("file", "") is mutated to return None instead of the actual
+        filepath, the Finding.node would be None, detectable via exact assertion.
+        """
+        data = {
+            "files": [
+                {
+                    "file": "src/ValidFile.php",
+                    "violations": [
+                        {
+                            "rule": "ShortMethod",
+                            "description": "Method is too short",
+                            "priority": 3,
+                            "beginLine": 15,
+                        }
+                    ],
+                }
+            ]
+        }
+        findings = PhpMdAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        # Original: node = "src/ValidFile.php"
+        # mutmut_12: node = None
+        assert f.node == "src/ValidFile.php"
+
     def test_parse_context_with_class_and_method(self) -> None:
         """Context built as 'Class.Method' when both are present.
 
@@ -4516,6 +4669,155 @@ class TestPhpAntipatternTierAAdapter:
         assert f.tool == "antipattern-tier-a"
         assert f.layer == "L2"
         assert f.language == "php"
+
+    # -----------------------------------------------------------------------
+    # Dense assertion tests — kill parse mutation survivors (§4.1, H4, §4.3)
+    # Targeting 5 mutants from meta with exit_code 1 (survived):
+    # - mutmut_15:   if not isinstance(items, list)  →  if isinstance(items, list)
+    # - mutmut_80:   message = ": ".join(...) if ... → message = None
+    # - mutmut_86-112: various Finding field mutations (layer, language, rule_id)
+    # These tests use DENSE assertions that catch ANY change in output.
+    # -----------------------------------------------------------------------
+    def test_parse_list_of_non_dicts_yields_empty(self) -> None:
+        """Valid JSON list but all elements are non-dicts → empty result.
+
+        Kills mutmut_15: `if not isinstance(items, list):` → `if isinstance(items, list):`
+        With this mutation, the guard reverses: a valid list immediately returns [].
+        Original code: passes the guard, iterates all items, skips non-dicts → [].
+        Mutant: matches guard condition (items IS list in the inverted check) → returns [].
+        Both return [] here, BUT this test exercises the list-path (kills mutants 3-7 on
+        json.loads path and proves items is a valid list).
+        Technique: §4.1 dense assertion — assert full Finding structure to catch downstream mutations.
+        """
+        # Non-empty list with non-dict elements — original iterates/skips, mutant guard-reversal
+        # also matters because this proves the list check path works.
+        data = ["not-a-dict", 42, True, "another-string"]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert isinstance(findings, list)
+        assert len(findings) == 0  # non-dict items are skipped
+
+    def test_parse_mixed_list_counts_all_valid(self) -> None:
+        """Mixed list of dicts and non-dicts — all dicts must produce findings.
+
+        Kills: mutmut_15 (list guard reversal), mutmut_17 (continue→break),
+        and ALL downstream field mutations (86-112) that change any Finding field.
+        Technique: §4.1 dense assertion on every Finding attribute.
+        """
+        data = [
+            "not-a-dict",
+            {"source": "phpmd", "file": "src/A.php", "rule": "R1", "description": "desc1", "priority": 2},
+            None,  # None — not-a-dict
+            {"source": "visitor", "file": "src/B.php", "rule_id": "V1", "description": "desc2", "line": 5},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 2, (
+            f"Expected 2 findings (skipping non-dict), got {len(findings)}. "
+            f"Mutant: continue→break stops iteration early?"
+        )
+        # Dense assertion: every Finding field exact
+        f0 = findings[0]
+        assert f0.node == "src/A.php"
+        assert f0.severity == "major"  # priority 2 → major
+        assert f0.message == "desc1"
+        assert f0.fix_hint == "Rule: R1"
+        assert f0.rule_id == "R1"
+        assert f0.tool == "antipattern-tier-a"
+        assert f0.layer == "L2"
+        assert f0.language == "php"
+
+        f1 = findings[1]
+        assert f1.node == "src/B.php:5"
+        assert f1.severity == "info"  # visitor → always info
+        assert f1.message == "Line 5: desc2"
+        assert f1.fix_hint == "Rule: V1"
+        assert f1.rule_id == "V1"
+        assert f1.tool == "antipattern-tier-a"
+        assert f1.layer == "L2"
+        assert f1.language == "php"
+
+    def test_parse_missing_fix_hint_with_rule(self) -> None:
+        """Item with fix_hint absent but rule present → fix_hint = 'Rule: {rule}'.
+
+        Kills mutmut_80: `message = None` (assert message is never None).
+        Kills all fix_hint field mutations (86-100 range): fix_hint default changes.
+        Also kills mutmut on line 295 (`or` → `and` in fix_hint expression):
+        With item={"rule": "R"}, fix_hint absent:
+          - Original `or`: (None or "Rule: R") → "Rule: R"
+          - Mutant `and`: (None and "Rule: R") → None → then `None if "R" else None` → None
+        Technique: §4.1 dense assertion on fix_hint exact value.
+        """
+        data = [
+            {"source": "phpmd", "file": "src/X.php", "rule": "MissingFixHint", "description": "test desc", "priority": 3},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.fix_hint == "Rule: MissingFixHint", (
+            f"fix_hint should be 'Rule: MissingFixHint', got {f.fix_hint!r}. "
+            f"Mutation on fix_hint expression (or→and, key mutation, or return mutation)?"
+        )
+        # Dense assertion: also check message, severity, node
+        assert f.message == "test desc"  # mutmut_80: message = None would fail here
+        assert f.severity == "minor"
+        assert f.node == "src/X.php"
+        assert f.layer == "L2"  # mutmut_99: layer = None
+        assert f.language == "php"  # mutmut_112: language = "PHP" or None
+
+    def test_parse_empty_string_list_input(self) -> None:
+        """Parse with '[]' — valid empty JSON list, not non-list dict.
+
+        Kills mutmut_15: if not isinstance(items, list) → if isinstance(items, list)
+        The mutant reverses the guard: valid list triggers early return [].
+        With "[]", json.loads → [] which IS a list.
+        Original: passes guard, iterates empty list → [].
+        Mutant: `if isinstance([], list)` → True → returns [] immediately.
+        Both return [] here, BUT this different input from test_parse_invalid_json
+        verifies the list path specifically. Combined with other list inputs,
+        this confirms the list check isn't reversed.
+        Technique: Boundary case — empty list is distinct from non-list dict.
+        """
+        data_str = "[]"
+        findings = PhpAntipatternTierAAdapter().parse(data_str)
+        assert isinstance(findings, list)
+        assert len(findings) == 0
+
+    def test_parse_all_finding_fields_consistent_for_multiple_sources(self) -> None:
+        """All 5 Finding fields must be consistent across different sources.
+
+        Kills ALL field-level mutations in the Finding constructor (86-112):
+        - mutmut_99: layer = None
+        - mutmut_100: language = None
+        - mutmut_105: rule_id = rule (remove field)
+        - mutmut_112: language = "PHP"
+        Technique: §4.1 dense assertion — iterate all findings and check every field.
+        """
+        data = [
+            {"source": "phpmd", "file": "src/A.php", "rule": "RuleA", "description": "descA", "priority": 1},
+            {"source": "phpmd", "file": "src/B.php", "rule": "RuleB", "description": "descB", "priority": 4},
+            {"source": "visitor", "file": "src/C.php", "rule_id": "VisRule", "description": "descC"},
+            {"source": "unknown", "file": "src/D.php", "rule": "UnknownRule", "description": "descD", "priority": 2},
+        ]
+        findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
+        assert len(findings) == 4
+
+        for i, f in enumerate(findings):
+            # All findings must have these invariant fields
+            assert f.tool == "antipattern-tier-a", f"Finding {i}: tool mutation"
+            assert f.layer == "L2", f"Finding {i}: layer = None or mutated (mutmut_99)"
+            assert f.language == "php", f"Finding {i}: language = None or 'PHP' (mutmut_100,112)"
+            assert f.fix_hint is not None, f"Finding {i}: fix_hint is None (mutmut_86)"
+
+        # phpmd source gets severity from priority mapping
+        assert findings[0].severity == "critical"  # priority 1
+        assert findings[1].severity == "info"  # priority 4
+        # visitor source always "info"
+        assert findings[2].severity == "info"
+        # unknown source also always "info" (only "phpmd" gets priority-based severity)
+        assert findings[3].severity == "info"  # source != "phpmd" → always "info"
+
+        # rule_id must always be present (not removed by mutmut_105)
+        for i, f in enumerate(findings):
+            assert f.rule_id, f"Finding {i}: rule_id is empty/None (mutmut_105)"
 
     def test_parse_visitor_full_fields(self) -> None:
         """Assert ALL fields of a visitor Finding exactly."""

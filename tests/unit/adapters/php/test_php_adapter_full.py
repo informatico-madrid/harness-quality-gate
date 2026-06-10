@@ -4172,6 +4172,100 @@ class TestRunL3a:
         assert result2.layer == "L3A"
         assert result2.language == "php"
 
+    # ===========================================================================
+    # H1 — Wiring: PHPMD & cs_fixer arg passthrough (mutmut_50/51/59/60)
+    # ===========================================================================
+
+    def test_run_l3a_phpmd_call_args_identity(self, tmp_path, monkeypatch):
+        """Kill mutmut_50/51: PHPMD run_l3a(repo, env) → repo→None / env→None.
+
+        Technique: H1 — exact call-argument identity checks.
+        Uses sentinel env so `is env` detects the mutation (not just equality).
+        """
+        adapter = _make_mock_adapter()
+        repo = tmp_path
+        sentinel_env = {"X_PHPMD_TEST_SENTINEL": "k9j2"}
+
+        result = adapter.run_l3a(repo, sentinel_env)
+
+        assert result.layer == "L3A"
+
+        cs = adapter._phpmd.run_l3a.call_args
+        # Mut50: first arg is repo, not mutated to None (identity check)
+        assert cs[0][0] is repo, (
+            "Mut50: PHPMD.run_l3a first arg must be repo, not mutated to None"
+        )
+        # Mut51: second arg is env, not mutated to None
+        assert cs[0][1] is sentinel_env, (
+            "Mut51: PHPMD.run_l3a second arg must be env, not mutated to None"
+        )
+        # Kill arg-removal mutants: both args must be present
+        assert len(cs[0]) == 2, (
+            "Mut51: PHPMD.run_l3a must receive 2 positional args (repo, env)"
+        )
+
+    def test_run_l3a_cs_fixer_invoke_args_identity(self, tmp_path, monkeypatch):
+        """Kill mutmut_59/60: cs_fixer.invoke(repo, args, env=env) → repo→None / env→None.
+
+        Technique: H1 — exact call-argument identity checks.
+        Uses sentinel env so `is env` detects the mutation (not just equality).
+        """
+        adapter = _make_mock_adapter()
+        repo = tmp_path
+        sentinel_env = {"X_CSFIXER_TEST_SENTINEL": "x4m7"}
+
+        result = adapter.run_l3a(repo, sentinel_env)
+
+        assert result.layer == "L3A"
+
+        ci = adapter._cs_fixer.invoke.call_args
+        # Mut59: first arg (repo) must be the repo, not mutated to None
+        assert ci[0][0] is repo, (
+            "Mut59: cs_fixer.invoke first arg must be repo, not mutated to None"
+        )
+        # Mut60: env kwarg must be the env, not mutated to None
+        assert ci[1]["env"] is sentinel_env, (
+            "Mut60: cs_fixer.invoke env kwarg must be env, not mutated to None"
+        )
+
+    # ===========================================================================
+    # H3 — Exact log assertion: php-cs-fixer format-arg removal (mutmut_77)
+    # ===========================================================================
+
+    def test_run_l3a_cs_fixer_logger_exact_message(self, tmp_path, caplog):
+        """Kill mutmut_77: cs_fixer logger.info(fmt, arg) → logger.info(arg).
+
+        Technique: H3 — exact log-message assertion via caplog.
+
+        Mutant 77 replaces the format+arg pair in:
+            logger.info("L3A php-cs-fixer: %d findings", len(cs_findings))
+        with just:
+            logger.info(len(cs_findings))
+        Original: "L3A php-cs-fixer: N findings"
+        Mutant:   "N" (bare number, no prefix) — exact equality kills it.
+        """
+        adapter = _make_mock_adapter()
+        adapter._cs_fixer.parse.return_value = [Finding(
+            node="src/Style.php", severity="warning", message="spacing",
+            tool="php-cs-fixer",
+        )]
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.passed is False
+        assert any(f.tool == "php-cs-fixer" for f in result.findings)
+
+        # Original: "L3A php-cs-fixer: 1 findings"
+        # Mut77: "1" (no format prefix — bare number from len(cs_findings))
+        cs_logs = [m for m in caplog.messages if "php-cs-fixer" in m and "findings" in m]
+        assert len(cs_logs) >= 1, (
+            f"Mut77: Expected php-cs-fixer log, got: {caplog.messages}"
+        )
+        assert cs_logs[0] == "L3A php-cs-fixer: 1 findings", (
+            f"Mut77: Logger format-arg removed — expected 'L3A php-cs-fixer: 1 findings', "
+            f"got '{cs_logs[0]}' (mutant produces bare count, no format prefix)"
+        )
+
 # _mutation_remediation — static method (PHP / Infection flavor)
 # ===========================================================================
 

@@ -1194,22 +1194,50 @@ class TestRunL4:
         assert layer.findings[0].rule_id == "B101"
         assert layer.findings[1].severity == "medium"
 
-    def test_l4_bandit_raises_oserror(self, tmp_path: Path):
-        """Bandit raises OSError -> empty findings."""
+    def test_l4_bandit_raises_oserror(self, tmp_path: Path, caplog):
+        """Bandit raises OSError -> empty findings.
+        
+        Verifies invoke was called with correct args even in error path.
+        Kills orchestrator-level H1 wiring mutants that change repo/[] args.
+        """
         a = self._adapter()
-        with patch.object(a.bandit, "invoke", side_effect=OSError("bandit error")):
+        mock_bandit = MagicMock()
+        mock_bandit.invoke = MagicMock(side_effect=OSError("bandit error"))
+        with patch.object(a, "bandit", mock_bandit):
             with _all_tools_on_path():
-                layer = a.run_l4(tmp_path, {})
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    layer = a.run_l4(tmp_path, {})
             assert layer.passed is True
             assert layer.findings == []
+            # Kill H1 wiring mutants: assert invoke called with (repo, [])
+            assert mock_bandit.invoke.called
+            inv_args = mock_bandit.invoke.call_args[0]
+            assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills H1 wiring mutant)"
+            assert inv_args[1] == [], "invoke() second arg = [] (kills H1 wiring mutant)"
+            # Kill H3 logger mutations on error path
+            bandit_warn = [r for r in caplog.records
+                           if r.levelname == "WARNING" and "bandit" in r.message
+                           and "invocation failed" in r.message]
+            assert len(bandit_warn) == 1, "Logger must emit invocation warning (kills mutmut on log removal)"
 
-    def test_l4_bandit_raises_runtimeerror(self, tmp_path: Path):
-        """Bandit raises RuntimeError -> empty findings."""
+    def test_l4_bandit_raises_runtimeerror(self, tmp_path: Path, caplog):
+        """Bandit raises RuntimeError -> empty findings.
+        
+        Kills mutmut on exception type mutation (OSError→RuntimeError removal)
+        by verifying RuntimeError is caught.
+        """
         a = self._adapter()
-        with patch.object(a.bandit, "invoke", side_effect=RuntimeError("boom")):
+        mock_bandit = MagicMock()
+        mock_bandit.invoke = MagicMock(side_effect=RuntimeError("boom"))
+        with patch.object(a, "bandit", mock_bandit):
             with _all_tools_on_path():
-                layer = a.run_l4(tmp_path, {})
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    layer = a.run_l4(tmp_path, {})
             assert layer.passed is True
+            bandit_warn = [r for r in caplog.records
+                           if r.levelname == "WARNING" and "bandit" in r.message
+                           and "invocation failed" in r.message]
+            assert len(bandit_warn) == 1, "Logger must emit RuntimeError warning"
 
     def test_l4_bandit_cwe_in_finding(self, tmp_path: Path):
         """Bandit CWE field correctly propagated to finding."""
@@ -2287,34 +2315,41 @@ class TestRunBanditHelper:
         assert pars_args[2] is not None, "parse() arg2=exitcode must not be None (kills mutmut on parse arg)"
 
     def test_run_bandit_tool_not_found_strict(self, tmp_path: Path, caplog):
-        """Bandit not on PATH -> empty list, warning logged.
+        """Bandit not on PATH -> empty list, warning logged with exact message.
 
-        Kills mutmut_5 (return []→None mutmut_288) via isinstance assertion.
-        Kills mutmut_7 (return []→None mutmut_288) via findings is not None.
-        Kills mutmut_10 (logger.warning on line 287 removed) via caplog check.
-        Kills mutmut_11 (log message string mutation: "PATH"→"XX...XX") via exact msg check.
-        Kills mutmut_13 (return []→None mutmut_288) via findings == [].
+        Kills mutmut_5,6,7,8,13 (return []→None mutations) via isinstance/is-not-None.
+        Kills mutmut_10 (logger.warning call removed) via caplog record check.
+        Kills mutmut_6 (guard log XX...XX prefix/suffix) via exact message equality.
+        Kills mutmut_11 (string mutation in not-found message) via exact message.
+        Kills mutmut_21,23,24 (guard path mutations) via invoke-not-called check.
         """
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-                findings = a._run_bandit(tmp_path, {})
+        mock_bandit = MagicMock()
+        mock_bandit.parse.return_value = []
+        with patch.object(a, "bandit", mock_bandit):
+            with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+                with caplog.at_level("WARNING",
+                                       logger="harness_quality_gate.adapters.python.python_adapter"):
+                    findings = a._run_bandit(tmp_path, {})
 
         # Type assertion: kills mutmut_5,7,8,13 (return []→None mutations)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None, "findings must not be None (kills mutmut_7,13)"
         assert findings == [], "findings must be empty list"
 
-        # Kill logger mutations: assert warning was logged with correct message
-        bandit_warn = [
-            r for r in caplog.records
-            if r.levelname == "WARNING" and "bandit" in r.message.lower() and "not found" in r.message
-        ]
-        assert len(bandit_warn) >= 1, "Logger must emit warning about bandit not found (kills mutmut_10)"
-        # Kill mutmut_11: format string mutation "PATH"→"XX...XX" (exact message)
-        assert any("bandit not found on PATH" in r.getMessage() for r in bandit_warn), (
-            "Warning must contain 'bandit not found on PATH' message (kills mutmut_11)"
-        )
+        # Kill mutate guard mutation: verify invoke NOT called (kills mutmut_21,23,24)
+        assert not mock_bandit.invoke.called, \
+            "invoke() must NOT be called when bandit is not on PATH (kills mutmut_21,23,24)"
+
+        # Kill logger removal mutation (mutmut_10): warning must be present
+        bandit_warn = [r for r in caplog.records
+                       if r.levelname == "WARNING" and "bandit" in r.message]
+        assert len(bandit_warn) == 1, \
+            f"Exactly 1 bandit warning expected, got {len(bandit_warn)} (kills mutmut_10)"
+
+        # Kill mutmut_6: exact log message equality — XX...XX mutations killed by == check
+        assert bandit_warn[0].getMessage() == "bandit not found on PATH, skipping", \
+            f"Exact log message check kills mutmut_6 (XX...XX mutations in not-found message)"
 
     def test_run_bandit_oserror_strict(self, tmp_path: Path, caplog):
         """Bandit.invoke raises OSError -> empty list + invoke was called + warning logged.
