@@ -4086,10 +4086,11 @@ class TestRunL3a:
     # ===========================================================================
 
     def test_run_l3a_duration_uses_round_3(self, tmp_path, monkeypatch):
-        """Kill mutmut_136-140 — duration calculation / round() mutations.
+        """Kill mutmut_136-141 — duration calculation / round() mutations.
 
         Technique: H2 — freeze time.monotonic() to control duration,
-                   then assert round(duration, 3) produces a specific value.
+                   then assert round(duration, 3) produces an exact value.
+        Use a 6-decimal delta so round(_, 3) ≠ round(_, 4) to kill Mut141.
 
         Mutations killed:
           Mut136: round(duration, 3) → round(duration)  — float→int
@@ -4097,18 +4098,23 @@ class TestRunL3a:
           Mut138: duration change (+= instead of -=)
           Mut139: round(_ , 3) → round(_, 2)
           Mut140: duration formula changed
+          Mut141: round(duration, 3) → round(duration, 4)
         """
         import time as _time
         adapter = _make_mock_adapter()
-        ticks = iter([100.0, 100.25])
+        # 0.123456 → round(_, 3) = 0.123, round(_, 4) = 0.1235  (different!)
+        ticks = iter([100.0, 100.123456])
         monkeypatch.setattr(_time, "monotonic", lambda: next(ticks))
         result = adapter.run_l3a(tmp_path, {})
 
         assert isinstance(result.duration_sec, float), (
-            "Mut136/137: duration_sec must be float, not int"
+            "Mut136/137/141: duration_sec must be float, not int"
         )
-        assert result.duration_sec == pytest.approx(0.25, abs=0.001), (
-            "Mut138/139/140: duration_sec changed — expected ~0.25"
+        # round(0.123456, 3) == 0.123  rounds correctly to 3 decimals
+        # round(0.123456, 4) == 0.1235 ≠ 0.123  → Mut141 killed
+        assert result.duration_sec == 0.123, (
+            "Mut138/139/140/141: duration_sec changed — expected 0.123 "
+            f"got {result.duration_sec}"
         )
 
     # ===========================================================================
@@ -4264,6 +4270,168 @@ class TestRunL3a:
         assert cs_logs[0] == "L3A php-cs-fixer: 1 findings", (
             f"Mut77: Logger format-arg removed — expected 'L3A php-cs-fixer: 1 findings', "
             f"got '{cs_logs[0]}' (mutant produces bare count, no format prefix)"
+        )
+
+    # ===========================================================================
+    # H3 — PHPMD skip logger mutations (mutmut_50, 52, 53, 54)
+    # ===========================================================================
+
+    def test_run_l3a_phpmd_skip_logger_exact(self, tmp_path, caplog):
+        """Kill mutmut_50, 52, 53, 54: PHPMD skip path logger mutations.
+
+        Technique: H3 — exact log-message assertion via caplog.
+        Uses sentinel logger path so caplog captures the warning.
+
+        Mutations on:
+            logger.warning("L3A PHPMD skipped: %s", exc)
+              Mut50: exc → None       → message "L3A PHPMD skipped: None"
+              Mut52: arg removed     → message format broken / TypeError
+              Mut53: "XX" decoration  → message starts with "XX"
+              Mut54: lowercase        → message starts with "l3a" not "L3A"
+        """
+        adapter = _make_mock_adapter()
+        adapter._phpmd.run_l3a.side_effect = RuntimeError("mock_phpmd_failure")
+        caplog.set_level(logging.WARNING,
+                         logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        # Collect the PHPMD skip warning
+        phpmd_skips = [m for m in caplog.messages
+                       if m.startswith("L3A PHPMD skipped: ")]
+        assert len(phpmd_skips) == 1, (
+            f"Expected exactly one PHPMD skip warning, got: {phpmd_skips}"
+        )
+        # Original: "L3A PHPMD skipped: mock_phpmd_failure"
+        # Mut50: "L3A PHPMD skipped: None"  (exact !=)
+        # Mut52: format error or bare string
+        # Mut53: "XXL3A PHPMD skipped: ..." (starts with XX)
+        # Mut54: "l3a phpms skipped: ..." (lowercase)
+        assert phpmd_skips[0] == "L3A PHPMD skipped: mock_phpmd_failure", (
+            f"Mut50/52/53/54: Logger call mutated. "
+            f"Expected exact format 'L3A PHPMD skipped: mock_phpmd_failure', "
+            f"got: '{phpmd_skips[0]}'"
+        )
+
+    # ===========================================================================
+    # H3 — CS-fix build-args string mutations (mutmut_57, 58, 59, 60, 61, 62)
+    # ===========================================================================
+
+    def test_run_l3a_cs_fixer_build_args_exact(self, tmp_path, monkeypatch):
+        """Kill mutmut_57, 58, 59, 60, 61, 62: CS-fix build-args string mutations.
+
+        Technique: H3 — assert the exact command list passed to invoke.
+        Mutations replace individual args with 'XX...XX' or case-changed copies.
+
+        Mutations on args list:
+            ["fix", "--dry-run", "--format=json", "--no-progress", str(repo)]
+              Mut57: "fix" → "XXfixXX"
+              Mut58: "fix" → "FIX"
+              Mut59: "--dry-run" → "XX--dry-runXX"
+              Mut60: "--dry-run" → "--DRY-RUN"
+              Mut61: "--format=json" → "XX--format=jsonXX"
+              Mut62: "--format=json" → "--FORMAT=JSON"
+        """
+        adapter = _make_mock_adapter()
+        repo = tmp_path
+
+        with monkeypatch.context() as mp:
+            mp.setenv("CS_FIXER_MOCK", "1")
+            result = adapter.run_l3a(repo, {})
+
+        args = adapter._cs_fixer.invoke.call_args[0][1]
+        # Assert the EXACT command list — any string mutation breaks equality.
+        expected_args = [
+            "fix", "--dry-run", "--format=json",
+            "--no-progress", str(repo),
+        ]
+        assert args == expected_args, (
+            f"Muts57-62: Command list mutated. "
+            f"Expected {expected_args}, got: {args}"
+        )
+
+    # ===========================================================================
+    # H1 — CS-fix parse arg identity (mutmut_78, 79)
+    # ===========================================================================
+
+    def test_run_l3a_cs_fixer_parse_args_identity(self, tmp_path, monkeypatch):
+        """Kill mutmut_78, 79: CS-fix parse(stdout, stderr, exitcode) arg mutations.
+
+        Technique: H1 — spy the exact call args to parse().
+
+        Mutations:
+          Mut78: invocation.stdout → None in parse()
+          Mut79: invocation.stderr → None in parse()
+        """
+        adapter = _make_mock_adapter()
+        # Capture what invoke returns so we can assert it matches.
+        mock_invocation = MagicMock(stdout='[{"files":[]}]', stderr="", exitcode=0)
+        adapter._cs_fixer.invoke.return_value = mock_invocation
+        adapter._cs_fixer.parse.return_value = []
+
+        adapter.run_l3a(tmp_path, {})
+
+        parse_args = adapter._cs_fixer.parse.call_args[0]
+        assert parse_args[0] == mock_invocation.stdout, (
+            "Mut78: parse first arg must be invocation.stdout, not mutated to None"
+        )
+        assert parse_args[1] == mock_invocation.stderr, (
+            "Mut79: parse second arg must be invocation.stderr, not mutated to None"
+        )
+        assert parse_args[2] == mock_invocation.exitcode, (
+            "Mut80: parse third arg must be invocation.exitcode, not mutated to None"
+        )
+        # Ensure all 3 positional args are present (kills Mut82: arg removal)
+        assert len(parse_args) == 3, (
+            "Mut82: parse must receive all 3 positional args (stdout, stderr, exitcode)"
+        )
+
+    # ===========================================================================
+    # H1 — CS-fix invoke timeout mutation (mutmut_75)
+    # ===========================================================================
+
+    def test_run_l3a_cs_fixer_timeout_kwarg(self, tmp_path):
+        """Kill mutmut_75: CS-fix invoke(timeout=300) → timeout=301.
+
+        Technique: H3 — exact kwarg assertion via spy on invoke().
+
+        Mutant 75 replaces timeout=300.0 with timeout=301.0.
+        Exact kwarg assertion kills it immediately.
+        """
+        adapter = _make_mock_adapter()
+        adapter.run_l3a(tmp_path, {})
+
+        kw = adapter._cs_fixer.invoke.call_args[1]
+        assert kw["timeout"] == 300.0, (
+            "Mut75: timeout must be 300.0, not mutated to 301.0 or None"
+        )
+
+    # ===========================================================================
+    # H3 — CS-fix build-args list removal (mutmut_56, 65)
+    # ===========================================================================
+
+    def test_run_l3a_cs_fixer_args_list_intact(self, tmp_path):
+        """Kill mutmut_56, 65: CS-fix args list removal and str(repo)→str(None).
+
+        Technique: H3 — verify the exact args list (existence, structure, and content).
+
+        Mutations:
+          Mut56: removes entire `args = [...]` block → `invoke` receives wrong args
+          Mut65:  str(repo) → str(None) in args list
+        """
+        adapter = _make_mock_adapter()
+        repo = tmp_path
+
+        adapter.run_l3a(repo, {})
+
+        # Get the actual args list (second positional arg to invoke).
+        args = adapter._cs_fixer.invoke.call_args[0][1]
+        # Verify structure: 5 elements expected.
+        assert len(args) == 5, (
+            "Mut56: args list must have 5 elements — full list not removed"
+        )
+        # Verify the last element is an actual path string, not str(None)="None".
+        assert args[-1] != "None", (
+            "Mut65: last arg must be the repo path, not str(None)"
         )
 
 # _mutation_remediation — static method (PHP / Infection flavor)

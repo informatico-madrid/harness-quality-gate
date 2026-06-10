@@ -5642,6 +5642,94 @@ class TestPhpAntipatternTierAAdapter:
         assert f.rule_id == ""  # rule default
         assert f.message == ""  # no description → message is empty
 
+    # --- invoke: log message mutations (H3 kill mutmut_127,128,130,131,133,183,184,185) ---
+
+    def test_invoke_phpmd_invalid_json_logs_exact_message(self, tmp_path: Path, caplog) -> None:
+        """Verify exact logger.warning message when PHPMD returns invalid JSON.
+
+        Level 1 technique — H3 (caplog exact message).
+        Catches mutations that change the logged string/args:
+        - mutmut_127:  phpmd_stdout[:200] → None  (different logged arg)
+        - mutmut_128:  format_str removed → logger.warning(phpmd_stdout[:200])
+        - mutmut_130:  "PHPMD output is not valid JSON: %r" → "XX...XX" 
+        - mutmut_131:  "PHPMD output is not valid JSON: %r" → "phpmd output is not valid json: %r"
+        - mutmut_133:  phpmd_stdout[:200] → phpmd_stdout[:201]  (different truncation)
+        All these change the logged message; exact caplog assertion catches them.
+        """
+        phpmd_bad = "this is not json at all !!!"
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", return_value=_ok(phpmd_bad)):
+                with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("[]")):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+
+        assert result.stdout == "[]"
+        assert result.exitcode == 0
+        assert len(caplog.messages) == 1
+        # Exact message assertion — different mutations produce different logged strings
+        expected = f"PHPMD output is not valid JSON: {repr(phpmd_bad[:200])}"
+        assert caplog.messages[0] == expected
+
+    def test_invoke_visitor_invalid_json_logs_exact_message(self, tmp_path: Path, caplog) -> None:
+        """Verify exact logger.warning message when visitor returns invalid JSON.
+
+        Level 1 technique — H3 (caplog exact message).
+        Catches mutations that change the logged string/args:
+        - mutmut_183:  visitor_stdout[:200] → None  (different logged arg)
+        - mutmut_184:  "XXVisitor output is not valid JSON: %rXX" (XX-wrapped string)
+        - mutmut_185:  format_str removed → logger.warning(visitor_stdout[:200])
+        All these change the logged message; exact caplog assertion catches them.
+        """
+        visitor_bad = "::invalid json::"
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.php.antipattern_tier_a_php"):
+            with patch.object(PhpMdAdapter, "invoke", return_value=_ok("")):
+                with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_bad)):
+                    result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+
+        assert result.stdout == "[]"
+        assert result.exitcode == 0
+        assert len(caplog.messages) == 1
+        expected = f"Visitor output is not valid JSON: {repr(visitor_bad[:200])}"
+        assert caplog.messages[0] == expected
+
+    def test_invoke_json_dumps_non_ascii_produces_unescaped(self, tmp_path: Path) -> None:
+        """Verify json.dumps(..., ensure_ascii=False) produces unescaped unicodes.
+
+        Level 2 technique — test with non-ASCII data to distinguish
+        ensure_ascii=False vs ensure_ascii=True/None/removed.
+        Catches:
+        - mutmut_192: ensure_ascii=False → ensure_ascii=None  (≡ default True)
+        - mutmut_195: ensure_ascii=False → remove param  (≡ default True)
+        With ensure_ascii=True or None, "café" produces '\\u00e9caf\\u00e9'.
+        With ensure_ascii=False, "café" produces "caf\\u00e9".
+        """
+        visitor_out = json.dumps([
+            {"file": "src/café.php", "line": 1, "rule_id": "r1", "message": "m1"},
+        ])
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok('{"files": []}')):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok(visitor_out)):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+
+        # With ensure_ascii=False, unicode chars are preserved inline
+        assert '"file": "src/café.php"' in result.stdout
+        assert '"\\u00e9"' not in result.stdout  # no unicode escaping
+        assert "caf\u00e9" in result.stdout
+
+    def test_invoke_stderr_exact_separator(self, tmp_path: Path) -> None:
+        """Verify exact stderr format with newline separator between parts.
+
+        Catches mutmut_206: "\\n" → "XX\\nXX" in stderr join.
+        Original stderr: "phpmd: err1\\nvisitor: err2"
+        Mutant stderr:   "phpmd: err1XX\\nXXvisitor: err2"
+        """
+        with patch.object(PhpMdAdapter, "invoke", return_value=_ok("", stderr="err1")):
+            with patch.object(VisitorRunnerAdapter, "invoke", return_value=_ok("", stderr="err2")):
+                result = PhpAntipatternTierAAdapter().invoke(tmp_path, [])
+
+        # Original: "phpmd: err1\nvisitor: err2"
+        # Mutant:   "phpmd: err1XX\nXXvisitor: err2"
+        assert result.stderr == "phpmd: err1\nvisitor: err2"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Kill composer_audit_adapter.py mutations
 # ═══════════════════════════════════════════════════════════════════════

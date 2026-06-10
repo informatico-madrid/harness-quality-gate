@@ -2829,3 +2829,118 @@ class TestPythonAdapterEdgeCases:
         with _all_tools_on_path():
             layer = a.run_l4(tmp_path, {})
         assert isinstance(layer.duration_sec, (int, float))
+
+
+# ---------------------------------------------------------------------------
+# Private helper: _run_mutmut
+# ---------------------------------------------------------------------------
+
+class TestRunMutmut:
+    """Direct unit tests for PythonAdapter._run_mutmut.
+
+    Targets 13 survivors in _run_mutmut (mutmut_39–43, 48, 54–57, 70–73):
+      - mutmut_39 (stderr→None)  → assert parse arg1 is not None
+      - mutmut_40 (exitcode→None) → assert parse arg2 is not None
+      - mutmut_42,43 (arg removed) → assert len(pars_args) >= 3
+      - mutmut_48 (log XX...XX)   → assert exact log message in error path
+      - mutmut_54,55,56,57 (→None fallback) → assert fields are not None
+      - mutmut_70,71,72,73 (0→1 fallback) → assert exact numeric values
+    """
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_run_mutmut_success_path(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter  # noqa: E402
+        """Use real MutmutAdapter.parse with mocked invoke to kill parse-arg mutations.
+
+        Kills: mutmut_39 (stderr→None), mutmut_40 (exitcode→None),
+        mutmut_42 (remove 2nd arg), mutmut_43 (remove 3rd arg).
+        Strategy: mock invoke() returns valid data, use REAL bound parse(),
+        assert parse received all 3 args with correct types.
+        """
+        a = self._adapter()
+        real_mutmut = MutmutAdapter()
+
+        class ResultHolder:
+            stdout = (
+                '{"total":5,"killed":5,"survived":0,"timeout":0,"escaped":0,"untested":0}'
+            )
+            stderr = ""
+            exitcode = 0
+
+        mock_mutmut = MutmutAdapter.__new__(MutmutAdapter)
+        mock_mutmut.invoke = MagicMock(return_value=ResultHolder())
+        # Use bound method from a real instance (like existing test does)
+        call_tracker = MagicMock(wraps=real_mutmut.parse)
+        mock_mutmut.parse = call_tracker
+
+        with patch.object(a, "mutmut", mock_mutmut):
+            stats = a._run_mutmut(tmp_path, {})
+
+        # Verify parse parsed the payload correctly
+        assert stats.total == 5
+        assert stats.killed == 5
+        assert stats.survived == 0
+        assert stats.msi == 1.0
+
+        # === KILL PARSE-ARG MUTATIONS (H7 wiring) ===
+        pars_args = call_tracker.call_args[0]
+
+        # KILL mutmut_42,43: parse must receive 3 positional args
+        assert len(pars_args) >= 3
+
+        # KILL mutmut_39: stderr must not be None
+        assert pars_args[1] is not None
+        # KILL mutmut_40: exitcode must not be None
+        assert pars_args[2] is not None
+        # Validate stdout type
+        assert pars_args[0] is not None
+        assert isinstance(pars_args[0], str)
+
+    def test_run_mutmut_exception_path(self, tmp_path: Path, caplog):
+        """Trigger _run_mutmut OSError exception handler → fallback stats.
+
+        Kills:
+          - mutmut_48  (log message XX...XX): exact msg assertion
+          - mutmut_54  (escaped→None): assert escaped is not None
+          - mutmut_55  (untested→None): assert untested is not None
+          - mutmut_56  (msi→None): assert msi is not None
+          - mutmut_57  (covered_msi→None): assert covered_msi is not None
+          - mutmut_70  (escaped 0->1): assert escaped == 0
+          - mutmut_71  (untested 0->1): assert untested == 0
+          - mutmut_72  (msi 0->1): assert msi == 0.0
+          - mutmut_73  (covered_msi 0->1): assert covered_msi == 0.0
+        """
+        a = self._adapter()
+        mock_mutmut = MagicMock()
+        mock_mutmut.invoke = MagicMock(side_effect=OSError("mutmut exec failed"))
+        with patch.object(a, "mutmut", mock_mutmut):
+            with caplog.at_level("WARNING",
+                                 logger="harness_quality_gate.adapters.python.python_adapter"):
+                stats = a._run_mutmut(tmp_path, {})
+
+        # Kill mutmut_48: exact log message assertion
+        warns = [r for r in caplog.records
+                 if r.levelname == "WARNING" and
+                 "invocation failed" in r.getMessage()]
+        assert len(warns) >= 1
+        assert warns[0].getMessage() == (
+            "mutmut invocation failed: mutmut exec failed"
+        )
+
+        # Kill fallback stats mutations (54-57: None, 70-73: 0->1)
+        assert stats.escaped is not None
+        assert stats.untested is not None
+        assert stats.msi is not None
+        assert stats.covered_msi is not None
+        assert stats.escaped == 0
+        assert stats.untested == 0
+        assert stats.msi == 0.0
+        assert stats.covered_msi == 0.0
+        # Remaining fields
+        assert stats.total == 0
+        assert stats.killed == 0
+        assert stats.survived == 0
+        assert stats.timed_out == 0
