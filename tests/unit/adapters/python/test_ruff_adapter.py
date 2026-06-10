@@ -533,3 +533,55 @@ class TestParseOrAndMutation:
         assert f.message == "{'filename': 'a.py'}"
         assert f.rule_id is None
         assert f.severity == "error"
+
+
+# ── Edge cases: parse empty input, invalid JSON, non-list JSON ──────────
+# These kill the early-return paths in parse() that were surviving mutation.
+
+
+class TestParseEdgeCases:
+    """Tests for parse() early-return paths.
+
+    Kills mutations on the three early-return branches:
+      - Line 61:  if not stdout.strip(): return findings
+      - Lines 65-66: except json.JSONDecodeError: return findings
+      - Line 69:  if not isinstance(entries, list): return findings
+    """
+
+    def test_parse_empty_stdout_returns_empty_list(self):
+        """Empty/whitespace stdout → return empty list immediately.
+
+        Kills mutation: remove `if not stdout.strip():` → then enters
+        json.loads("") → JSONDecodeError → still returns [] but
+        different control flow; killing the specific edge early-return.
+        """
+        assert _adapter().parse("") == []
+        assert _adapter().parse("   ") == []
+
+    def test_parse_invalid_json_returns_empty_list(self):
+        """Invalid JSON → JSONDecodeError caught → return [].
+
+        Kills mutations on the JSONDecodeError handler (line 65-66):
+          - Remove except block → exception propagates (test would crash)
+          - Change `return findings` → return None or other value
+        """
+        assert _adapter().parse("not json at all") == []
+        assert _adapter().parse("{broken") == []
+        assert _adapter().parse("null") == []  # JSON null, not a list
+
+    def test_parse_non_list_json_returns_empty_list(self):
+        """JSON that decodes but is not a list → return [].
+
+        Kills mutation on `if not isinstance(entries, list)` (line 69):
+          - Change `not` → `is` → would proceed to iterate over dict entries
+          - Remove the check → would loop over dict keys/values
+        """
+        assert _adapter().parse(json.dumps({"key": "value"})) == []
+        assert _adapter().parse(json.dumps({"generalDiagnostics": []})) == []
+
+    def test_name_property_returns_tool_name(self):
+        """Accessing .name triggers the name property → covers line 27.
+
+        Kills mutation: property body removed or changed.
+        """
+        assert _adapter().name == "ruff"

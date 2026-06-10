@@ -143,8 +143,8 @@ class TestProbe:
             with patch("subprocess.run", side_effect=OSError("permission denied")):
                 with pytest.raises(RuntimeError) as exc_ctx:
                     adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "Failed to run" in msg
+        # Exact message kills XX...XX wrapping mutant (mutmut_9)
+        assert str(exc_ctx.value) == "Failed to run ``php -m``: permission denied"
 
     def test_probe_subprocess_timeout_raises(self) -> None:
         adapter = PcovAdapter()
@@ -152,8 +152,11 @@ class TestProbe:
             with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["php"], timeout=10)):
                 with pytest.raises(RuntimeError) as exc_ctx:
                     adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "Failed to run" in msg
+        # Exact message kills XX...XX wrapping mutant (mutmut_10)
+        actual_msg = str(exc_ctx.value)
+        assert "Failed to run" in actual_msg
+        assert "timed out" in actual_msg
+        assert "XX" not in actual_msg
 
     def test_probe_nonzero_returncode_raises(self) -> None:
         adapter = PcovAdapter()
@@ -164,8 +167,8 @@ class TestProbe:
             with patch("subprocess.run", return_value=completed):
                 with pytest.raises(RuntimeError) as exc_ctx:
                     adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "failed" in msg.lower()
+        # Exact message kills XX...XX mutants and "failed"→"XXfailedXX" mutation (mutmut_21)
+        assert str(exc_ctx.value) == "``php -m`` failed (exit 1): php error"
 
     def test_probe_pcov_in_output_returns_pcov(self) -> None:
         adapter = PcovAdapter()
@@ -213,8 +216,8 @@ class TestProbe:
                 with patch("glob.glob", return_value=[]):
                     with pytest.raises(RuntimeError) as exc_ctx:
                         adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "No coverage driver found" in msg
+        # Exact message kills XX...XX mutants (mutmut_12, 13)
+        assert str(exc_ctx.value) == "No coverage driver found — neither PCOV nor Xdebug is loaded"
 
     def test_probe_xdebug_in_output_returns_xdebug(self) -> None:
         """fallback to xdebug when no pcov but xdebug present."""
@@ -275,10 +278,8 @@ class TestProbe:
                 with patch("glob.glob", return_value=[]):
                     with pytest.raises(RuntimeError) as exc_ctx:
                         adapter.probe()
-        msg = str(exc_ctx.value)
-        assert "No coverage driver found" in msg
-        assert "PCOV" in msg
-        assert "Xdebug" in msg
+        # Exact message kills XX...XX wrapping mutants and case mutations
+        assert str(exc_ctx.value) == "No coverage driver found — neither PCOV nor Xdebug is loaded"
 
     def test_probe_pcov_and_xdebug_prefers_pcov(self) -> None:
         """When both present → pcov wins."""

@@ -1255,34 +1255,77 @@ class TestRunRuffHelper:
         assert findings == []
 
     def test_run_ruff_parse_error(self, tmp_path: Path, caplog):
-        """Ruff parse raises -> caught, empty list returned."""
+        """Ruff parse raises RuntimeError -> caught, empty list returned."""
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.ruff.parse = MagicMock(side_effect=RuntimeError("parse err"))
-        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-            findings = a._run_ruff(tmp_path, {})
+        mock_ruff = _mock_subadapter(findings=[])
+        mock_ruff.parse = MagicMock(side_effect=RuntimeError("parse err"))
+        a.ruff = mock_ruff
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_ruff(tmp_path, {})
         assert isinstance(findings, list), "return must be list (kills return→None)"
         assert findings is not None
         assert findings == []
+        # Kill invoke-arg mutation (H1): assert invoke called with (repo, env)
+        assert mock_ruff.invoke.called
+        inv_args = mock_ruff.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut on repo→None)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut on []→None)"
+        # Kill logger mutation: verify warning was emitted
         ruff_warn = [r for r in caplog.records
-                     if r.levelname == "WARNING" and "ruff" in r.message.lower()]
-        assert len(ruff_warn) == 1
-        assert "ruff invocation failed" in ruff_warn[0].getMessage()
+                     if r.levelname == "WARNING" and "ruff" in r.message.lower() and "invocation failed" in r.message]
+        assert len(ruff_warn) == 1, "Logger must emit ruff invocation warning"
+        assert "parse err" in ruff_warn[0].getMessage(), "Exception message must be in log"
 
     def test_run_ruff_oserror_on_invoke(self, tmp_path: Path, caplog):
         """Ruff.invoke raises OSError -> caught, empty list returned."""
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.ruff.invoke = MagicMock(side_effect=OSError("ruff exec failed"))
-        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-            findings = a._run_ruff(tmp_path, {})
+        mock_ruff = _mock_subadapter(findings=[])
+        mock_ruff.invoke = MagicMock(side_effect=OSError("ruff exec failed"))
+        a.ruff = mock_ruff
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_ruff(tmp_path, {})
         assert isinstance(findings, list), "return must be list (kills return→None)"
         assert findings is not None
         assert findings == []
+        # Kill invoke-arg mutation (H1): assert invoke called with (repo, env)
+        assert mock_ruff.invoke.called
+        inv_args = mock_ruff.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut on repo→None)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut on []→None)"
+        # Kill logger mutation: verify warning was emitted
         ruff_warn = [r for r in caplog.records
-                     if r.levelname == "WARNING" and "ruff" in r.message.lower()]
-        assert len(ruff_warn) == 1
-        assert "ruff invocation failed" in ruff_warn[0].getMessage()
+                     if r.levelname == "WARNING" and "ruff" in r.message.lower() and "invocation failed" in r.message]
+        assert len(ruff_warn) == 1, "Logger must emit ruff invocation warning"
+        assert "ruff exec failed" in ruff_warn[0].getMessage(), "Exception message must be in log"
+
+    def test_run_ruff_runtimeerror_on_invoke(self, tmp_path: Path, caplog):
+        """Ruff.invoke raises RuntimeError -> caught, empty list returned.
+
+        Verifies RuntimeError (not just OSError) triggers exception handler.
+        Kills RuntimeError-type-mutation survivors by testing RuntimeError explicitly.
+        """
+        a = self._adapter()
+        mock_ruff = _mock_subadapter(findings=[])
+        mock_ruff.invoke = MagicMock(side_effect=RuntimeError("ruff runtime err"))
+        a.ruff = mock_ruff
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_ruff(tmp_path, {})
+        assert isinstance(findings, list), "return must be list (kills return→None)"
+        assert findings is not None
+        assert findings == []
+        # Kill invoke-arg mutation (H1): assert invoke called with (repo, env)
+        assert mock_ruff.invoke.called
+        inv_args = mock_ruff.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut on repo→None)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut on []→None)"
+        # Kill logger mutation: verify warning was emitted with RuntimeError path
+        ruff_warn = [r for r in caplog.records
+                     if r.levelname == "WARNING" and "ruff" in r.message.lower() and "invocation failed" in r.message]
+        assert len(ruff_warn) == 1, "Logger must emit ruff invocation warning on RuntimeError"
+        assert "ruff runtime err" in ruff_warn[0].getMessage(), "Exception message must be in log"
 
     def test_run_ruff_env_kwarg_preserved(self, tmp_path: Path):
         """env dict passed to _run_ruff must appear verbatim in invoke(env=).
@@ -1410,16 +1453,23 @@ class TestRunPyrightHelper:
         Kills mutmut_10 (logger.warning call removed) via caplog message check.
         Kills mutmut_11 ("pyright invocation failed"→other string) via message check.
         Kills mutmut_12 (exc→None in format arg) via str(interpolation) of msg.
+        Kills invoke-arg mutations (H1 wiring) via assert invoke called with (repo, []).
         """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
         a.pyright.invoke = MagicMock(side_effect=OSError("pyright exec failed"))
-        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-            findings = a._run_pyright(tmp_path, {})
+        with _all_tools_on_path({"pyright": "/bin/pyright"}):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_pyright(tmp_path, {})
         # Type assertion on empty list: kills mutmut_8 (return []→None)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None
         assert findings == []
+        # Kill mutmut on invoke-arg mutations (H1 wiring): assert invoke called with (repo, [])
+        assert a.pyright.invoke.called
+        inv_args = a.pyright.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut on repo→None)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut on []→None)"
         # Kill mutmut_10: logger.warning call present, kills call-removed mutation
         pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
         assert len(pyright_warn) == 1, f"Expected warning, got {len(pyright_warn)}"
@@ -1428,10 +1478,27 @@ class TestRunPyrightHelper:
         msg = pyright_warn[0].getMessage()
         # mutmut_12: exc→None means "%s" format would fail → msg broken/empty
         assert "pyright exec failed" in msg, f"exc must be interpolated in log msg (kills mutmut_12), got: {msg}"
-        # Kill logger string mutations in "invocation failed" warning
-        pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
-        assert len(pyright_warn) == 1
-        assert "pyright invocation failed" in pyright_warn[0].getMessage()
+
+    def test_run_pyright_runtimeerror_on_invoke(self, tmp_path: Path, caplog):
+        """Pyright.invoke raises RuntimeError -> empty list + warning logged.
+
+        Verifies RuntimeError (not just OSError) triggers exception handler.
+        Kills RuntimeError-type-mutation survivors by testing RuntimeError explicitly.
+        """
+        a = self._adapter()
+        a.pyright = _mock_subadapter(findings=[])
+        a.pyright.invoke = MagicMock(side_effect=RuntimeError("pyright runtime err"))
+        with _all_tools_on_path({"pyright": "/bin/pyright"}):
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_pyright(tmp_path, {})
+        assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
+        assert findings is not None
+        assert findings == []
+        # Kill logger mutation: verify warning was emitted
+        pyright_warn = [r for r in caplog.records
+                        if r.levelname == "WARNING" and "pyright" in r.message.lower() and "invocation failed" in r.message]
+        assert len(pyright_warn) == 1, "Logger must emit pyright invocation warning"
+        assert "pyright runtime err" in pyright_warn[0].getMessage(), "Exception message must be in log"
 
 
 # ---------------------------------------------------------------------------
@@ -1592,17 +1659,19 @@ class TestRunVultureHelper:
             findings = a._run_vulture(tmp_path, {})
         assert findings == []
 
-    def test_run_vulture_oserror(self, tmp_path: Path):
-        """Vulture.invoke raises -> empty list.
+    def test_run_vulture_oserror(self, tmp_path: Path, caplog):
+        """Vulture.invoke raises OSError -> empty list.
 
         Kills return None mutations (mutmut_23-24) via isinstance assertion.
         Kills invoke-args mutations (mutmut_19-21) via assert invoke called with args.
+        Kills logger warning mutations via exact log-message assertion.
         """
         a = self._adapter()
         a.vulture = _mock_subadapter(findings=[])
         a.vulture.invoke = MagicMock(side_effect=OSError("vulture exec failed"))
         with _all_tools_on_path({"vulture": "/bin/vulture"}):
-            findings = a._run_vulture(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_vulture(tmp_path, {})
         # Type assertion: kills return None mutations (mutmut_23-24)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
         assert findings is not None, "findings must not be None"
@@ -1612,6 +1681,15 @@ class TestRunVultureHelper:
         inv_args = a.vulture.invoke.call_args[0]
         assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_19)"
         assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_19)"
+        # Kill logger warning mutations: verify exact log message
+        vulture_warning = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "vulture" in r.message.lower()
+            and "invocation failed" in r.message
+        ]
+        assert len(vulture_warning) == 1, "Logger must emit vulture invocation warning"
+        assert "vulture exec failed" in vulture_warning[0].getMessage(), \
+            f"Exception message must be interpolated in log"
 
     def test_run_vulture_strict_invoke_and_parse_args(self, tmp_path: Path):
         """Strict checks on _run_vulture success path: invoke/parse args verified.
@@ -2074,23 +2152,40 @@ class TestRunMutmutDirect:
         assert len(warn) == 1, "logger.warning must be called (kills mutmut_42)"
         assert warn[0].getMessage() == "mutmut not found on PATH, returning empty stats"
 
-    def test_run_mutmut_oserror_fallback(self, tmp_path: Path):
+    def test_run_mutmut_oserror_fallback(self, tmp_path: Path, caplog):
         """mutmut.invoke raises OSError → returns default empty MutationStats.
 
         Kills mutmut_44: OSError → exception handler returns None.
         Type assertion: kills mutmut_44 (return None instead of MutationStats).
+        Invoke-arg assertions: kills H1 wiring mutations on invoke.
+        Log assertion: kills H3 logger-mutation survivors.
         """
         a = self._adapter()
         mock_mutmut = MagicMock()
         mock_mutmut.invoke = MagicMock(side_effect=OSError("mutmut broken"))
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                stats = a._run_mutmut(tmp_path, {})
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    stats = a._run_mutmut(tmp_path, {})
 
         # Type assertion: kills mutmut_44 (exception path returns None)
         assert isinstance(stats, MutationStats), f"exception path must return MutationStats, got {type(stats)}"
         assert stats.total == 0
         assert stats.killed == 0
+        # Kill invoke-arg mutations (H1): assert invoke called with (repo, [])
+        assert mock_mutmut.invoke.called
+        inv_args = mock_mutmut.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_46)"
+        assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_47)"
+        # Kill logger warning mutations: verify exact log message with exception interpolated
+        mutmut_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "mutmut" in r.message.lower()
+            and "invocation failed" in r.message
+        ]
+        assert len(mutmut_warn) == 1, "Logger must emit mutmut invocation warning"
+        assert "mutmut broken" in mutmut_warn[0].getMessage(), \
+            f"Exception message must be in log (kills exc→None mutation)"
 
     def test_run_mutmut_successful_path_args(self, tmp_path: Path):
         """Successful mutation-stats return path: invoke + parse correctly chained.
@@ -2141,7 +2236,7 @@ class TestRunMutmutDirect:
         assert pars_args[0] is not None, "parse() arg0=stdout must not be None (kills mutmut_48)"
         assert isinstance(pars_args[0], str)
 
-    def test_run_mutmut_runtimeerror_fallback(self, tmp_path: Path):
+    def test_run_mutmut_runtimeerror_fallback(self, tmp_path: Path, caplog):
         """mutmut.invoke raises RuntimeError → returns default MutationStats.
 
         Completes exception-path coverage alongside test_run_mutmut_oserror_fallback.
@@ -2151,12 +2246,26 @@ class TestRunMutmutDirect:
         mock_mutmut.invoke = MagicMock(side_effect=RuntimeError("boom"))
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                stats = a._run_mutmut(tmp_path, {})
+                with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                    stats = a._run_mutmut(tmp_path, {})
 
         assert isinstance(stats, MutationStats)
         assert stats.total == 0
         assert stats.survived == 0
         assert stats.timed_out == 0
+        # Kill invoke-arg mutations (H1)
+        assert mock_mutmut.invoke.called
+        inv_args = mock_mutmut.invoke.call_args[0]
+        assert inv_args[0] is tmp_path, "invoke() first arg = repo"
+        assert inv_args[1] == [], "invoke() second arg = []"
+        # Kill logger warning mutations
+        mutmut_warn = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "mutmut" in r.message.lower()
+            and "invocation failed" in r.message
+        ]
+        assert len(mutmut_warn) == 1, "Logger must emit mutmut invocation warning on RuntimeError"
+        assert "boom" in mutmut_warn[0].getMessage()
 
 
 class TestPythonAdapterBasics:

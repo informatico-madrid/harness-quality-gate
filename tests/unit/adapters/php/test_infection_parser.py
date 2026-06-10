@@ -184,6 +184,32 @@ def test_adapter_parse_wraps_parse_stats() -> None:
     assert stats.msi == 100.0
 
 
+def test_adapter_parse_with_all_three_args() -> None:
+    """parse() must accept stderr and exitcode args (ToolAdapter contract).
+
+    Kills mutations:
+      - stderr: str="" mutation → if parse ignores it, no mutation to kill
+      - exitcode: int=0 mutation → same
+      - The actual kill is that parse() passes stdout correctly to parse_stats
+        even when called with 3 positional args.
+    """
+    stats = _adapter().parse(_INFECTION_PASS_TEXT, "some stderr", 2)
+    assert stats.killed == 6
+    assert stats.msi == 100.0
+
+
+def test_adapter_parse_returns_mutation_stats_not_none() -> None:
+    """parse() must return MutationStats, not None when parse_stats returns a value.
+
+    Kills mutation on line 119: `return self.parse_stats(stdout)` → `return None`.
+    A mutation to return None would cause the assertion to fail.
+    """
+    stats = _adapter().parse(_INFECTION_FAIL_TEXT)
+    assert stats is not None
+    from harness_quality_gate.models import MutationStats
+    assert isinstance(stats, MutationStats)
+
+
 # ---------------------------------------------------------------------------
 # invoke() — binary discovery + subprocess wiring
 # ---------------------------------------------------------------------------
@@ -337,6 +363,40 @@ def test_parse_stats_garbage_returns_all_zeros_detailed() -> None:
     assert stats.covered_msi == 0.0
     assert isinstance(stats.msi, float)
     assert isinstance(stats.covered_msi, float)
+
+
+def test_parse_stats_json_or_mutant_not_triggered() -> None:
+    """H4 table of truth: 'isinstance(dict) and "killed" in data'.
+
+    Tests dict WITHOUT 'killed' key → JSON path should NOT be taken (original and returns False).
+    If mutant changes and→or, JSON path IS taken, gets all-zero stats (not text-path result).
+
+    Kills:
+      - mutmut_74: 'and' → 'or' at line 152. Dict without 'killed' key triggers JSON path with
+        all-zero data instead of text parsing.
+    """
+    # Dict without 'killed' key — should NOT enter JSON block
+    json_str = json.dumps({"total": 10, "other": "data"})
+    stats = _adapter().parse_stats(json_str)
+    # Should fall through to text path, which returns all zeros
+    assert stats.total == 0
+    assert stats.killed == 0
+    assert stats.msi == 0.0
+
+
+def test_parse_stats_json_killed_key_absent_default() -> None:
+    """Verify data.get("killed", 0) default kills mutations.
+
+    Kills:
+      - data.get("killed", 1) → default 1 → kills if test asserts killed == 0
+      - data.get("killed", None) → same as 0 for int() cast, but caught by
+        isinstance(stats.killed, int) on other data
+    """
+    json_str = json.dumps({"survived": 5})  # No "killed" key
+    stats = _adapter().parse_stats(json_str)
+    # killed defaults to 0
+    assert stats.killed == 0
+    assert isinstance(stats.killed, int)
 
 
 def test_parse_stats_text_msi_line_precision() -> None:

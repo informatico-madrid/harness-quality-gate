@@ -256,7 +256,6 @@ class TestParseOrVsAnd:
 
 # ── invoke — binary not found ───────────────────────────────────────────
 
-
 class TestInvokeBinaryNotFound:
     """Tests for when pyright is not found on PATH.
 
@@ -280,6 +279,71 @@ class TestInvokeBinaryNotFound:
         assert isinstance(result, ToolInvocation)
         assert result.exitcode == 3
         assert result.stderr == "pyright not found on PATH"
+
+
+# ── version ─────────────────────────────────────────────────────────────
+
+class TestVersion:
+    """Test the version() method.
+
+    Kills mutations on lines 33, 36-40 of pyright_adapter.py:
+      - Line 33: name property body
+      - Lines 36-40: version method body (binary lookup, _run call, return)
+    """
+
+    def test_name_property_returns_tool_name(self):
+        """Accessing .name must return 'pyright'.
+
+        Kills mutation on line 33: `return self._name` removed/changed.
+        """
+        assert PyrightAdapter().name == "pyright"
+
+    def test_version_raises_when_pyright_missing(self):
+        """Binary not found → RuntimeError.
+
+        Kills mutations that remove the `if binary is None: raise` branch.
+        """
+        adapter = PyrightAdapter()
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="pyright not found on PATH"):
+                adapter.version(Path("/tmp"))
+
+    def test_version_calls_run_with_correct_cmd(self):
+        """invoke version → _run([binary, --version], cwd, env).
+
+        Kills mutations:
+          - Line 39: cmd elements [binary, --version] → wrong/None
+          - Line 39: cwd arg → None
+          - Line 39: env arg → None
+          - Line 40: result.stdout.strip() → None
+          - Line 40: split()[-1] → different index
+        """
+        adapter = PyrightAdapter()
+        binary = "/usr/bin/mock_pyright"
+        mock_result = MagicMock(stdout="pyright 1.1.265")
+
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+            with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+                repo = Path("/repo/X")
+                result = adapter.version(repo)
+
+        mock_run.assert_called_once_with(
+            [binary, "--version"], cwd=repo, env=None,
+        )
+        assert result == "1.1.265"
+
+    def test_version_empty_stdout_returns_unknown(self):
+        """Empty stdout → 'unknown' via the else branch.
+
+        Kills mutation: `if result.stdout` → always truthy, returns bad split.
+        """
+        adapter = PyrightAdapter()
+        mock_result = MagicMock(stdout="")
+
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/bin/pyright"):
+            with patch.object(PyrightAdapter, "_run", return_value=mock_result):
+                result = adapter.version(Path("/tmp"))
+        assert result == "unknown"
 
 
 class TestInvokeNormalPath:

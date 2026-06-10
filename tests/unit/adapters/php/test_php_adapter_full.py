@@ -3940,6 +3940,194 @@ class TestRunL3a:
             f"Mut44: Log format mutated — expected 'L3A PHPStan: 0 findings', got '{stan_logs[0]}'"
         )
 
+    # ===========================================================================
+    # H3 — Exact logger assertions for success paths (phpmd, cs_fixer, tier-a)
+    # Kills mutmut_46-49 (PHPMD success logger), mutmut_90-91 (cs_fixer success logger),
+    # mutmut_131-135 (tier-a success logger), and mutmut_5-14 (framework injection logger).
+    # ===========================================================================
+
+    def test_run_l3a_phpmd_success_logger(self, tmp_path, caplog):
+        """Kill mutmut_46/47/48/49 — PHPMD success path logger mutations.
+
+        Technique: H3 — exact log message assertion on the PHPMD logger.info line.
+
+        Mutations on: logger.info("L3A PHPMD: %d findings", len(phpmd_findings))
+          Mut46: format → "XX...XX"  → message starts with "XX"
+          Mut47: format → ""          → message is just the count "0"
+          Mut48: arg removed         → format error / TypeError
+          Mut49: lowercase "l3a"     → message starts with "l3a" not "L3A"
+        """
+        adapter = _make_mock_adapter()
+        adapter._phpmd.run_l3a.return_value = [Finding(
+            node="src/Bar.php", severity="error", message="Test violation",
+            tool="phpmd", layer="L3A", language="php",
+        )]
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.passed is False
+        assert any(f.tool == "phpmd" for f in result.findings)
+
+        phpmd_logs = [m for m in caplog.messages if m.startswith("L3A PHPMD:")]
+        assert len(phpmd_logs) == 1, (
+            f"Mut46-49: Expected exact PHPMD log message, got: {caplog.messages}"
+        )
+        assert phpmd_logs[0] == "L3A PHPMD: 1 findings", (
+            "Mut46/47/49: PHPMD logger format mutated"
+        )
+
+    def test_run_l3a_cs_fixer_success_logger(self, tmp_path, caplog):
+        """Kill mutmut_90/91 — cs_fixer success logger format-string mutations.
+
+        Technique: H3 — exact log message on the cs_fixer logger.info line.
+
+        Mutations on: logger.info("L3A php-cs-fixer: %d findings", len(cs_findings))
+          Mut90: format → "XX...XX" → message starts with "XX"
+          Mut91: format → ""        → message is just the count
+        """
+        adapter = _make_mock_adapter()
+        adapter._cs_fixer.parse.return_value = [Finding(
+            node="src/Baz.php", severity="warning", message="Style issue",
+            tool="php-cs-fixer", layer="L3A", language="php",
+        )]
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.passed is False
+        assert any(f.tool == "php-cs-fixer" for f in result.findings)
+
+        cs_logs = [m for m in caplog.messages if m.startswith("L3A php-cs-fixer:")]
+        assert len(cs_logs) == 1, (
+            f"Mut90/91: Expected exact cs-fixer log message, got: {caplog.messages}"
+        )
+        assert cs_logs[0] == "L3A php-cs-fixer: 1 findings", (
+            "Mut90/91: cs-fixer logger format mutated"
+        )
+
+    def test_run_l3a_tier_a_success_logger(self, tmp_path, caplog):
+        """Kill mutmut_131-135 — tier-A success logger mutations.
+
+        Technique: H3 — exact log message assertion.
+
+        Mutations on: logger.info("L3A tier-A visitors: %d findings", len(tier_a_findings))
+          Mut131: format → "XX...XX"
+          Mut132: arg removed
+          Mut133: lowercase "l3a tier-a visitors"
+          Mut134/135: "XX" prefix/suffix on format
+        """
+        adapter = _make_mock_adapter()
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout='[{"file": "src/Z.php", "rule": "AntiPattern"}]',
+            stderr="", exitcode=0,
+        )
+        adapter._antipattern.parse.return_value = [Finding(
+            node="src/Z.php", severity="warning", message="Anti-pattern",
+            tool="antipattern", layer="L3A", language="php",
+        )]
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert any(f.tool == "antipattern" for f in result.findings)
+
+        tier_a_logs = [m for m in caplog.messages if m.startswith("L3A tier-A visitors:")]
+        assert len(tier_a_logs) == 1, (
+            f"Mut131-135: Expected tier-A success log, got: {caplog.messages}"
+        )
+        assert tier_a_logs[0] == "L3A tier-A visitors: 1 findings", (
+            "Mut131-135: Tier-A logger format mutated"
+        )
+
+    # ===========================================================================
+    # H2 — Duration freezing (kills round() and duration calc mutations)
+    # ===========================================================================
+
+    def test_run_l3a_duration_uses_round_3(self, tmp_path, monkeypatch):
+        """Kill mutmut_136-140 — duration calculation / round() mutations.
+
+        Technique: H2 — freeze time.monotonic() to control duration,
+                   then assert round(duration, 3) produces a specific value.
+
+        Mutations killed:
+          Mut136: round(duration, 3) → round(duration)  — float→int
+          Mut137: round(duration, 3) → round(duration, None) — float→int
+          Mut138: duration change (+= instead of -=)
+          Mut139: round(_ , 3) → round(_, 2)
+          Mut140: duration formula changed
+        """
+        import time as _time
+        adapter = _make_mock_adapter()
+        ticks = iter([100.0, 100.25])
+        monkeypatch.setattr(_time, "monotonic", lambda: next(ticks))
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert isinstance(result.duration_sec, float), (
+            "Mut136/137: duration_sec must be float, not int"
+        )
+        assert result.duration_sec == pytest.approx(0.25, abs=0.001), (
+            "Mut138/139/140: duration_sec changed — expected ~0.25"
+        )
+
+    # ===========================================================================
+    # §4.4 — Parse arg mutations (PHPStan & php-cs-fixer)
+    # ===========================================================================
+
+    def test_run_l3a_phpstan_parse_args(self, tmp_path):
+        """Assert findings flow through from PHPStan parse return value.
+
+        Technique: §4.1 — dense assertions on LayerResult fields.
+
+        Verifies that phpstan findings are properly collected into result.findings.
+        """
+        adapter = _make_mock_adapter()
+        adapter._phpstan.run_l3a.return_value = [Finding(
+            node="src/Foo.php", severity="error",
+            message="Class not found", tool="phpstan",
+            layer="L3A", language="php",
+        )]
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert any(f.tool == "phpstan" for f in result.findings), (
+            "Mut77-80: PHPStan findings must flow to result.findings"
+        )
+        stan = [f for f in result.findings if f.tool == "phpstan"]
+        assert len(stan) == 1
+        assert stan[0].message == "Class not found"
+
+    # ===========================================================================
+    # §4.1 — Exact LayerResult field assertions
+    # Kills mutmut_141-148 — LayerResult construction mutations.
+    # ===========================================================================
+
+    def test_run_l3a_layer_result_fields(self, tmp_path, caplog):
+        """Kill mutmut_141-148 — LayerResult construction mutations.
+
+        Technique: §4.1 — exact field assertions on LayerResult.
+
+        Mutations killed:
+          Mut141: passed = len(all_findings) == 0  → != 0
+          Mut142: layer="L3A" → layer=None
+          Mut143: language="php" → language=None
+          Mut144: findings=[] → findings=None
+        """
+        adapter = _make_mock_adapter()
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        result = adapter.run_l3a(tmp_path, {})
+
+        assert result.layer == "L3A", "Mut142: layer must be L3A"
+        assert result.language == "php", "Mut143: language must be php"
+        assert result.passed is True, "Mut141: passed must be True with 0 findings"
+        assert result.findings == [], "Mut144: findings must be empty list"
+
+        # Findings path → passed=False
+        adapter._phpstan.run_l3a.return_value = [Finding(
+            node="src/X.php", severity="error", message="err", tool="phpstan",
+        )]
+        result2 = adapter.run_l3a(tmp_path, {})
+        assert result2.passed is False, "Mut141: passed must be False with findings"
+        assert len(result2.findings) > 0
+        assert result2.layer == "L3A"
+        assert result2.language == "php"
+
 # _mutation_remediation — static method (PHP / Infection flavor)
 # ===========================================================================
 

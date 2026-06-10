@@ -1109,14 +1109,46 @@ class TestPhpCsFixerAdapter:
         assert result.stdout == "{}"
         assert mock_run.called
 
+    def test_invoke_passes_exact_run_args(self, tmp_path: Path) -> None:
+        """Kill invoke() mutations: _run(None,...), _run(cwd=None), _run(env=None), _run(timeout=None).
+
+        Kills mutmut survivors:
+          - _cs_fixer_binary(repo) → _cs_fixer_binary(None): cmd=[None, ...] → fails assert
+          - [*cmd, *args] → [None]: cmd[0] != "/usr/bin/php-cs-fixer"
+          - cwd=repo → cwd=None: assert on cwd
+          - env=env → env=None: assert on env
+          - timeout=timeout → timeout=None: assert on timeout (kills default None mutation)
+        """
+        with (
+            patch("harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which", return_value="/usr/bin/php-cs-fixer"),
+            patch.object(PhpCsFixerAdapter, "_run", return_value=_ok("{}")) as mock_run,
+        ):
+            PhpCsFixerAdapter().invoke(tmp_path, ["--level=psr12"], env={"APP_ENV": "prod"}, timeout=120.0)
+
+        mock_run.assert_called_once_with(
+            ["/usr/bin/php-cs-fixer", "--level=psr12"],
+            cwd=tmp_path,
+            env={"APP_ENV": "prod"},
+            timeout=120.0,
+        )
+
     def test_invoke_with_vendor_binary(self, tmp_path: Path) -> None:
         vendor_bin = tmp_path / "vendor" / "bin"
         vendor_bin.mkdir(parents=True)
         binary = vendor_bin / "php-cs-fixer"
         binary.touch()
         with patch("harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which", return_value=None):
-            with patch.object(PhpCsFixerAdapter, "_run", return_value=_ok("{}")):
-                result = PhpCsFixerAdapter().invoke(tmp_path, [])
+            with patch.object(PhpCsFixerAdapter, "_run", return_value=_ok("{}")) as mock_run:
+                result = PhpCsFixerAdapter().invoke(tmp_path, [], env=None, timeout=300.0)
+        # Kill _run(cwd=None), _run(env=None), _run(timeout=None) mutations
+        mock_run.assert_called_once()
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["cwd"] == tmp_path, "cwd must equal repo path (kills cwd→None mutation)"
+        assert call_kwargs["env"] is None, "env must be exactly None"
+        assert call_kwargs["timeout"] == 300.0, "timeout must be exactly 300.0"
+        # cmd is [full_path_to_vendor_binary]
+        call_args = mock_run.call_args[0][0]
+        assert call_args == [str(binary)], "cmd must contain full vendor binary path"
         assert result.exitcode == 0
 
     def test_parse_empty(self) -> None:

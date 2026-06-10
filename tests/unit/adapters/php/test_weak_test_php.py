@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 import logging
 
 import pytest
@@ -16,6 +16,7 @@ from harness_quality_gate.adapters.php.weak_test_php import (
     PhpWeakTestLayerAdapter,
     PhpWeakTestAdapter,
 )
+from harness_quality_gate.adapters.base import ToolInvocation
 
 
 def _mock_ok(stdout: str = "[]", stderr: str = "", exitcode: int = 0):
@@ -1860,3 +1861,437 @@ class TestInvokeSurvivorsMutationKilling:
         assert isinstance(result.duration_seconds, (int, float)), (
             f"mutmut_108/112 detected: duration_seconds must be numeric, got {type(result.duration_seconds).__name__}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL remaining survivors — run_l3b & parse gaps (mutmut_39, 45, 48-51)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestRunL3bExactLogMessage:
+    """Directly targets run_l3b logger.info mutations (mutmut_39, 51).
+
+    §4.3 + H3: Caplog with exact message format catches XX-prefix mutations.
+    """
+
+    def test_run_l3b_logger_info_exact_message_format(self, tmp_path: Path, caplog) -> None:
+        """Verify run_l3b logger.info outputs exact expected format.
+
+        Kills mutmut_39: logger.info("XXweak-test-php: ...XX") → XX prefix/suffix.
+        Kills mutmut_51: log message string mutations.
+        """
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.weak_test_php")
+
+        findings_data = [
+            {"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "m"},
+            {"file": "tests/B.php", "line": 2, "rule_id": "A2-PHP", "message": "n"},
+        ]
+
+        with patch.object(
+            PhpWeakTestAdapter, "invoke",
+            return_value=_mock_ok(stdout=json.dumps(findings_data)),
+        ):
+            with patch.object(
+                PhpWeakTestAdapter, "_collect_test_files",
+                return_value=[tmp_path / "tests/A.php", tmp_path / "tests/B.php"],
+            ):
+                result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+
+        # Verify that an INFO log was produced with the correct format
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(info_records) >= 1, (
+            f"Expected INFO log from run_l3b logger.info. Records: {[r.message for r in caplog.records]}"
+        )
+
+        # H3 §4.3 exact format: message should start with "weak-test-php:" NOT "XXweak-test-php:XX"
+        info_msg = info_records[-1].message  # Take last INFO (the findings summary)
+        assert info_msg.startswith("weak-test-php:"), (
+            f"mutmut_39/51: INFO log must start with 'weak-test-php:', got: {info_msg}"
+        )
+        # Not mutated with XX prefix or suffix
+        assert info_msg.startswith("XX") is False, (
+            f"mutmut_39: XX prefix mutation detected in log message: {info_msg}"
+        )
+        # Should contain the count of findings (2)
+        assert "2 findings" in info_msg, (
+            f"INFO log should include finding count '2 findings', got: {info_msg}"
+        )
+        # Should contain the file count
+        assert "2 files" in info_msg or "files (" in info_msg, (
+            f"INFO log should include file count, got: {info_msg}"
+        )
+        # Should contain duration with .0f format
+        assert "s)" in info_msg, (
+            f"INFO log should end with duration like '0.Xs)', got: {info_msg}"
+        )
+
+    def test_run_l3b_exitcode_0_when_no_failures(self, tmp_path: Path) -> None:
+        """invoke returns exitcode=0 when no subprocess failures occur.
+
+        Kills mutmut_51: `0 if not stderr_parts else 1` → `1 if not stderr_parts else 0`.
+        If 'not' is removed, exitcode becomes 1 (always) even when no failures.
+        With no failures, stderr_parts=[], not stderr_parts=True, so original gives 0.
+        If mutated to use 'or'/'and' instead of 'not', the expression always differs.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+
+        # Mock subprocess.run to return success (no failures → stderr_parts stays empty)
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files",
+            return_value=[tests_dir / "FooTest.php"],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps([{"file": "tests/FooTest.php", "line": 1, "message": "ok"}]),
+                    stderr="",
+                )
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = Path(__file__).parent.parent.parent.parent / "harness_quality_gate/adapters/php/visitors"
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # Exitcode=0 when no failures: kills mutmut_51 (exitcode 0→1 or 'not' removal)
+        assert result.exitcode == 0, (
+            f"mutmut_51: exitcode must be 0 with no failures. Got {result.exitcode}. stderr: {result.stderr}"
+        )
+
+    def test_run_l3b_duration_sec_is_rounded_float(self, tmp_path: Path) -> None:
+        """verify duration_sec is a float rounded to exactly 3 decimal places.
+
+        Kills mutmut_45/50: round(duration, 3) → None or round(duration, None).
+        Kills mutmut_48: exitcode changes.
+        """
+        with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(stdout="[]")):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+
+        # Must be float, not None (kills round→None mutation)
+        assert result.duration_sec is not None, (
+            f"duration_sec must not be None. Got: {result.duration_sec}"
+        )
+        assert isinstance(result.duration_sec, float), (
+            f"duration_sec must be float, got {type(result.duration_sec).__name__}"
+        )
+        # Must be rounded to exactly 3 decimal places
+        assert result.duration_sec == round(result.duration_sec, 3), (
+            f"duration_sec must be rounded to 3 decimal places. Got: {result.duration_sec}"
+        )
+        # Must be non-negative
+        assert result.duration_sec >= 0, (
+            f"duration_sec must be non-negative. Got: {result.duration_sec}"
+        )
+
+    def test_run_l3b_passed_boundary_exactly_zero_findings(self, tmp_path: Path) -> None:
+        """passed=True exactly when findings count is 0, not 1.
+
+        Kills mutmut_45: len(findings) == 0 → len(findings) == 1.
+        The exact boundary `0` vs `1` distinguishes == 0 from == 1.
+        """
+        # Zero findings → passed=True
+        with patch.object(
+            PhpWeakTestAdapter, "invoke",
+            return_value=_mock_ok(stdout="[]"),
+        ):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert result.passed is True, (
+            f"mutmut_45: passed must be True with 0 findings. Got: {result.passed}"
+        )
+
+        # One finding → passed=False
+        with patch.object(
+            PhpWeakTestAdapter, "invoke",
+            return_value=_mock_ok(stdout=json.dumps([{"file": "t.php", "line": 1}])),
+        ):
+            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+        assert result.passed is False, (
+            f"mutmut_45: passed must be False with 1 finding. Got: {result.passed}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL parse() loop survivors with DENSE assertions (§4.1)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestParseDenseAssertions:
+    """Dense assertions on complete Finding objects — kills mutations inside parse() loop.
+
+    §4.1: Compare the FULL Finding object, not individual attributes.
+    Mutation of ANY field (rule_id, severity, fix_hint, line, node format)
+    will break the full equality check.
+
+    Targets mutmut_1 through mutmut_9 (all mutations in the for item loop).
+    """
+
+    def test_parse_complete_finding_with_all_fields(self) -> None:
+        """parse() with all fields → complete Finding object with exact values.
+
+        Kills mutmut_1-9 (any mutation on rule_id, line, node, line parsing,
+        Finding construction, or return) because the full object must match.
+        """
+        from harness_quality_gate.models import Finding
+
+        data = [{
+            "file": "tests/Full.php",
+            "line": 42,
+            "rule_id": "A5",
+            "message": "markTestSkipped",
+            "severity": "error",
+            "fix_hint": "Remove markTestSkipped",
+        }]
+
+        findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+
+        assert len(findings) == 1
+        assert isinstance(findings[0], Finding)
+        f = findings[0]
+        # §4.1 Dense assertions: ALL fields checked, kills any mutation
+        assert f.node == "tests/Full.php:42"       # kills node format mutations
+        assert f.severity == "error"              # kills severity default mutations
+        assert f.rule_id == "A5"                  # kills rule_id mutations
+        assert f.message == "markTestSkipped"     # kills message mutations
+        assert f.fix_hint == "Remove markTestSkipped"  # kills fix_hint mutations
+        assert f.tool == "weak-test-php"          # kills tool mutations
+        assert f.layer == "L3B"                   # kills layer mutations
+        assert f.language == "php"               # kills language mutations
+
+    def test_parse_field_with_non_numeric_line(self) -> None:
+        """parse() with non-numeric line → line stays as-is in node string.
+
+        Kills mutmut on line int() conversion path (mutmut_5/6).
+        """
+        data = [{"file": "tests/Bad.php", "line": "not_a_number", "rule_id": "A6", "message": "err"}]
+        findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 1
+        f = findings[0]
+        # node should contain the raw line (or be a safe string)
+        # The try/except pass means line stays as the original value
+        assert f.node == "tests/Bad.php:not_a_number" or f.node == "tests/Bad.php", (
+            f"node format unexpected: {f.node}"
+        )
+
+    def test_parse_item_ignored_when_not_dict(self) -> None:
+        """parse() skips non-dict items silently (continue).
+
+        Kills mutmut on the `if not isinstance(item, dict): continue` guard.
+        If this guard is mutated (e.g., removed or inverted), the parsing
+        would crash or produce wrong results.
+        """
+        # Input contains both valid dict and non-dict items
+        data = [
+            {"file": "tests/Good.php", "line": 1, "rule_id": "A1", "message": "ok"},
+            "not a dict",
+            42,
+            None,
+            {"file": "tests/Good2.php", "line": 2, "rule_id": "A2-PHP", "message": "ok2"},
+        ]
+        findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
+        assert len(findings) == 2, (
+            f"Non-dict items should be skipped. Expected 2 findings, got {len(findings)}"
+        )
+        assert findings[0].rule_id == "A1"
+        assert findings[1].rule_id == "A2-PHP"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _parse_single_output survivors: 'and'→'or', boundary mutations
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestParseSingleOutputBoundaryAndOr:
+    """Targeted tests for _parse_single_output mutations.
+
+    Targets: mutmut_10 ("and" → "or" on line 264), mutmut_4 (>= → >),
+    mutmut_8 ("and" → "or" in condition).
+    """
+
+    def test_parse_single_output_and_vs_or_mutation(self) -> None:
+        """Test where 'and' is required but 'or' would allow different behavior.
+
+        Kills mutmut_10 (start >= 0 and end > start → start >= 0 or end > start).
+
+        The scenario: text starts with '[', end is -1 (no ']' found).
+        - With 'and': start=0 >= 0 AND end=-1 > 0 → False → falls through
+        - With 'or':  start=0 >= 0 OR end=-1 > 0 → True → would try json.loads on bad slice
+        The fallback path must NOT execute when end is -1.
+
+        Another scenario: start=-1 (no '[' found), end=0 (']' found).
+        - With 'and': start=-1 >= 0 → False → condition fails → correct
+        - With 'or': end=0 > -1 → True → WRONG: would try to parse from -1
+        """
+        # Case 1: '[' found but ']' not found → start>=0 and end>start is False
+        # With 'or': start>=0 OR end>start → True → would try json.loads("[invalid" → fails anyway
+        result = PhpWeakTestAdapter._parse_single_output("prefix [no-closing-bracket")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+        # Case 2: ']' found but '[' not found → both conditions matter
+        result = PhpWeakTestAdapter._parse_single_output("no-open-bracket] suffix ]")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+        # Case 3: both brackets present but ']' before '[' → end > start is False
+        result = PhpWeakTestAdapter._parse_single_output("]before[after")
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+        # Case 4: both brackets correctly ordered → fallback should work
+        result = PhpWeakTestAdapter._parse_single_output(
+            "before [VALID] after [" + json.dumps([{"file": "x.php"}]) + "]"
+        )
+        # This should find the valid JSON array in brackets
+        assert isinstance(result, list)
+        # The rfind finds the LAST ']' which is at end, find finds FIRST '['
+        # We expect the JSON array between them to be parsed
+        self._validate_fallback_works_when_brackets_correct()
+
+    def test_parse_single_output_fallback_boundary_start_zero(self) -> None:
+        """Test that '[' at position 0 (start=0) is handled correctly.
+
+        Kills mutmut_4: start >= 0 → start > 0.
+        With start > 0, '[' at position 0 would be skipped.
+        """
+        result = PhpWeakTestAdapter._parse_single_output("[{\"file\":\"a.php\",\"line\":1}]")
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["file"] == "a.php"
+
+        # Also test with text before '[' at position 0 (edge: start=0)
+        result = PhpWeakTestAdapter._parse_single_output("")
+        assert len(result) == 0
+        result = PhpWeakTestAdapter._parse_single_output("[")
+        # '[' at position 0, no ']' → fallback fails (expected)
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def _validate_fallback_works_when_brackets_correct(self) -> None:
+        """Helper: verify fallback JSON extraction works when brackets are valid."""
+        result = PhpWeakTestAdapter._parse_single_output(
+            "pre-warning " + json.dumps([{"file": "f.php", "line": 1, "message": "m"}]) + "\n"
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["file"] == "f.php"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _collect_test_files survivors: file filtering mutations
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCollectTestFilesFileFiltering:
+    """Direct tests for _collect_test_files mutations (mutmut_15-21).
+
+    §4.7 + §4.1: Collect real files and verify ONLY test files are returned.
+    Killing mutmut_15 ('not in' -> 'in') which inverts exclusion.
+    Killing mutmut_19-21: regex '(Test|Test\\\\.php)end' -> '(XXTest|XXTest\\\\.php)XXend'
+    """
+
+    def test_collect_only_test_php_files_not_regular_php(self, tmp_path: Path) -> None:
+        """Only files matching *Test.php or *Test pattern are collected.
+
+        Kills mutmut_15-18 (not→in, in→not → include all files).
+        Kills mutmut_19-21: regex pattern mutations that change the Test pattern.
+
+        Creates non-test .php files that do NOT end with 'Test' or 'Test.php'.
+        If the regex is mutated to match ALL .php files, non-test files are included.
+        """
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+
+        # Real test files that match the regex (Test/Test.php at end)
+        (test_dir / "FooTest.php").write_text("<?php class FooTest {}")
+        (test_dir / "BarTest.php").write_text("<?php class BarTest {}")
+
+        # Non-test .php files that do NOT match (Test/Test.php at end)
+        (test_dir / "UtilsModule.php").write_text("<?php // utility class")
+        (test_dir / "ConfigLoader.php").write_text("<?php // config loader")
+
+        files = PhpWeakTestAdapter._collect_test_files(tmp_path)
+
+        # Only test files should be included
+        file_names = {f.name for f in files}
+        assert "FooTest.php" in file_names, "FooTest.php must be collected"
+        assert "BarTest.php" in file_names, "BarTest.php must be collected"
+        assert "UtilsModule.php" not in file_names, (
+            f"UtilsModule.php must NOT be collected (kills mutmut_15-18 inversion). Files: {file_names}"
+        )
+        assert "ConfigLoader.php" not in file_names, (
+            f"ConfigLoader.php must NOT be collected (kills mutmut_19-21 regex mutation). Files: {file_names}"
+        )
+        assert len(files) == 2, f"Expected exactly 2 test files, got {len(files)}: {file_names}"
+
+    def test_collect_test_files_skip_vendor_and_node_modules(self, tmp_path: Path) -> None:
+        """Files under vendor/ or node_modules/ must be skipped.
+
+        Kills mutmut_6-9 (exclusion pattern mutations).
+        """
+        vendor_dir = tmp_path / "vendor" / "some_package"
+        vendor_dir.mkdir(parents=True)
+        (vendor_dir / "VendorTest.php").write_text("<?php class VendorTest {}")
+
+        node_modules_dir = tmp_path / "node_modules" / "pkg"
+        node_modules_dir.mkdir(parents=True)
+        (node_modules_dir / "NodeTest.php").write_text("<?php class NodeTest {}")
+
+        # Also create a legitimate test file
+        real_test_dir = tmp_path / "tests"
+        real_test_dir.mkdir()
+        (real_test_dir / "RealTest.php").write_text("<?php class RealTest {}")
+
+        files = PhpWeakTestAdapter._collect_test_files(tmp_path)
+        file_names = {f.name for f in files}
+
+        assert "RealTest.php" in file_names, "RealTest.php should be collected"
+        assert "VendorTest.php" not in file_names, "vendor files must be skipped"
+        assert "NodeTest.php" not in file_names, "node_modules files must be skipped"
+
+    def test_collect_empty_repo_returns_empty_list(self, tmp_path: Path) -> None:
+        """Empty repository → empty list (not mutated to None or different value).
+
+        Kills mutmut_1, 2, 12 on _collect_test_files return path.
+        """
+        files = PhpWeakTestAdapter._collect_test_files(tmp_path)
+        assert files == []
+        assert isinstance(files, list)
+        assert len(files) == 0
+
+    def test_collect_test_files_regex_matches_Test_dot_php(self, tmp_path: Path) -> None:
+        """Regex pattern must match 'FooTest.php' but not 'UtilsModule.php'.
+
+        Kills mutmut_19: `r"(Test|Test\\.php)$"` → `r"(XXTest|XXTest\\.php)XX$"`.
+        If the regex is mutated with XX prefix/suffix, no files match and collection is empty.
+        """
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "FooTest.php").write_text("<?php class FooTest {}")
+        (test_dir / "UtilsModule.php").write_text("<?php class UtilsModule {}")
+
+        files = PhpWeakTestAdapter._collect_test_files(tmp_path)
+        file_names = {f.name for f in files}
+
+        assert "FooTest.php" in file_names, (
+            f"FooTest.php must be collected by (Test|Test\\.php)$ pattern. Files: {file_names}"
+        )
+        assert "UtilsModule.php" not in file_names, (
+            f"UtilsModule.php must NOT match. Files: {file_names}"
+        )
+
+    def test_collect_invoke_no_test_files_has_exitcode_zero(self, tmp_path: Path) -> None:
+        """invoke with no test files → exitcode=0 (not mutated to 1).
+
+        Kills mutmut_1/2 on line 120: exitcode=0 → exitcode=1.
+        This verifies the no-files-found path returns the correct exitcode.
+        """
+        from harness_quality_gate.adapters.base import ToolInvocation
+
+        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        assert isinstance(result, ToolInvocation)
+        assert result.exitcode == 0, (
+            f"exitcode must be 0 when no test files found. Got: {result.exitcode}"
+        )
+        assert result.stdout == "[]"

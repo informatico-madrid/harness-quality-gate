@@ -697,7 +697,7 @@ class TestDepAnalyserInvokeWithArgs:
 
     def test_invoke_forwards_args_to_run(self) -> None:
         """_run must be called with args + correct cwd.
-        
+
         Kills: mutmut_5 (*cmd mutation→empty), mutmut_6,7 (args→None),
         mutmut_11 (cwd→None), mutmut_20 (*args removed from [*cmd, *args]),
         mutmut_23,24,27,28 (return path mutations)
@@ -725,6 +725,38 @@ class TestDepAnalyserInvokeWithArgs:
         assert cwd is not None, "mutmut_11: cwd must not be None"
         assert isinstance(cwd, Path)
         assert "cda" in cmd[0], "binary must be in cmd"
+
+    def test_invoke_forwards_env_and_timeout(self) -> None:
+        """Kill invoke() env and timeout mutations to _run.
+
+        Kills:
+          - env=env → env=None mutation at _run call
+          - timeout=timeout → timeout=None mutation at _run call
+        """
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(DepAnalyserAdapter, "_run", return_value=mock_result) as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.dep_analyser_adapter.shutil.which",
+                return_value="/usr/bin/cda",
+            ):
+                adapter = DepAnalyserAdapter()
+                repo = Path("/tmp/test_repo")
+                env = {"APP_ENV": "test"}
+                timeout = 450.0
+                adapter.invoke(repo=repo, args=["--json"], env=env, timeout=timeout)
+
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["env"] == env, (
+            f"env must be forwarded exactly, got {kwargs['env']}"
+        )
+        assert kwargs["timeout"] == timeout, (
+            f"timeout must be forwarded exactly, got {kwargs['timeout']}"
+        )
 
     def test_invoke_with_extra_args_vendor_binary(self) -> None:
         """When binary is in vendor/bin, args must still be forwarded."""

@@ -46,6 +46,11 @@ def test_version_binary_not_found_raises(tmp_path: Path) -> None:
             _adapter().version(tmp_path)
 
 
+def test_name_property_returns_tool_name() -> None:
+    """Accessing .name triggers the name property → covers line 27."""
+    assert _adapter().name == "mutmut"
+
+
 def test_version_calls_run_version_flag(tmp_path: Path) -> None:
     """Binary found → _run invoked with [binary, '--version']."""
     with patch("shutil.which", return_value="/usr/bin/mutmut"):
