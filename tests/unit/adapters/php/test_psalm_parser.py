@@ -865,3 +865,144 @@ def test_invoke_when_psalm_found_env_passed() -> None:
     assert call_args[1]["cwd"] == Path("/tmp/repo")
     # Timeout default should be 600.0
     assert call_args[1]["timeout"] == 600.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H1: Kill psalm_taint_adapter invoke wiring survivors (mutmut_9, 12, 13,
+#     16, 17, 18, 19, 22, 25, 29) and version return (mutmut_38)
+# Technique: H1 — assert exact _run call with full args and all kwargs
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_wiring_exact_run_call_and_kwargs() -> None:
+    """H1 wiring test: assert _run is called with exact command, cwd, env, and timeout.
+
+    Kills all invoke wiring survivors:
+      - mutmut_9: return mutation (no _run called at all) → mock not called → fails
+      - mutmut_12: env dict mutation (env=None merged) → env kwargs wrong → fails
+      - mutmut_13: env mutation (os.environ ref changed) → env wrong → fails
+      - mutmut_16: [*cmd, .args] → [*cmd, "XXargsXX"] → cmd[1] wrong → fails
+      - mutmut_17: *cmd → *None → TypeError or cmd wrong → fails
+      - mutmut_18: args removal → cmd has no --taint-analysis → fails
+      - mutmut_19: [*cmd, *args] → [*cmd,] → only binary, no args → fails
+      - mutmut_22: return mutation (early return before _run) → mock not called → fails
+      - mutmut_25: return path mutation → mock not called → fails
+      - mutmut_29: return mutation → mock not called → fails
+
+    Technique: H1 (wiring test from MUTANT_KILLING_GUIDE) — exact call verification.
+    """
+    from unittest.mock import patch, MagicMock, call
+
+    adapter = _adapter()
+    expected_cmd = ["/usr/bin/psalm", "--taint-analysis"]
+    mock_result = MagicMock(stdout='[]', stderr='', exitcode=0, duration_seconds=0.0)
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(Path("/tmp/repo"), ["--taint-analysis"])
+
+    mock_run.assert_called_once()
+    # H1: Assert exact call — positional arg[0] is the full command list
+    assert mock_run.call_args[0][0] == expected_cmd, \
+        "cmd must be exact [binary, --taint-analysis] — kills *args mutations"
+    # Assert exact kwargs — these kill cwd, env, timeout mutations
+    kwargs = mock_run.call_args[1]
+    assert kwargs["cwd"] == Path("/tmp/repo")
+    assert kwargs["timeout"] == 600.0
+    # env passed to _run must be the exact env param from invoke
+    # The base _run method handles env merge with os.environ internally
+    assert kwargs["env"] is None, \
+        "env=None (default) should be passed through — kills env=None mutation"
+
+
+def test_invoke_args_passed_as_list_not_string() -> None:
+    """Args list must be unpacked into command — kills [*cmd, *args] → [*cmd, "XXargsXX"].
+
+    When args=["--taint-analysis"], the full cmd becomes ["/usr/bin/psalm", "--taint-analysis"].
+    If mutant changes *args to a single string "XXargsXX", cmd becomes
+    ["/usr/bin/psalm", "--taint-analysis"] (same) — but if mutant removes *args,
+    cmd becomes ["/usr/bin/psalm"] only.
+    """
+    from unittest.mock import patch, MagicMock
+
+    adapter = _adapter()
+    mock_result = MagicMock(stdout='[]', stderr='', exitcode=0, duration_seconds=0.0)
+
+    with patch.object(adapter, "_psalm_binary", return_value=["/usr/bin/psalm"]):
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(Path("/tmp/repo"), ["--taint-analysis", "--severity=error"])
+
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    # Both args must be in the command
+    assert "--taint-analysis" in cmd
+    assert "--severity=error" in cmd
+    assert len(cmd) == 3, "cmd must have exactly 3 elements: binary + 2 args"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H1: psalm_binary return path mutations (mutmut_38)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_psalm_binary_returns_system_path_when_available() -> None:
+    """When psalm is on system PATH, _psalm_binary returns [system_path].
+
+    Kills mutmut_38: return statement mutation in _psalm_binary.
+    If the return is changed to return None or a mutated string, the
+    assertion below fails.
+    """
+    from unittest.mock import patch
+
+    adapter = _adapter()
+    with patch("shutil.which", return_value="/usr/local/bin/psalm"):
+        result = adapter._psalm_binary(Path("/fake/repo"))
+    assert result == ["/usr/local/bin/psalm"]
+
+
+def test_psalm_binary_returns_vendor_bin_when_no_system() -> None:
+    """When psalm not on PATH but vendor/bin exists, return vendor path.
+
+    Kills mutmut_38 in vendor/bin code path: return string mutation.
+    """
+    from unittest.mock import patch
+    import tempfile
+
+    adapter = _adapter()
+    with tempfile.TemporaryDirectory() as tmp:
+        vendor_bin = Path(tmp) / "vendor" / "bin" / "psalm"
+        vendor_bin.parent.mkdir(parents=True)
+        vendor_bin.touch()
+        with patch("shutil.which", return_value=None):
+            result = adapter._psalm_binary(Path(tmp))
+    assert result == [str(vendor_bin)]
+
+
+def test_parse_nested_with_extra_kills_return_mutations() -> None:
+    """Multi-item nested parse — return mutations visible in count assertions.
+
+    Kills remaining parse return mutations (mutmut_41, 43, etc.) by ensuring
+    the parse() return is used in count + field assertions.
+    When mutant changes return to None/[], the len() assertion fails.
+    """
+    data = {
+        "files": {
+            "a.php": {"psalmErrors": [
+                {"type": "TaintedSql", "line_from": 1, "message": "m1"},
+                {"type": "TaintedHtml", "line_from": 2, "message": "m2"},
+                {"type": "TaintedShell", "line_from": 3, "message": "m3"},
+            ]},
+            "b.php": {"psalmErrors": [
+                {"type": "TaintedXss", "line_from": 4, "message": "m4"},
+            ]},
+        }
+    }
+    findings = _adapter().parse(json.dumps(data), "", 1)
+    assert len(findings) == 4, "Count kills return [] and return None mutations"
+    # Each finding has correct data — any mutation in field values breaks assertions
+    for i, f in enumerate(findings):
+        assert f.tool == "psalm-taint"
+        assert f.layer == "L4"
+        assert f.language == "php"
+        assert f.severity == "error"  # default severity when not specified
+        assert f.fix_hint is not None

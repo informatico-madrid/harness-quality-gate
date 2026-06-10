@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
 from harness_quality_gate.adapters.php.infection_adapter import InfectionAdapter
@@ -260,6 +260,87 @@ def test_invoke_passes_cwd_env_timeout(tmp_path: Path) -> None:
     assert kwargs["timeout"] == 42.0
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Kill invoke remaining survivors: mutmut_11,12,16-25
+# These mutations target:
+#   - Line 80: if infection_bin is None: → if not None: (mutmut_11)
+#   - Line 82-92: for-loop with vendor/bin fallback, break mutation (12-25)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_fallback_to_vendor_bin_when_not_on_path(tmp_path: Path):
+    """When shutil.which returns None, fallback to vendor/bin/infection.
+
+    Kills:
+      - mutmut_11: if infection_bin is None: → if not None:
+        → Never enters fallback even when bin missing → returns exitcode 3
+      - mutmut_12-25: loop/break mutations that skip vendor fallback
+    """
+    vendor_bin = tmp_path / "vendor" / "bin" / "infection"
+    vendor_bin.parent.mkdir(parents=True)
+    vendor_bin.touch()
+
+    with (
+        patch("shutil.which", return_value=None),  # Not on PATH
+        patch.object(ToolAdapter, "_run", return_value=_ok()) as mock_run,
+    ):
+        _adapter().invoke(tmp_path, ["--threads=1"])
+
+    # _run should be called (not early return with exitcode 3)
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    assert "vendor/bin/infection" in cmd[0]
+
+
+def test_invoke_vendor_bin_first_then_composer_bin(tmp_path: Path):
+    """When vendor/bin/infection exists, use it (first candidate).
+
+    Kills:
+      - mutmut_12,13,14: break → continue mutation (tries second candidate)
+      - mutmut_15: is_file → is_dir mutation
+    """
+    vendor_bin = tmp_path / "vendor" / "bin" / "infection"
+    vendor_bin.parent.mkdir(parents=True)
+    vendor_bin.touch()
+
+    with (
+        patch("shutil.which", return_value=None),
+        patch.object(ToolAdapter, "_run", return_value=_ok()) as mock_run,
+    ):
+        _adapter().invoke(tmp_path, [])
+
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    # Should use vendor/bin/infection (first candidate), not composer.json bin-dir
+    assert "vendor/bin/infection" in cmd[0]
+
+
+def test_invoke_returns_exitcode_3_when_no_binary_anywhere(tmp_path: Path):
+    """When infection not on PATH and no vendor/bin → exitcode 3.
+
+    Kills:
+      - mutmut_16: continue vs break in loop — break at end means exitcode 3
+      - mutmut_18: stdout="" → "XXXX"
+      - mutmut_19: return mutation before early return
+      - mutmut_20,21: ToolInvocation field mutations
+      - mutmut_22-25: duration_seconds/exitcode mutations
+    """
+    with (
+        patch("shutil.which", return_value=None),
+        patch.object(ToolAdapter, "_run", return_value=_ok()),
+        patch(
+            "harness_quality_gate.adapters.php.infection_adapter._composer_bin_dir",
+            return_value=str(tmp_path),
+        ),
+    ):
+        result = _adapter().invoke(tmp_path, [])
+
+    assert result.exitcode == 3
+    assert result.stdout == ""
+    assert result.duration_seconds == 0.0
+    assert "infection" in result.stderr
+
+
 # ===========================================================================
 # Kill parse_stats __surviving__ mutations with dense assertions.
 # Target: mutations where existing JSON/text tests have weak or partial asserts.
@@ -414,8 +495,8 @@ def test_parse_stats_text_msi_line_precision() -> None:
        2 time outs were encountered
 
 Metrics:
-          Mutation Score Indicator (MSI): 58.3333%
-          Covered Code MSI: 58.3333%
+           Mutation Score Indicator (MSI): 58.3333%
+           Covered Code MSI: 58.3333%
 """
     stats = _adapter().parse_stats(text)
     # round(58.3333, 4) retains decimal precision as float
@@ -423,3 +504,240 @@ Metrics:
     assert stats.covered_msi == 58.3333
     assert isinstance(stats.msi, float)
     assert isinstance(stats.covered_msi, float)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill remaining infection parse_stats survivors (mutmut 1-27, 33-50, 55-63).
+# These are all mutations on defaults, arithmetic, and regex extraction.
+# The key technique: §4.1 Dense — assert ALL fields of every MutationStats field.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_stats_text_with_survived_mutants_edge() -> None:
+    """Text with MSI=0 but killed>0 → triggers fallback MSI computation.
+
+    Kills:
+      - mutmut_1: _extract return int(m.group(1)) if m else 0 → int(m) else 1
+      - mutmut_14: regex pattern "mutants were killed" → mutation
+      - mutmut_24: total=total or (...) fallback arithmetic
+      - mutmut_33: msi == 0.0 and killed > 0 condition mutations
+      - mutmut_39: covered = killed + survived + timed_out arithmetic
+      - mutmut_45: fallback computed MSI formula k/c*100
+      - mutmut_51-54: return MutationStats field mutations
+    """
+    text = """
+20 mutations were generated:
+       10 mutants were killed
+       5 covered mutants were not detected
+       5 mutants were not covered by tests
+       0 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 0%
+          Covered Code MSI: 0%
+"""
+    stats = _adapter().parse_stats(text)
+    # Fallback: covered = killed + survived + timed_out = 10 + 5 + 0 = 15
+    # msi = 10/15 * 100 = 66.6667
+    assert stats.killed == 10
+    assert stats.survived == 5
+    assert stats.untested == 5
+    assert stats.timed_out == 0
+    assert stats.escaped == 0
+    assert stats.total == 20
+    assert stats.msi == 66.6667  # fallback computed
+    assert stats.covered_msi == 66.6667
+
+
+def test_parse_stats_json_with_msi_float() -> None:
+    """JSON with float MSI → round(msi, 4) must be float.
+
+    Kills:
+      - mutmut_55-63: return/field mutations in JSON path
+      - mutmut_56: round mutation
+    """
+    json_str = json.dumps({
+        "killed": 12, "survived": 5, "timed_out": 1,
+        "escaped": 2, "untested": 3, "msi": 85.7142857,
+    })
+    stats = _adapter().parse_stats(json_str)
+    # Dense assertion on ALL fields
+    assert stats.total == 23          # 12+5+1+2+3
+    assert stats.killed == 12
+    assert stats.survived == 5
+    assert stats.timed_out == 1
+    assert stats.escaped == 2
+    assert stats.untested == 3
+    assert stats.msi == 85.7143        # round(85.7142857, 4)
+    assert isinstance(stats.msi, float)
+    assert stats.covered_msi == 0.0    # JSON path sets covered_msi = None → 0.0
+
+
+def test_parse_stats_json_killed_default_zero() -> None:
+    """Verify data.get("killed", 0) default kills mutations.
+
+    Kills:
+      - mutmut_1: int(data.get("killed", 0)) → int(data.get("killed", 1))
+      - mutmut_51: covered_msi mutation
+    """
+    json_str = json.dumps({"survived": 3, "msi": 0.0})  # No "killed" key
+    stats = _adapter().parse_stats(json_str)
+    assert stats.killed == 0
+    assert isinstance(stats.killed, int)
+
+
+def test_parse_stats_json_survived_default_zero() -> None:
+    """Verify data.get("survived", 0) default kills mutations.
+
+    Kills:
+      - data.get("survived", 1), data.get("survived", None)
+    """
+    json_str = json.dumps({"killed": 8, "msi": 80.0})  # No "survived" key
+    stats = _adapter().parse_stats(json_str)
+    assert stats.survived == 0
+    assert isinstance(stats.survived, int)
+
+
+def test_parse_stats_json_timed_out_default_zero() -> None:
+    """Verify data.get("timed_out", 0) default kills mutations."""
+    json_str = json.dumps({"killed": 8, "msi": 80.0})
+    stats = _adapter().parse_stats(json_str)
+    assert stats.timed_out == 0
+    assert isinstance(stats.timed_out, int)
+
+
+def test_parse_stats_json_escaped_default_zero() -> None:
+    """Verify data.get("escaped", 0) default kills mutations."""
+    json_str = json.dumps({"killed": 8, "msi": 80.0})
+    stats = _adapter().parse_stats(json_str)
+    assert stats.escaped == 0
+    assert isinstance(stats.escaped, int)
+
+
+def test_parse_stats_json_untested_default_zero() -> None:
+    """Verify data.get("untested", 0) default kills mutations."""
+    json_str = json.dumps({"killed": 8, "msi": 80.0})
+    stats = _adapter().parse_stats(json_str)
+    assert stats.untested == 0
+    assert isinstance(stats.untested, int)
+
+
+def test_parse_stats_text_timed_out_all_zero_fields() -> None:
+    """Text with only timed_out and killed — all other fields must be zero.
+
+    Kills:
+      - mutmut_20..23: regex extraction mutations for not_covered/not_detected
+      - mutmut_30..32: regex pattern mutations for timed_out
+    """
+    text = """
+5 mutations were generated:
+       3 mutants were killed
+       0 covered mutants were not detected
+       0 mutants were not covered by tests
+       2 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 60%
+          Covered Code MSI: 60%
+"""
+    stats = _adapter().parse_stats(text)
+    assert stats.killed == 3
+    assert stats.timed_out == 2
+    assert stats.survived == 0
+    assert stats.untested == 0
+    assert stats.escaped == 0
+    assert stats.msi == 60.0
+    assert stats.total == 5
+
+
+def test_parse_stats_json_zero_all_fields() -> None:
+    """JSON with all zeros. Kills default-value mutations.
+
+    Kills:
+      - mutmut_33: msi == 0.0 and killed > 0 → kills zero input
+      - mutmut_34-50: field extraction mutations
+    """
+    json_str = json.dumps({
+        "killed": 0, "survived": 0, "timed_out": 0,
+        "escaped": 0, "untested": 0, "msi": 0.0,
+    })
+    stats = _adapter().parse_stats(json_str)
+    assert stats.total == 0
+    assert stats.killed == 0
+    assert stats.survived == 0
+    assert stats.timed_out == 0
+    assert stats.escaped == 0
+    assert stats.untested == 0
+    assert stats.msi == 0.0
+    assert stats.covered_msi == 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill invoke() survivors (mutmut 2,3,4,11-25).
+# Many of these mutate shutil.which("infection") → shutil.which("XXXinfectionXXX").
+# ═══════════════════════════════════════════════
+
+
+def test_invoke_when_infection_on_path_uses_correct_bin(tmp_path: Path):
+    """When infection bin is found via shutil.which, use it with --no-progress.
+
+    Kills mutmut_2,3,4: shutil.which("infection") → shutil.which("XXXinfectionXXX")
+    or shutil.which(None) — mutant won't find the binary → falls back to vendor/bin.
+    """
+    with (
+        patch("shutil.which", return_value="/usr/bin/infection"),
+        patch.object(ToolAdapter, "_run", return_value=_ok()) as mock_run,
+    ):
+        _adapter().invoke(tmp_path, [])
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "/usr/bin/infection"
+    assert "--no-progress" in cmd
+    """Kill regex mutation on 'mutants were not covered' pattern.
+
+    Kills:
+      - mutmut_16: pattern "mutants were not covered" → mutated pattern
+      - mutmut_38: not_covered → not_detected alias
+    """
+    text = """
+10 mutations were generated:
+       6 mutants were killed
+       0 covered mutants were not detected
+       4 mutants were not covered by tests
+       0 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 100%
+          Covered Code MSI: 100%
+"""
+    stats = _adapter().parse_stats(text)
+    assert stats.killed == 6
+    assert stats.untested == 4
+    assert stats.survived == 0
+    assert stats.total == 10
+
+
+def test_parse_stats_text_error_pattern() -> None:
+    """Kill regex mutation on 'errors were encountered' pattern.
+
+    Kills:
+      - mutmut_17: pattern "errors were encountered" → mutated
+      - mutmut_48-50: escaped=errors alias
+    """
+    text = """
+10 mutations were generated:
+       5 mutants were killed
+       3 covered mutants were not detected
+       2 errors were encountered
+       0 time outs were encountered
+
+Metrics:
+          Mutation Score Indicator (MSI): 62%
+          Covered Code MSI: 62%
+"""
+    stats = _adapter().parse_stats(text)
+    assert stats.killed == 5
+    assert stats.survived == 3
+    assert stats.escaped == 2
+    assert stats.total == 10
+    assert stats.msi == 62.0

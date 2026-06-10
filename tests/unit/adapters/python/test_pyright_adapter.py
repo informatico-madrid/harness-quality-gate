@@ -345,6 +345,35 @@ class TestVersion:
                 result = adapter.version(Path("/tmp"))
         assert result == "unknown"
 
+    def test_version_wiring_exact_call_args(self):
+        """version() calls _run with exact binary cmd + cwd + env.
+
+        Kills mutmut_13: env mutation on version call.
+        """
+        adapter = PyrightAdapter()
+        binary = "/usr/bin/pyright"
+        mock_result = MagicMock(stdout="pyright 1.1.265")
+
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+            with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+                result = adapter.version(Path("/repo/X"), env={"PATH_OVERRIDE": "/usr/bin"})
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == [binary, "--version"]
+        assert mock_run.call_args.kwargs["env"] == {"PATH_OVERRIDE": "/usr/bin"}
+        assert result == "1.1.265"
+
+    def test_version_env_none_passed(self):
+        """env=None passed to _run when not specified.
+
+        Kills mutmut_19: env=env → env=None mutation.
+        """
+        adapter = PyrightAdapter()
+        mock_result = MagicMock(stdout="pyright 1.1.265")
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/usr/bin/pyright"):
+            with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp"))
+        assert mock_run.call_args.kwargs["env"] is None
+
 
 class TestInvokeNormalPath:
     """Tests for normal invoke path with mocked _run.
@@ -385,3 +414,48 @@ class TestInvokeNormalPath:
         cmd = call_args[0][0]
         assert "--project" in cmd
         assert "/tmp/repo/pyrightconfig.json" in cmd
+
+    def test_invoke_wiring_exact_call_args(self, adapter):
+        """invoke() calls _run with exact cmd + cwd/env/timeout.
+
+        Kills mutmut_1,23,24,27,28: cmd element mutations (binary, flags),
+        cwd→None, env→None, timeout→mutated. All via §4.4 spy + §4.7 argv.
+        """
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(
+                repo=Path("/tmp/repo"),
+                args=["--typeCheckingStyle", "strict"],
+                env={"PYRIGHT_ENV": "1"},
+                timeout=180.0,
+            )
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        # Verify binary + flags + args + repo
+        assert "--outputjson" in cmd
+        assert "--typeCheckingStyle" in cmd
+        assert "strict" in cmd
+        assert str(Path("/tmp/repo")) in cmd
+        assert call_args[1]['cwd'] == Path("/tmp/repo")
+        assert call_args[1]['env'] == {"PYRIGHT_ENV": "1"}
+        assert call_args[1]['timeout'] == 180.0
+
+    def test_invoke_default_timeout(self, adapter):
+        """Default timeout=300.0 forwarded to _run.
+
+        Kills mutmut on timeout default mutation.
+        """
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(repo=Path("/tmp/repo"), args=[])
+        assert mock_run.call_args[1]['timeout'] == 300.0

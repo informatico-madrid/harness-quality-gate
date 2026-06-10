@@ -894,3 +894,103 @@ class TestMakeFindingReplaceAndLineMutations:
         assert len(findings) == 1
         assert findings[0].node == "keep.php:2"
         assert findings[0].message == "class: class"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill remaining dep_analyser parse return mutations (mutmut 76,78,95,98,99,102,115-121)
+# These are all return path mutations: return findings → return None/False/[]
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestParseTypeAssertions:
+    """Assert parse() returns list type on every code path.
+
+    These type assertions are stronger kills because a mutation to `return None`
+    would fail `isinstance(r, list)` immediately, whereas `r == []` would pass
+    (since None == [] is False, but the test checks isinstance first).
+    """
+
+    def test_parse_empty_string_returns_list_not_none(self) -> None:
+        r = DepAnalyserAdapter().parse("")
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_empty_json_array_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps([]))
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_invalid_json_returns_list_not_none(self) -> None:
+        r = DepAnalyserAdapter().parse("not json", "", 1)
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_top_level_array_with_no_violations_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps([{"unknown": "type"}]))
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_nested_files_empty_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps({"files": {}}))
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_nested_files_zero_violations_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps({"files": {"x.php": {"violations": []}}}))
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+    def test_parse_data_neither_list_nor_nested_dict_returns_list(self) -> None:
+        r = DepAnalyserAdapter().parse(json.dumps({"foo": "bar"}))
+        assert isinstance(r, list)
+        assert len(r) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill _binary mutmut_3,4 (return mutations)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_binary_system_path_returns_list() -> None:
+    """When system binary is found, return list [path], not None."""
+    with patch("shutil.which", return_value="/usr/bin/cda"):
+        result = DepAnalyserAdapter._binary(Path("/tmp"))
+    assert isinstance(result, list), "_binary must return list"
+    assert len(result) == 1
+
+
+def test_binary_vendor_path_returns_list() -> None:
+    """When vendor binary is found, return list [path], not None."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        vendor_bin = Path(tmp) / "vendor" / "bin" / "composer-dependency-analyser"
+        vendor_bin.parent.mkdir(parents=True)
+        vendor_bin.touch()
+        with patch("shutil.which", return_value=None):
+            result = DepAnalyserAdapter._binary(Path(tmp))
+    assert isinstance(result, list)
+    assert len(result) == 1
+
+
+def test_binary_none_path_returns_none() -> None:
+    """When neither system nor vendor binary, return None."""
+    with patch("shutil.which", return_value=None):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            result = DepAnalyserAdapter._binary(Path(tmp))
+    assert result is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill version mutmut_2,3 (NotImplementedError message mutations)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_version_exact_message_contains_not_implemented() -> None:
+    """Verify NotImplementedError contains 'not implemented' (case-insensitive).
+
+    Kills mutmut_2,3: message text mutations (e.g., 'not implemented' → 'NOT DONE').
+    """
+    with pytest.raises(NotImplementedError) as exc:
+        DepAnalyserAdapter().version(Path("/tmp"))
+    assert "not implemented" in str(exc.value).lower()

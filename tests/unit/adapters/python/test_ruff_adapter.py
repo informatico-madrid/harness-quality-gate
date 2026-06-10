@@ -436,6 +436,39 @@ class TestRuffVersion:
                 version = adapter.version(Path("/tmp/repo"))
         assert version == "0.8.0"
 
+    def test_version_wiring_exact_call_args(self):
+        """version() calls _run with exact binary + --version cmd + cwd + env.
+
+        Kills mutmut_19: env=None mutation on version call args.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="ruff 0.8.0\n")
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp/repo"), env={"RUFF_ENV": "1"})
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == ["/usr/bin/ruff", "--version"]
+        assert mock_run.call_args.kwargs["cwd"] == Path("/tmp/repo")
+        assert mock_run.call_args.kwargs["env"] == {"RUFF_ENV": "1"}
+
+    def test_version_env_none_passed(self):
+        """When env is None, it's passed as None to _run.
+
+        Kills mutmut on env=env mutation: env=None → env=repo or removed.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/bin/ruff",
+        ):
+            adapter = RuffAdapter()
+            mock_result = MagicMock(stdout="ruff 0.8.0\n")
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp/repo"))
+        assert mock_run.call_args.kwargs["env"] is None
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Invoke method — continue existing tests
@@ -500,6 +533,52 @@ class TestRuffInvokeNormalPath:
         assert result.stdout == expected.stdout
         assert result.exitcode == expected.exitcode
         assert mock_run.call_args[1]['cwd'] == repo
+
+    def test_invoke_wiring_exact_call_args(self):
+        """invoke() calls _run with exact cmd list + cwd/env/timeout.
+
+        Kills mutmut_1,25,26,30: cmd element mutations (binary, flags, repo),
+        cwd→None, env→None, timeout→mutated. All via §4.4 spy + §4.7 argv equality.
+        """
+        adapter = RuffAdapter()
+        mock_result = MagicMock(stdout='[]', stderr='', returncode=0)
+        repo = Path('/tmp/test_repo')
+        BIN = "/usr/local/bin/ruff"
+
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value=BIN,
+        ):
+            with patch.object(RuffAdapter, '_run', return_value=mock_result) as mock_run:
+                adapter.invoke(repo, args=['--select=E501'], env={"RUFF_FOO": "bar"}, timeout=60.0)
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        # Exact command structure — any element mutation is caught
+        assert cmd == [
+            BIN, "check", "--output-format=json", "--select=E501", str(repo),
+        ]
+        assert call_args[1]['cwd'] == repo
+        assert call_args[1]['env'] == {"RUFF_FOO": "bar"}
+        assert call_args[1]['timeout'] == 60.0
+
+    def test_invoke_default_timeout(self):
+        """Default timeout=300.0 forwarded to _run.
+
+        Kills mutmut_60: timeout default mutation (300→301).
+        """
+        adapter = RuffAdapter()
+        mock_result = MagicMock(stdout='[]', stderr='', returncode=0)
+        repo = Path('/tmp/test_repo')
+
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            return_value="/usr/local/bin/ruff",
+        ):
+            with patch.object(RuffAdapter, '_run', return_value=mock_result) as mock_run:
+                adapter.invoke(repo, args=[])
+        assert mock_run.call_args[1]['timeout'] == 300.0
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -585,3 +664,49 @@ class TestParseEdgeCases:
         Kills mutation: property body removed or changed.
         """
         assert _adapter().name == "ruff"
+
+    def test_parse_finding_full_object(self):
+        """Full Finding comparison kills remaining parse mutmut (1,2,60).
+
+        Mutmut_1: dict.get("code", None) → None when "code" absent → rule_id=None
+        Mutmut_2: dict.get("rule", None) → same
+        Mutmut_60: detail/message fallback chain mutation (or→and on line 96)
+        Uses dense assertions on every Finding field.
+        """
+        entry = {
+            "code": "F841",
+            "filename": "/home/user/src/main.py",
+            "location": {"row": 55, "column": 3},
+            "message": "local variable 'x' is assigned to but never used",
+            "fix": {"message": "Remove unused variable"},
+        }
+        findings = _adapter().parse(json.dumps([entry]))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "/home/user/src/main.py"
+        assert f.severity == "warning"
+        assert f.message == "/home/user/src/main.py:55:3 [F841]: local variable 'x' is assigned to but never used"
+        assert f.fix_hint == "Remove unused variable"
+        assert f.tool == "ruff"
+        assert f.layer == "L2"
+        assert f.language == "python"
+        assert f.rule_id == "F841"
+
+    def test_parse_error_severity_no_code(self):
+        """Entry with no code and no rule → severity='error', rule_id=None.
+
+        Kills mutmut_1: code="" mutation → severity stays 'error' (not 'warning').
+        """
+        entry = {
+            "filename": "src/a.py",
+            "message": "some issue",
+        }
+        findings = _adapter().parse(json.dumps([entry]))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == "error"
+        assert f.rule_id is None
+        assert f.tool == "ruff"
+        assert f.layer == "L2"
+        assert f.language == "python"
+        assert f.fix_hint is None

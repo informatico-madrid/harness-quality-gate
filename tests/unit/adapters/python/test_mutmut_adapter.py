@@ -74,6 +74,36 @@ def test_version_passes_cwd(tmp_path: Path) -> None:
     assert mock_run.call_args[1]["cwd"] == tmp_path
 
 
+def test_version_wiring_exact_call_args(tmp_path: Path) -> None:
+    """version() calls _run with exact binary + --version cmd + cwd + env.
+
+    Kills mutmut survivors (13,16): env→None mutation on version.
+    """
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(
+            ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")
+        ) as mock_run:
+            _adapter().version(tmp_path, env={"MUTMUT_ENV": "1"})
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args[0][0] == ["/usr/bin/mutmut", "--version"]
+    assert mock_run.call_args[1]["cwd"] == tmp_path
+    assert mock_run.call_args[1]["env"] == {"MUTMUT_ENV": "1"}
+
+
+def test_version_env_none_passed(tmp_path: Path) -> None:
+    """env=None passed to _run when not specified.
+
+    Kills mutmut on env=env mutation: env=None → removed.
+    """
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(
+            ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")
+        ) as mock_run:
+            _adapter().version(tmp_path)
+    assert mock_run.call_args[1]["env"] is None
+
+
 def test_version_trimmed_output(tmp_path: Path) -> None:
     """stdout=' 3.5.0  ' → stripped to '3.5.0'."""
     with patch("shutil.which", return_value="/usr/bin/mutmut"):
@@ -110,6 +140,35 @@ def test_invoke_binary_not_found(tmp_path: Path) -> None:
     assert result.stdout == ""
     assert "mutmut" in result.stderr
     assert result.duration_seconds == 0.0
+
+
+def test_invoke_wiring_exact_call_args(tmp_path: Path) -> None:
+    """invoke() calls _run with exact cmd list + cwd/env/timeout.
+
+    Kills mutmut survivors (1,3,4,5,11,12): cmd element mutations,
+    cwd→None, env→None, timeout→mutated. Uses §4.4 strict mock args.
+    """
+    fake_bin = "/usr/bin/mutmut"
+    with patch("shutil.which", return_value=fake_bin):
+        with patch.object(
+            ToolAdapter,
+            "_run",
+            return_value=_ok_invocation(json.dumps({"total": 10, "killed": 8})),
+        ) as mock_run:
+            _adapter().invoke(
+                tmp_path,
+                ["--path-include=.*\\.py$"],
+                env={"MUTMUT_CI": "1"},
+                timeout=700.0,
+            )
+
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == fake_bin
+    assert cmd == [fake_bin, "results", "--json", "--path-include=.*\\.py$"]
+    assert mock_run.call_args[1]["cwd"] == tmp_path
+    assert mock_run.call_args[1]["env"] == {"MUTMUT_CI": "1"}
+    assert mock_run.call_args[1]["timeout"] == 700.0
 
 
 def test_invoke_command_structure(tmp_path: Path) -> None:
@@ -467,3 +526,55 @@ def test_parse_with_stderr_parameter() -> None:
     assert stats.total == 10
     # msi = 8/(8+2+0+0) = 0.8
     assert stats.msi == 0.8
+
+def test_parse_full_mutation_stats_object() -> None:
+    """Full MutationStats comparison kills remaining parse mutmut (1,2,55,87).
+
+    Mutmut_1,2: JSON field extraction mutations (total, killed).
+    Mutmut_55,87: msi/covered_msi formula mutations.
+    Dense assertions on every field.
+    """
+    stats = _adapter().parse(json.dumps({
+        "total": 100,
+        "killed": 72,
+        "survived": 18,
+        "timeout": 5,
+        "escaped": 3,
+        "untested": 2,
+    }))
+
+    assert stats.total == 100
+    assert stats.killed == 72
+    assert stats.survived == 18
+    assert stats.timed_out == 5
+    assert stats.escaped == 3
+    assert stats.untested == 2
+    # msi = killed / (killed + survived + timed_out + escaped)
+    # = 72 / (72 + 18 + 5 + 3) = 72 / 98 ≈ 0.7347
+    assert stats.msi == round(72 / 98, 4)
+    assert stats.covered_msi == stats.msi
+    assert stats.msi == 0.7347
+    assert isinstance(stats.msi, float)
+    assert isinstance(stats.covered_msi, float)
+
+
+def test_parse_partial_json_all_defaults() -> None:
+    """Only 'total' and 'killed' present → all other fields default to 0.
+
+    Kills mutmut on .get("survived", 0), .get("timeout", 0) etc.
+    mutations that change the default values.
+    """
+    stats = _adapter().parse(json.dumps({
+        "total": 200,
+        "killed": 199,
+    }))
+
+    assert stats.total == 200
+    assert stats.killed == 199
+    assert stats.survived == 0
+    assert stats.timed_out == 0
+    assert stats.escaped == 0
+    assert stats.untested == 0
+    # msi = 199 / (199 + 0 + 0 + 0) = 1.0
+    assert stats.msi == 1.0
+    assert stats.covered_msi == 1.0

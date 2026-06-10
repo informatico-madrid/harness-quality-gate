@@ -561,6 +561,16 @@ class TestInvokeSubprocessAssertions:
         php_file.parent.mkdir(parents=True, exist_ok=True)
         php_file.write_text("<?php")
 
+        # Full mock that would fail if subprocess parameters are mutated
+        def capture_subprocess(*args, **kwargs):
+            # This function captures ALL parameters for verification
+            # If any parameter is mutated, the stored values will differ
+            capture_subprocess._last_args = args
+            capture_subprocess._last_kwargs = kwargs
+            return MagicMock(returncode=0, stdout=json.dumps([]), stderr="")
+
+        mock_run = MagicMock(side_effect=capture_subprocess)
+
         with patch.object(
             VisitorRunnerAdapter, "_collect_php_files", return_value=[php_file]
         ):
@@ -569,17 +579,27 @@ class TestInvokeSubprocessAssertions:
                 tmp_path / "visitors",
             ):
                 with patch("subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(
-                        returncode=0, stdout=json.dumps([]), stderr="",
-                    )
+                    mock_run.side_effect = capture_subprocess
                     adapter.invoke(tmp_path, [])
 
-        mock_run.assert_called()
-        kw = mock_run.call_args_list[0][1]
+        # Assert the subprocess.run call with ALL parameters
+        # This kills: mutmut_73-84 (string/parameter mutations in subprocess.run)
+        assert mock_run.called
+        call_args = mock_run.call_args_list[0]
+        cmd = call_args[0][0]
+        kw = call_args[1]
+        # H7: assert exact command structure
+        assert cmd[0] == "php"
+        assert str(visitor_script) in cmd
+        assert str(php_file) in cmd
+        assert len(cmd) == 3  # php + script + file
+        # H4: assert ALL subprocess parameters exactly
+        assert kw["cwd"] == str(tmp_path)
         assert kw["capture_output"] is True
         assert kw["text"] is True
         assert kw["check"] is False
         assert kw["timeout"] == 300.0
+        assert "PATH" in kw["env"]  # os.environ merge
 
     def test_invoke_subprocess_env_includes_os_environ(self, tmp_path: Path) -> None:
         """subprocess.run env merges os.environ with adapter env.
@@ -758,8 +778,91 @@ class TestParseVisitorOutputEdgeCases:
 # version()
 # ===========================================================================
 
+# ===========================================================================
+# Kill _build_finding mutmut_50,51 (return path mutations)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_build_finding_returns_finding_not_none_or_other() -> None:
+    """_build_finding returns Finding, never None/False/other for valid input.
+
+    Kills:
+      mutmut_50: return Finding(...) → return None
+      mutmut_51: return Finding(...) → return False
+    """
+    finding = VisitorRunnerAdapter._build_finding({
+        "file": "test.php", "line": 5, "rule_id": "R1", "message": "test"
+    })
+    assert finding is not None
+    assert isinstance(finding, Finding), "must return Finding instance"
+    assert finding.node == "test.php:5"
+    assert finding.rule_id == "R1"
+    assert finding.message == "test"
+
+
 class TestVersion:
     def test_version_raises(self) -> None:
         adapter = VisitorRunnerAdapter()
         with pytest.raises(NotImplementedError):
             adapter.version(Path.cwd())
+
+
+# ===========================================================================
+# Kill _merge_findings mutmut_2 (return mutation)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_merge_findings_returns_string_not_none_or_false():
+    """_merge_findings always returns str, never None or False."""
+    result = VisitorRunnerAdapter._merge_findings([])
+    assert isinstance(result, str), "must return str"
+    assert result == "[]"
+    result2 = VisitorRunnerAdapter._merge_findings([{"k": "v"}])
+    assert isinstance(result2, str)
+    assert json.loads(result2) == [{"k": "v"}]
+
+
+# ===========================================================================
+# Kill _parse_visitor_output mutmut_6,12-15,20-24,26
+# mutmut_6: text.strip() → text.strip(None)
+# mutmut_12: json.loads(text) → json.loads(text)[:50]  (partial JSON)
+# mutmut_13: text[:50]:text → [:50:51] or [:149:] (slice mutation)
+# mutmut_14: return [] → return None
+# mutmut_15: return results → return results + []
+# mutmut_20-24: find("[") / rfind("]") mutations
+# mutmut_26: bracket extraction final return mutation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_parse_visitor_output_returns_list_type_assertion():
+    """_parse_visitor_output returns list, never None or other types."""
+    # Empty string → empty list
+    r = VisitorRunnerAdapter._parse_visitor_output("")
+    assert isinstance(r, list) and r == []
+
+    # Whitespace → empty list
+    r = VisitorRunnerAdapter._parse_visitor_output("   \\n\\n   ")
+    assert isinstance(r, list) and r == []
+
+    # Invalid JSON → empty list
+    r = VisitorRunnerAdapter._parse_visitor_output("not json")
+    assert isinstance(r, list) and r == []
+
+    # Valid JSON → list from json.loads
+    r = VisitorRunnerAdapter._parse_visitor_output('[{"k":"v"}]')
+    assert isinstance(r, list) and len(r) == 1
+
+    # Bracket extraction with valid inner JSON
+    r = VisitorRunnerAdapter._parse_visitor_output("prefix [{\"k\":\"v\"}] suffix")
+    assert isinstance(r, list) and len(r) == 1
+
+    # No brackets → empty list
+    r = VisitorRunnerAdapter._parse_visitor_output("[[[")
+    assert isinstance(r, list) and r == []
+
+    r = VisitorRunnerAdapter._parse_visitor_output("]]]")
+    assert isinstance(r, list) and r == []
+
+    # Brackets reversed → empty list
+    r = VisitorRunnerAdapter._parse_visitor_output("]abc[")
+    assert isinstance(r, list) and r == []

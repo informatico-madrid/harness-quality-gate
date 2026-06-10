@@ -22,6 +22,8 @@ import pytest
 from harness_quality_gate.adapters.php.php_adapter import PhpAdapter, _INFECTION_MIN_MSI, _INFECTION_MIN_COVERED_MSI
 from harness_quality_gate.models import Finding, LayerResult, MutationStats
 
+import time as _time
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -708,11 +710,13 @@ class TestRunL1PestPaths:
         # Kill mutmut_54: _has_mutate_plugin(repo) → None (call removed)
         assert adapter._pest._has_mutate_plugin.called
 
-    def test_pest_tests_fail(self, tmp_path):
+    def test_pest_tests_fail(self, tmp_path, caplog):
+        caplog.set_level(logging.ERROR, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = _make_mock_adapter(
             pest_binary="pest",
             pest_has_mutate=True,
-            pcov_driver="xdebug"
+            pcov_driver="xdebug",
+            pest_exitcode=1
         )
         adapter._pest._pest_binary.side_effect = [
             ["pest"],
@@ -721,6 +725,27 @@ class TestRunL1PestPaths:
         adapter._pest.invoke.return_value = MagicMock(exitcode=1, stdout="", stderr="fail")
         result = adapter.run_l1(tmp_path, {})
         assert any("Pest tests failed" in f.message for f in result.findings)
+        # Kill H1: _pest.invoke(repo, ["--no-output"], env=env, timeout=300.0) — exact args
+        # kill mutations 20 (repo→None), 22 (args=[]→None), 27 (env→None)
+        call = adapter._pest.invoke.call_args
+        assert call[0][0] == tmp_path         # mutmut_20: repo → None
+        assert call[0][1] == ["--no-output"]  # mutmut_22: args → None
+        assert call[1]["env"] == {}           # mutmut_27: env → None
+        assert call[1]["timeout"] == 300.0    # mutmut_21: timeout removed
+        # Kill H3: message mutation — "Pest tests failed (exit 1)" exact string kills string
+        # mutations 6 (exitcode value), 29/30/35-37 (message format/XX case mutations)
+        pest_findings = [f for f in result.findings if f.tool == "pest"]
+        assert len(pest_findings) >= 1
+        assert pest_findings[0].message == "Pest tests failed (exit 1)", (
+            "Exact error message kills string mutations on exit code and format"
+        )
+        # Kill mutmut_29-32: Finding node, severity, fix_hint, tool, layer, language
+        assert pest_findings[0].node == "pest"
+        assert pest_findings[0].severity == "error"
+        assert pest_findings[0].tool == "pest"
+        assert pest_findings[0].layer == "L1"
+        assert pest_findings[0].language == "php"
+        assert pest_findings[0].fix_hint == "Run ``vendor/bin/pest`` locally to see failures"
 
     def test_pest_invoke_raises_runtime_error(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -1215,15 +1240,19 @@ class TestRunL1InfectionPaths:
         result = adapter.run_l1(tmp_path, {})
         call_args = adapter._infection.invoke.call_args[0]
         assert call_args[0] == tmp_path
+        # Kill H1: positional arg assertions for mutations 17/18 (repo/args→None)
+        assert call_args[1] == [                # mutmut_18: args=[] → None
+                "--no-progress",
+                "--threads=max",
+                "--min-msi=100",
+                "--min-covered-msi=100",
+            ], (
+            "mutmut_33/42/46/47/49/53/54/55/56/57: Full args list with threshold flags "
+            "must match exactly — mutations on any flag string or positional arg order"
+        )
         kwargs = adapter._infection.invoke.call_args[1]
         assert kwargs["env"] == {}
-        assert kwargs["timeout"] == 600.0
-        # Verify threshold flags are present
-        flags = call_args[1]
-        assert "--min-msi=100" in flags
-        assert "--min-covered-msi=100" in flags
-        assert "--no-progress" in flags
-        assert "--threads=max" in flags
+        assert kwargs["timeout"] == 600.0  # mutmut_58/59/60/61/62/63: timeout removed/mutated
 
     def test_run_l1_pest_binary_called_with_repo(self, tmp_path):
         """Verify _pest_binary is called twice with correct repo."""
@@ -1405,7 +1434,8 @@ class TestRunL2:
         assert call[0][0] == tmp_path
         assert call[1]["env"] == {}
 
-    def test_l2_runtime_error_skipped(self, tmp_path):
+    def test_l2_runtime_error_skipped(self, tmp_path, caplog):
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.side_effect = RuntimeError("antipattern not found")
@@ -1415,6 +1445,20 @@ class TestRunL2:
         assert result.language == "php"
         assert result.passed is True
         assert result.duration_sec >= 0
+        # Kill H1: invoke(repo, [], env=env, timeout=300.0) — exact args kill mutations 17 (repo→None),
+        # 22 (timeout→removed), args=[] mutations, env=None mutations
+        call = adapter._antipattern.invoke.call_args
+        assert call[0][0] == tmp_path      # mutmut_17: repo → None
+        assert call[0][1] == []            # mutmut_18/19: args=[] or args=None
+        assert call[1]["env"] == {}        # mutmut_20: env → None
+        assert call[1]["timeout"] == 300.0 # mutmut_21/22: timeout removed
+        # Kill H3: logger.warning("L2 antipattern-tier-A skipped: %s", exc) → various string
+        # mutations (None→"XX", case, removed format) — exact message assertion
+        warnings = [m for m in caplog.messages if "L2 antipattern-tier-A skipped" in m]
+        assert len(warnings) == 1, f"Expected exactly one skip warning, got: {warnings}"
+        assert warnings[0] == "L2 antipattern-tier-A skipped: antipattern not found"
+        # Kill mutmut_31: layer="L2" → None — assert layer field type and value
+        assert isinstance(result.layer, str) and result.layer == "L2"
 
     def test_l2_duration_non_negative(self, tmp_path):
         adapter = PhpAdapter()
@@ -4291,3 +4335,254 @@ class TestRunL1RemediationWiring:
         rem = result.tool_specific["remediation"]
         assert rem["timed_out"] == 1
         assert "1 mutant(s) timed out" in rem["summary"]
+
+
+# ===========================================================================
+# run_l1 — mutant-killing tests (survivors 114,115,116,218,219,222-226,229,250,252-260,288)
+# ===========================================================================
+
+class TestRunL1MutantKilling:
+    """Kill remaining mutmut survivors in run_l1 via dense assertions and caplog.
+
+    Techniques:
+    - §4.1 Dense assertions on tool_specific mutation meta
+    - H3 Exact log message + caplog config
+    - H2 Clock mock for duration assertions
+    """
+
+    # -- Variable init mutations (114, 115) --------------------------------
+
+    def test_pest_no_mutate_plugin_meta_skipped(self, tmp_path, monkeypatch):
+        """mutmut_115: mutation_skipped=None→'' kills because empty string
+        makes `if mutation_skipped:` False → mutation_skipped absent from meta.
+
+        Technique: §4.1 dense — assert exact tool_specific keys + value for
+        mutation_skipped key that only appears when pest has no mutate plugin.
+        """
+        adapter = _make_mock_adapter(
+            pest_binary="/fake/pest",
+            pest_has_mutate=False,  # NOT has mutate → enters skip branch
+            pcov_driver="xdebug",
+            infection_stats=None,
+        )
+        result = adapter.run_l1(tmp_path, {})
+        # mutation_skipped finding makes passed=False
+        assert result.passed is False
+        assert len(result.findings) == 1
+        assert result.findings[0].message == "Mutation testing skipped: pest-plugin-mutate not installed (TD-6)"
+
+        # mutation_meta always has "mutation_skipped" key value
+        assert "mutation_skipped" in result.tool_specific
+        # The exact string is contract — kills ""→"" (no-op) but
+        # also kills mutation of the value itself
+        assert result.tool_specific["mutation_skipped"] == "pest-plugin-mutate not installed"
+
+    def test_pest_no_mutate_plugin_meta_full(self, tmp_path, monkeypatch):
+        """Also verifies mutation_meta structure is intact when skipped.
+
+        Kill mutmut_114 indirectly: if mutation_stats init mutated to `""`,
+        the `if mutation_stats:` check in the mutation_meta building would
+        behave the same (falsy), BUT the mutation block itself must still
+        exist only when stats is present — and here stats is None, so
+        mutation block absent. Verifies the path is clean.
+        """
+        adapter = _make_mock_adapter(
+            pest_binary="/fake/pest",
+            pest_has_mutate=False,
+            pcov_driver="xdebug",
+            infection_stats=None,
+        )
+        result = adapter.run_l1(tmp_path, {})
+
+        # mutation_skipped path: no mutation block when stats=None
+        assert "mutation" not in result.tool_specific
+        # But mutation_skipped at top-level tool_specific:
+        assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
+
+    # -- Logging mutations (218, 219) --------------------------------------
+
+    def test_l1_infection_log_msi_escaped(self, tmp_path, caplog, monkeypatch):
+        """mutmut_218,219: log message mutated (XX...XX, lower-case).
+
+        H3 — caplog with exact logger config + assert full interpolated message.
+        The original message is 'L1 Infection MSI=100.0 coveredMsi=100.0 escaped=0'.
+        Any mutation (XX prefix, lowercased) breaks exact message match.
+        """
+        caplog.set_level(
+            logging.INFO,
+            logger="harness_quality_gate.adapters.php.php_adapter"
+        )
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert result.passed is True
+
+        # Find INFO log with the MSI message
+        msi_logs = [
+            r.message for r in caplog.records
+            if r.levelno == logging.INFO and r.name == "harness_quality_gate.adapters.php.php_adapter"
+            and "MSI" in r.message
+        ]
+        assert len(msi_logs) >= 1, "Expected L1 Infection MSI log line"
+        # Exact message kills XX...XX and lowercased string mutations
+        assert msi_logs[0] == "L1 Infection MSI=100.0 coveredMsi=100.0 escaped=0"
+
+    # -- Runtime exception logging mutations (222, 223, 224, 225, 226) ---
+
+    def test_l1_infection_exception_logs_invocation_failed(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        """mutmut_222-226: logger.warning("L1 mutation testing skipped: %s", exc)
+        and _run_infection's inner logger.warning are both in warning paths.
+
+        Force infection to raise RuntimeError. Since _run_infection catches
+        RuntimeError internally with its own warning ("Infection invocation
+        failed: %s"), we assert that exact message. If the outer handler
+        message was the one mutating but code path is unreachable (inner
+        handler catches first), we verify the reachable handler's log too.
+
+        mutmut_222: arg→None
+        mutmut_223: format_string removed
+        mutmut_224: extra arg removed
+        mutmut_225: message string mutated (XX...XX)
+        mutmut_226: message string mutated (lowercase)
+        """
+        caplog.set_level(
+            logging.WARNING,
+            logger="harness_quality_gate.adapters.php.php_adapter"
+        )
+
+        def infection_invoke_raises(*args, **kwargs):
+            raise RuntimeError("invocation failed error")
+
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=None,
+        )
+        adapter._infection.invoke.side_effect = infection_invoke_raises
+
+        result = adapter.run_l1(tmp_path, {})
+
+        # _run_infection catches RuntimeError first → log "Infection invocation
+        # failed: invocation failed error"
+        invocation_logs = [
+            r.message for r in caplog.records
+            if r.levelno == logging.WARNING
+            and r.name == "harness_quality_gate.adapters.php.php_adapter"
+            and "invocation failed" in r.message
+        ]
+        assert len(invocation_logs) >= 1
+        # This exact format kills XX...XX, lowercase, missing arg, etc.
+        assert invocation_logs[0] == "Infection invocation failed: invocation failed error"
+
+    # -- Duration calculation mutation (229) -------------------------------
+
+    def test_l1_duration_subtraction(self, tmp_path, monkeypatch):
+        """mutmut_229: `duration = time.monotonic() - t0` → `+ t0`.
+
+        H2 — clock mock. With t0=100 and now=101.234, subtraction gives 1.234,
+        addition gives 201.234. Round to 3 decimals = 1.234 vs 201.234.
+        Asserting exact duration kills the + mutation.
+        """
+        tick = iter([100.0, 101.2345])  # t0, then current
+        monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
+
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        # round(101.2345 - 100.0, 3) = round(1.2345, 3) = 1.234
+        # If mutated to +: round(101.2345 + 100.0, 3) = round(201.2345, 3) = 201.235
+        assert result.duration_sec == 1.234
+
+    def test_l1_duration_gt_zero(self, tmp_path, monkeypatch):
+        """Additional duration assertion — ensures duration is small positive,
+        ruling out addition mutation (which would give ~200s).
+        """
+        tick = iter([500.0, 500.5])
+        monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
+
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        assert result.duration_sec > 0
+        assert result.duration_sec < 10  # addition mutation gives ~1000
+
+    # -- Mutation meta dict mutations (250, 252, 253, 254, 255, 257, 258, 259, 260) ---
+
+    def test_l1_mutation_meta_keys_and_values(self, tmp_path, monkeypatch):
+        """mutmut_250,252,253,254,255,257,258,259,260: mutations in mutation_meta dict.
+
+        §4.1 — Dense assertion. The mutation_meta["mutation"] dict must have
+        EXACT keys: killed, survived, timed_out, escaped, untested, msi, covered_msi
+        EXACT values with round(..., 4).
+
+        Key mutations (254,255): "covered_msi" → "XXcovered_msiXX" / "COVERED_MSI"
+          → dense assert fails because key doesn't exist.
+        Value mutations (250,252,253,257,258,259,260): round changes
+          → dense assert fails because value is wrong.
+        """
+        tick = iter([200.0, 200.1])
+        monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
+
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=99.5, covered_msi=98.7,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+
+        expected = {
+            "killed": 50,
+            "survived": 0,
+            "timed_out": 0,
+            "escaped": 0,
+            "untested": 0,
+            "msi": round(99.5, 4),
+            "covered_msi": round(98.7, 4),
+        }
+        assert result.tool_specific["mutation"] == expected
+
+    # -- duration_sec round mutation (288) ---------------------------------
+
+    def test_l1_duration_sec_rounding(self, tmp_path, monkeypatch):
+        """mutmut_288: round(duration, 3) → round(duration, 4).
+
+        H2 — clock mock producing a value where round(x,3) ≠ round(x,4).
+        duration = 0.0001 → round(..., 3) = 0.0, round(..., 4) = 0.0001
+        """
+        tick = iter([300.0, 300.0001])
+        monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
+
+        adapter = _make_mock_adapter(
+            pest_binary=None,
+            pcov_driver="pcov",
+            infection_stats=MutationStats(
+                total=50, killed=50, survived=0, escaped=0, timed_out=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        result = adapter.run_l1(tmp_path, {})
+        # round(0.0001, 3) = 0.0  (kills round(_,4) → 0.0001)
+        assert result.duration_sec == 0.0

@@ -58,6 +58,49 @@ class TestVersion:
         adapter = PytestAdapter()
         assert adapter.name == "pytest"
 
+    def test_version_wiring_exact_call_args(self, tmp_path: Path) -> None:
+        """version() calls _run with exact binary cmd + cwd and env.
+
+        Kills mutmut on version (10,11,12,13,14,15,16,17,18,19):
+        - mutmut_10-15: cmd element mutations (binary, args)
+        - mutmut_16,17: cwd → None mutation
+        - mutmut_18,19: env → None mutation
+        Uses §4.4 strict mock args on _run spy.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+            return_value="/usr/bin/python3",
+        ):
+            adapter = PytestAdapter()
+            mock_result = MagicMock(stdout="pytest 8.1.1\n", stderr="")
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(tmp_path, env={"ENV1": "v1"})
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == [
+            "/usr/bin/python3", "-m", "pytest", "--version",
+        ]
+        assert mock_run.call_args.kwargs["cwd"] == tmp_path
+        assert mock_run.call_args.kwargs["env"] == {"ENV1": "v1"}
+
+    def test_version_env_none_passed(self, tmp_path: Path) -> None:
+        """When env is omitted (default None), it's still passed as None to _run.
+
+        Kills mutmut_18,19: env=env → env=None mutation.
+        Verifies that _run receives the exact env value, not a mutated None.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+            return_value="/usr/bin/python3",
+        ):
+            adapter = PytestAdapter()
+            mock_result = MagicMock(stdout="pytest 8.1.1\n")
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(tmp_path)
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["env"] is None
+
 
 # ---------------------------------------------------------------------------
 # invoke()
@@ -166,6 +209,50 @@ class TestInvoke:
                 adapter.invoke(tmp_path, [], timeout=10.0)
                 call_kwargs = mock_run.call_args.kwargs
                 assert call_kwargs["timeout"] == 10.0
+
+    def test_invoke_wiring_exact_call_args(self, tmp_path: Path) -> None:
+        """_run is called with exact cmd list, cwd, env, timeout.
+
+        Kills mutmut survivors on invoke (1,3,5,6,7,8): mutates binary path
+        in cmd, positional index, cwd, env, timeout — all observed via spy.
+        Uses §4.4 strict mock args + §4.7 argv list equality.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+            return_value="/usr/bin/python3",
+        ):
+            adapter = PytestAdapter()
+            mock_result = MagicMock(stdout="", stderr="", returncode=0)
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.invoke(
+                    tmp_path, ["-k", "foo"],
+                    env={"PYTEST_ENV": "1"}, timeout=120.0,
+                )
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        # Exact cmd list
+        cmd = call_args.args[0]
+        assert cmd == ["/usr/bin/python3", "-m", "pytest", "--junitxml", "/dev/stdout", "-o", "junit_suite_name=pytest", "-k", "foo"]
+        # Verify all keyword args exactly
+        assert call_args.kwargs["cwd"] == tmp_path
+        assert call_args.kwargs["env"] == {"PYTEST_ENV": "1"}
+        assert call_args.kwargs["timeout"] == 120.0
+
+    def test_invoke_default_timeout(self, tmp_path: Path) -> None:
+        """Default timeout=300.0 is used when not specified.
+
+        Kills mutmut: default timeout=300.0 → 301.0 mutation.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+            return_value="/usr/bin/python3",
+        ):
+            adapter = PytestAdapter()
+            mock_result = MagicMock(stdout="", stderr="", returncode=0)
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.invoke(tmp_path, [])
+        assert mock_run.call_args.kwargs["timeout"] == 300.0
 
 
 # ---------------------------------------------------------------------------
@@ -908,3 +995,130 @@ class TestDefaults:
         findings = adapter.parse('<testsuites/>', "CRITICAL: some issue")
         assert len(findings) == 1
         assert findings[0].rule_id == "stderr"
+
+    def test_parse_exitcode_with_summary(self) -> None:
+        """Exit code + real failures → exitcode Finding at position 0
+        then summary, then failures.
+
+        Kills mutmut_240: exitcode > 0 check mutations that skip/insert
+        the exitcode Finding at wrong position.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="2" failures="1" errors="0">
+    <testcase classname="mod" name="test_fail">
+      <failure message="assertion failed"/>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml, exitcode=2)
+        assert len(findings) >= 2
+        # [0] exitcode finding
+        assert findings[0].rule_id == "exitcode"
+        assert findings[0].message == "Test execution failed with exit code 2"
+        # [1] summary
+        assert findings[1].rule_id == "summary"
+        #[2] failure
+        assert findings[2].rule_id == "failure"
+        assert findings[2].message == "assertion failed"
+
+    def test_parse_exitcode_no_failures(self) -> None:
+        """Exit code 1 with no failures → only exitcode Finding.
+
+        Kills mutmut_1: early return and exitcode check mutations.
+        """
+        adapter = PytestAdapter()
+        xml = """<testsuites>
+  <testsuite tests="2" failures="0" errors="0">
+    <testcase classname="m" name="ok"/>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml, exitcode=1)
+        assert len(findings) == 1
+        assert findings[0].rule_id == "exitcode"
+        assert findings[0].message == "Test execution failed with exit code 1"
+
+    def test_parse_error_full_finding_object(self) -> None:
+        """Full Finding comparison for error → kills mutmut_219,240.
+
+        Ensures every field on the error Finding is correct.
+        Mutant: .get("message", None) → None causes fallback message → diff.
+        Mutant: .get("message",) → KeyError would crash or return default.
+        Mutant: severity mutations → "error" → "XXerrorXX" or None.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" errors="1" failures="0">
+    <testcase classname="mod.pkg" name="test_crash_xyz">
+      <error message="segmentation fault" type="SIGSEGV">core dump</error>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) == 2
+        # summary
+        summary = findings[0]
+        assert summary.rule_id == "summary"
+        assert summary.message == "1 error(s)"
+        # error finding
+        err = findings[1]
+        assert err.severity == "error"
+        assert err.node == "mod.pkg.test_crash_xyz"
+        assert err.message == "segmentation fault"  # exact message
+        assert err.fix_hint is None
+        assert err.tool == "pytest"
+        assert err.layer == "L1"
+        assert err.language == "python"
+        assert err.rule_id == "error"
+
+    def test_parse_failure_full_finding_object(self) -> None:
+        """Full Finding comparison for failure → same pattern as error test.
+
+        Kills mutmut_197: mutations on failure get("message", ...) path.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="1" errors="0">
+    <testcase classname="e2e" name="test_auth_flow">
+      <failure message="Expected: 42, Got: 0" type="AssertionError">expected 42</failure>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) == 2
+        failure = findings[1]
+        assert failure.severity == "error"
+        assert failure.node == "e2e.test_auth_flow"
+        assert failure.message == "Expected: 42, Got: 0"  # exact from message attr
+        assert failure.fix_hint is None
+        assert failure.tool == "pytest"
+        assert failure.rule_id == "failure"
+
+    def test_parse_skipped_full_finding_object(self) -> None:
+        """Full Finding comparison for skipped → kills mutmut mutations.
+
+        Mutants on skip.get("message", ...), severity "info", etc.
+        """
+        adapter = PytestAdapter()
+        xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite tests="1" failures="0" errors="0">
+    <testcase classname="tests.integration" name="test_skip_xfail">
+      <skipped message="reason: xfail expected" type="xfail"/>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+        findings = adapter.parse(xml)
+        assert len(findings) == 1
+        skip = findings[0]
+        assert skip.severity == "info"
+        assert skip.node == "tests.integration.test_skip_xfail"
+        assert skip.message == "reason: xfail expected"
+        assert skip.fix_hint is None
+        assert skip.tool == "pytest"
+        assert skip.layer == "L1"
+        assert skip.language == "python"
+        assert skip.rule_id == "skipped"

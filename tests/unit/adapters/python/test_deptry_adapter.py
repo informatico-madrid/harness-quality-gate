@@ -463,6 +463,40 @@ class TestInvoke:
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs.get("timeout") == 120.0
 
+    def test_invoke_wiring_exact_call_args(self, adapter):
+        """invoke() calls _run with exact cmd list + cwd/env/timeout.
+
+        Kills mutmut_1,3,4,5,11,23,27: cmd element mutations (binary, flags, "."),
+        cwd→None, env→None. Uses §4.4 exact cmd list + kwargs §4.7.
+        """
+        mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.invoke(
+                    Path("/tmp/deploy"),
+                    ["--extend-exclude", "docs/"],
+                    env={"DEPTRY_ENV": "1"},
+                    timeout=150.0,
+                )
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        assert cmd == ["/bin/deptry", "--output", "json", ".", "--extend-exclude", "docs/"]
+        assert call_args.kwargs["cwd"] == Path("/tmp/deploy")
+        assert call_args.kwargs["env"] == {"DEPTRY_ENV": "1"}
+        assert call_args.kwargs["timeout"] == 150.0
+
+    def test_invoke_default_timeout(self, adapter):
+        """Default timeout=300.0 forwarded to _run.
+
+        Kills mutmut_2: timeout default mutation (300→301).
+        """
+        mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.invoke(Path("/tmp/empty"), [])
+        assert mock_run.call_args.kwargs["timeout"] == 300.0
+
 
 # ---------------------------------------------------------------------------
 # version(): method
@@ -510,6 +544,31 @@ class TestVersion:
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs.get("env") == {"FOO": "bar"}
 
+    def test_version_wiring_exact_call_args(self, adapter):
+        """version() calls _run with exact binary + --version cmd + cwd + env.
+
+        Kills mutmut survivors (11,12,14,15,17,18): cmd element mutations,
+        cwd→None, env→None on version call. Uses §4.4 spy.
+        """
+        mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp/empty"), env={"DEPTRY_ENV": "1"})
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == ["/bin/deptry", "--version"]
+        assert mock_run.call_args.kwargs["env"] == {"DEPTRY_ENV": "1"}
+
+    def test_version_env_none_passed(self, adapter):
+        """env=None passed to _run when not specified.
+
+        Kills mutmut on env=env mutation: env=None → removed.
+        """
+        mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+                adapter.version(Path("/tmp/empty"))
+        assert mock_run.call_args.kwargs["env"] is None
+
 
 # ---------------------------------------------------------------------------
 # Properties and identity
@@ -523,3 +582,63 @@ class TestProperties:
 
     def test_name_class_attribute(self, adapter):
         assert adapter._name == "deptry"
+
+    def test_parse_finding_full_object(self, adapter):
+        """Full Finding comparison kills remaining mutmut (1,2,71,73,74).
+
+        Mutmut_1,2: module/name field extraction → default mutations
+        Mutmut_71,73,74: detail/message construction → string mutations
+        Uses dense assertions on every Finding field (§4.1).
+        """
+        data = {
+            "errors": {
+                "unused_imports": [{
+                    "module": "requests",
+                    "filepath": "src/client.py",
+                    "line": 37,
+                }],
+            }
+        }
+        result = adapter.parse(json.dumps(data))
+        assert len(result) == 1
+        f = result[0]
+        assert f.node == "src/client.py"
+        assert f.severity == "warning"
+        assert f.message == "src/client.py:37 — unused_imports: requests"
+        assert f.fix_hint == "Review unused_imports for 'requests'"
+        assert f.tool == "deptry"
+        assert f.layer == "L2"
+        assert f.language == "python"
+        assert f.rule_id == "unused_imports"
+
+    def test_parse_name_field_fallback(self, adapter):
+        """Item with 'name' but no 'module' → module falls back to name.
+
+        Kills mutmut_1,2: get("module"→"XXmoduleXX", get("name"→"") mutations.
+        """
+        data = {"errors": {"missing_imports": [{"name": "missing_pkg", "filepath": "src/app.py"}]}}
+        result = adapter.parse(json.dumps(data))
+        assert len(result) == 1
+        f = result[0]
+        assert f.node == "src/app.py"
+        # with line=0 (falsy) and filepath: detail = "src/app.py — missing_imports: missing_pkg"
+        assert f.message == "src/app.py — missing_imports: missing_pkg"
+        assert f.severity == "error"
+        assert f.rule_id == "missing_imports"
+        assert f.tool == "deptry"
+
+    def test_parse_items_string_item_full(self, adapter):
+        """String item in a list → node='<unknown>' with full fields.
+
+        Kills mutmut_71,73,74: non-dict item path mutations.
+        """
+        data = {"errors": {"unused_imports": ["bare_module"]}}
+        result = adapter.parse(json.dumps(data))
+        assert len(result) == 1
+        f = result[0]
+        assert f.node == "bare_module"
+        assert f.severity == "warning"
+        assert f.message == "unused_imports: bare_module"
+        assert f.fix_hint == "Review unused_imports for 'bare_module'"
+        assert f.tool == "deptry"
+        assert f.rule_id == "unused_imports"
