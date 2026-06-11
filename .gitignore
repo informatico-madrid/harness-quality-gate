@@ -72,3 +72,4 @@ results.json
 mutmut_run.log
 results.txt
 uv.lock
+localDocs/*
