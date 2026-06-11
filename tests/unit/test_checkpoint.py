@@ -447,6 +447,42 @@ def test_build_timestamp_is_valid_iso8601(good_detection: dict) -> None:
     )
 
 
+def test_write_uses_indent_2_pretty_print(good_detection: dict, tmp_path: Path) -> None:
+    """write() must use json.dumps(indent=2) — kills mutmut_12 (indent=None compact).
+
+    Pretty-printed JSON with indent=2 contains '\\n  ' (newline + 2 spaces + key).
+    Compact JSON (indent=None) is a single line with no '\\n  ' patterns.
+    Uses a dict with an inner key to make the indented pattern observable.
+    """
+    # Use a data dict with nested structure so indent pattern is clear
+    data: dict = {
+        "version": "v2",
+        "timestamp": "2026-06-11T00:00:00Z",
+        "repository": "/tmp/test",
+        "language": "python",
+        "layers": [{"layer": "L1", "language": "python", "passed": True, "findings": [], "duration_sec": 0.5}],
+        "mutation": {
+            "total": 100, "killed": 95, "survived": 3, "timed_out": 1,
+            "escaped": 0, "untested": 1, "msi": 95.0,
+        },
+    }
+    target = tmp_path / "checkpoint.json"
+    write(target, data)
+
+    content = target.read_text(encoding="utf-8")
+
+    # Pretty-printed JSON with indent=2 has '\\n  "key"' (newline + 2 spaces indent + key).
+    # Compact JSON (indent=None) produces '{"version": "v2", ...}' — no newline-inside.
+    assert '\n  "version"' in content
+    assert '\n  "mutation"' in content
+
+    # Also verify multi-line: must have at least as many newlines as top-level keys (5+)
+    assert content.count("\n") >= 6, (
+        f"Expected at least 6 newlines in pretty-printed JSON, got {content.count(chr(10))}. "
+        "This suggests indent=None (compact JSON) was used instead of indent=2."
+    )
+
+
 def test_write_atomic_cleanup_on_fdopen_failure(good_detection: dict, tmp_path: Path) -> None:
     """Kill the 'BaseException after mkstemp → no cleanup' mutation in write().
 
@@ -484,6 +520,25 @@ def test_build_layer_missing_layer_key_uses_empty_string(good_detection: dict) -
     )
 
 
+def test_validate_opens_schema_with_mode_r_explicit() -> None:
+    """validate() must open the schema file with mode='r' explicitly.
+
+    Kills mutmut_11 which removes the 'r' mode argument from
+    `schema_path.open("r", encoding="utf-8")`.
+
+    Technique H2 (spy): mock Path.open and assert the call args.
+    Under the mutated code, open() has no positional "r" arg — the
+    positional-arg ``is`` check fails the mutant.
+    """
+    from unittest.mock import mock_open
+
+    m_open = mock_open(read_data='{"type": "object"}')
+    with patch("pathlib.Path.open", m_open):
+        validate({"any": "data"})
+    # Pin: open() was called with "r" as the first positional arg
+    assert m_open.call_args.args[0] == "r"
+
+
 def test_build_layer_missing_language_key_uses_empty_string(good_detection: dict) -> None:
     """Kill lr.get('language') → lr.get('language') or 'XXXX' fallback mutation (mutmut_28).
 
@@ -495,7 +550,77 @@ def test_build_layer_missing_language_key_uses_empty_string(good_detection: dict
         "findings": [],
         "duration_sec": 0.0,
     }
-    result = build([layer_dict], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+    result = build(
+        [layer_dict],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
     assert result["layers"][0]["language"] == "", (
         f"Missing 'language' should default to empty string, got: {result['layers'][0]['language']!r}"
+    )
+
+
+def test_validate_opens_schema_with_utf8_encoding_explicit(good_detection: dict) -> None:
+    """validate() must open the schema file with encoding='utf-8' explicitly.
+
+    Kills mutmut_10 (encoding=None). mutmut wraps strings as XXfooXX — even
+    `assertIn 'utf-8' in encoding` would pass; we use kwargs pin instead.
+    """
+    from unittest.mock import mock_open
+
+    data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
+
+    m_open = mock_open(read_data='{"type": "object"}')
+    with patch("pathlib.Path.open", m_open):
+        validate(data)
+
+    # The code calls schema_path.open("r", encoding="utf-8")
+    # Under the mutant, encoding becomes None — this assert catches it.
+    call_kwargs = m_open.call_args.kwargs
+    assert call_kwargs.get("encoding") == "utf-8"
+
+
+def test_build_calls_datetime_now_with_timezone_utc() -> None:
+    """Kill 'datetime.now(timezone.utc) → datetime.now(None)' mutation (mutmut_79).
+
+    When mutated to datetime.now(None), the call uses the local timezone instead
+    of UTC — producing a DIFFERENT instant though the strftime format is identical.
+    This spy verifies the argument to datetime.now() is timezone.utc.
+
+    Technique: H2 (spy on dependency call args) + H1 (assertEqual exact).
+    """
+    from datetime import datetime, timezone as tz
+
+    fixed_dt = datetime(2026, 6, 11, 12, 0, 0, tzinfo=tz.utc)
+
+    with patch("harness_quality_gate.checkpoint.datetime") as dt_mock:
+        dt_mock.now.return_value = fixed_dt
+        dt_mock.timezone = tz  # module attribute, preserved for the build path
+
+        result = build(
+            [],
+            {"python_version": "3.13", "concurrency": "seq", "ci": False},
+            {"repo_path": "/x", "language": "python"},
+        )
+
+    # The spy must see datetime.now called with timezone.utc, NOT None.
+    # Mutant calls datetime.now(None) — assert_called_with(timezone.utc) fails.
+    dt_mock.now.assert_called_with(tz.utc)
+    assert result["timestamp"] == "2026-06-11T12:00:00Z"
+
+
+def test_build_repository_defaults_to_empty_string_when_repo_path_absent() -> None:
+    """Kill mutmut_90: detection.get('repo_path') or '' → 'XXXX'.
+
+    When 'repo_path' is absent from detection, data['repository'] must be ''
+    (not 'XXXX'). The good_detection fixture always includes repo_path, so
+    the fallback branch is currently untested.
+    """
+    result = build(
+        [],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        {"language": "python", "confidence": 0.9},  # no 'repo_path'
+    )
+    assert result["repository"] == "", (
+        f"Missing 'repo_path' should default to empty string, got: {result['repository']!r}"
     )
