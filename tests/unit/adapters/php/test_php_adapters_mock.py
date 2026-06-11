@@ -5729,6 +5729,30 @@ class TestPhpAntipatternTierAAdapter:
         # Mutant:   "phpmd: err1XX\nXXvisitor: err2"
         assert result.stderr == "phpmd: err1\nvisitor: err2"
 
+    def test_version_passes_repo_to_phpmd_not_none(
+        self, tmp_path: Path,
+    ) -> None:
+        """Verify `version()` passes the actual `repo` Path to `_phpmd.version`.
+
+        Kills mutmut_2 (which passes `None` instead of `repo`).
+
+        Technique H2: spy on `_phpmd.version` to verify argument identity.
+        Under the mutated code, `_phpmd.version(repo, env)` becomes
+        `_phpmd.version(None, env)`, so `call_args.args[0] is repo` fails.
+        """
+        repo = Path("/my/repo/test/version/wiring")
+        adapter = PhpAntipatternTierAAdapter()
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.version.return_value = "2.14.0"
+        adapter._visitors = MagicMock()
+        adapter._visitors.version.return_value = "poC"
+
+        adapter.version(repo, env={"FAKE_ENV": "1"})
+
+        call_args = adapter._phpmd.version.call_args
+        assert call_args.args[0] is repo
+        assert call_args.args[0] is not None
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Kill composer_audit_adapter.py mutations

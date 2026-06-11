@@ -54,6 +54,16 @@ def test_version_binary_not_found_raises(tmp_path: Path) -> None:
     assert "PATH" in exc_info.value.args[0]
 
 
+def test_version_calls_shutil_which_with_literal_vulture(tmp_path: Path) -> None:
+    """version() must call shutil.which('vulture') verbatim (kills mutmut_2: which(None))."""
+    with patch("shutil.which", return_value="/usr/bin/vulture") as which_mock:
+        with patch.object(
+            ToolAdapter, "_run", return_value=MagicMock(stdout="vulture 2.7", stderr="", exitcode=0, duration_seconds=0.1)
+        ):
+            _adapter().version(tmp_path)
+    which_mock.assert_called_once_with("vulture")
+
+
 def test_version_calls_run_version_flag(tmp_path: Path) -> None:
     """Binary found → _run invoked with [binary, '--version']."""
     fake_bin = "/usr/bin/vulture"

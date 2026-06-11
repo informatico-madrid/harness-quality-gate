@@ -6,6 +6,7 @@ only to avoid import conflicts from other adapter tests.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -539,6 +540,31 @@ class TestPhpMdAdapter:
             return_value=None,
         ):
             with pytest.raises(RuntimeError, match="phpmd not found"):
+                adapter.version(tmp_path)
+
+    def test_version_no_binary_raises_with_exact_anchored_message(
+        self, tmp_path: Path
+    ) -> None:
+        """Kills mutmut_5 (XX-wrap on RuntimeError message) via anchored regex.
+
+        Technique H14 — anchored delimiters that XX-wrap breaks.
+        The existing test uses match="phpmd not found" (substring), which
+        survives the XX-wrap because "phpmd not found" is contained inside
+        "XXphpmd not found on PATH or in vendor/binXX".
+        Using ^...$ anchors forces the regex to match ONLY the exact string,
+        breaking the wrapped version.
+        """
+        adapter = PhpMdAdapter()
+        exact_message = "phpmd not found on PATH or in vendor/bin"
+        with patch.object(
+            adapter,
+            "_phpmd_binary",
+            return_value=None,
+        ):
+            with pytest.raises(
+                RuntimeError,
+                match=r"^" + re.escape(exact_message) + r"$",
+            ):
                 adapter.version(tmp_path)
 
     def test_version_success(self, tmp_path: Path) -> None:

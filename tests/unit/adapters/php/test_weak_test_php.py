@@ -177,6 +177,42 @@ class TestRunL3b:
         call_kwargs = mock_invoke.call_args
         assert call_kwargs[1]["env"] == {"FOO": "BAR"}
 
+    def test_run_l3b_passes_empty_args_list_to_invoke(self) -> None:
+        """run_l3b must pass [] as the second positional arg to _adapter.invoke.
+
+        Kills mutmut_8 which removes the [] (changes
+        ``invoke(repo, [], env=env, timeout=300.0)`` → ``invoke(repo, env=env, timeout=300.0)``).
+        Under the mutant the ``args`` kwarg is missing from the call, so this
+        test detects the omission via ``call_args``.
+        """
+        with patch.object(
+            PhpWeakTestAdapter,
+            "invoke",
+            return_value=_mock_ok(),
+        ) as mock_invoke:
+            adapter = PhpWeakTestLayerAdapter()
+            adapter.run_l3b(Path("/tmp/repo"), {})
+
+        call_args = mock_invoke.call_args
+        # Original: invoke(repo, [], env=env, timeout=300.0)
+        #   → call_args.args  == (repo, [])        — 2 positional args
+        #   → call_args.args[1] == []
+        # Mutant:    invoke(repo, env=env, timeout=300.0)
+        #   → call_args.args  == (repo,)           — only 1 positional arg
+        if len(call_args.args) >= 2:
+            assert call_args.args[1] == [], (
+                f"mutmut_8: second positional arg must be [] (empty list). "
+                f"Got: {call_args.args[1]!r}"
+            )
+        else:
+            # The mutant omitted [] entirely — should appear as a kwarg only
+            # if the caller passed ``args=[]`` as a keyword, which it doesn't.
+            assert "args" in call_args.kwargs, (
+                f"mutmut_8: args must be passed as a kwarg=[] when not positional. "
+                f"kwargs keys: {list(call_args.kwargs.keys())}"
+            )
+            assert call_args.kwargs["args"] == []
+
     def test_run_l3b_empty_findings_passed(self, tmp_path: Path) -> None:
         """No findings → LayerResult.passed=True."""
         with patch.object(

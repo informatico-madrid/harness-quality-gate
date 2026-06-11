@@ -569,6 +569,23 @@ class TestVersion:
                 adapter.version(Path("/tmp/empty"))
         assert mock_run.call_args.kwargs["env"] is None
 
+    def test_version_shutil_which_called_with_deptry_literal(self, adapter):
+        """version() calls shutil.which('deptry') verbatim (kills mutmut_2: which(None)).
+
+        Technique H2: spy on shutil.which and assert the exact call argument.
+        Under the mutant, shutil.which(None) is called → assert_called_once_with('deptry') fails.
+        """
+        mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
+        with (
+            patch(
+                "harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
+                return_value="/bin/deptry",
+            ) as which_mock,
+            patch.object(adapter, "_run", return_value=mock_result),
+        ):
+            adapter.version(Path("/tmp/empty"))
+        which_mock.assert_called_once_with("deptry")
+
 
 # ---------------------------------------------------------------------------
 # Properties and identity
