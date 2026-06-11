@@ -460,6 +460,31 @@ def test_invoke_raises_when_binary_missing() -> None:
             adapter.invoke(repo, [])
 
 
+def test_invoke_raises_with_exact_runtime_error_message() -> None:
+    """invoke with missing deptrac binary raises RuntimeError with EXACT message.
+
+    H14 — anchored regex kills the XX-wrap mutant (mutmut_14):
+    'deptrac not found at vendor/bin/deptrac' → 'XXdeptrac not found at vendor/bin/deptracXX'.
+
+    The ^…$ anchored match breaks when mutmut wraps the string with XX,
+    because the original message no longer matches the anchored pattern.
+    Without anchors, re.search() would find the substring inside the XX-wrapped string.
+    """
+    import re
+    adapter = DeptracAdapter()
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        exact_message = "deptrac not found at vendor/bin/deptrac"
+        with pytest.raises(
+            RuntimeError,
+            match="^" + re.escape(exact_message) + "$",
+        ):
+            adapter.invoke(repo, [])
+
+
 def test_invoke_calls_run_with_correct_cmd() -> None:
     """invoke creates correct command and passes through _run.
 
@@ -518,3 +543,39 @@ def test_version_raises_not_implemented() -> None:
         # Kill string mutations on the error message
         assert "deptrac version detection" in str(info.value)
         assert "POC" in str(info.value)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kill invoke() env passthrough mutation (mutmut_24: env=env → env=None)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_invoke_forwards_env_not_none_to_run(tmp_path: Path) -> None:
+    """invoke() must forward env=env to _run (kills mutmut_24 which sets env=None).
+
+    H2 — Spy pattern: mock _run, call invoke(), assert env kwargs identity.
+    Under mutated code, _run is called with env=None, so `is env` fails.
+    """
+    from harness_quality_gate.adapters.php.deptrac_adapter import DeptracAdapter
+    from harness_quality_gate.adapters.base import ToolInvocation
+
+    adapter = DeptracAdapter()
+    vendor_bin = tmp_path / "vendor" / "bin"
+    vendor_bin.mkdir(parents=True)
+    (vendor_bin / "deptrac").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    env = {"FAKE_KEY": "FAKE_VALUE", "PATH": "/usr/bin"}
+    adapter._run = MagicMock(
+        return_value=ToolInvocation(
+            stdout="", stderr="", exitcode=0, duration_seconds=0.1
+        )
+    )
+
+    adapter.invoke(tmp_path, args=[], env=env, timeout=10)
+
+    # Pin: env kwarg must be the env dict we passed (identity, not None)
+    call_kwargs = adapter._run.call_args.kwargs
+    assert call_kwargs.get("env") is env, (
+        "_run was not called with env=env — mutant_24 set env=None"
+    )
+    assert call_kwargs.get("env") is not None

@@ -628,11 +628,57 @@ class TestProbeLayerResultIdentity:
 
 
 class TestProbeGlobMutations:
-    """Kills probe__mutmut_48 and probe__mutmut_50.
+    """Kills probe__mutmut_44 (XX-wrap on first glob pattern) and
+    probe__mutmut_48, probe__mutmut_50.
 
+    - mutmut_44: "/tmp/pcov-extract/usr/lib/php/*/pcov.so" →
+      "XX/tmp/pcov-extract/usr/lib/php/*/pcov.soXX" → no match
     - mutmut_48: glob.glob(pattern) → None → if found: → always False
     - mutmut_50: logger.info(None, found[0]) → None arg → breaks
     """
+
+    def test_probe_uses_exact_first_glob_pattern_h2(self) -> None:
+        """probe() passes the literal first glob pattern to glob.glob (H2 spy).
+
+        The XX-wrap mutant (mutmut_44) changes the pattern to
+        "XX/tmp/pcov-extract/usr/lib/php/*/pcov.soXX", which does not
+        match any real filesystem path.
+
+        We spy on `glob.glob` with side_effect: first call returns a match
+        → probe returns "pcov" early, preventing the RuntimeError.
+        Then we assert the first call_args[0] is the exact non-wrapped
+        pattern.
+
+        Kills: probe__mutmut_44 (XX-wrap on first glob pattern).
+        """
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = "Core\ndate"  # no pcov, no xdebug
+
+        with patch(
+            "harness_quality_gate.adapters.php.pcov_adapter.shutil.which",
+            return_value="/usr/bin/php",
+        ):
+            with patch(
+                "harness_quality_gate.adapters.php.pcov_adapter.subprocess.run",
+                return_value=completed,
+            ):
+                with patch(
+                    "harness_quality_gate.adapters.php.pcov_adapter.glob.glob",
+                    side_effect=[
+                        ["/tmp/pcov-extract/usr/lib/php/20210902/pcov.so"],
+                        [],
+                    ],
+                ) as mock_glob:
+                    result = PcovAdapter().probe()
+
+        assert result == "pcov"
+
+        # First call to glob.glob must use the exact first pattern (no XX-wrap).
+        first_pattern = mock_glob.call_args_list[0].args[0]
+        assert first_pattern == "/tmp/pcov-extract/usr/lib/php/*/pcov.so", (
+            f"Expected exact first glob pattern, got: {first_pattern!r}"
+        )
 
     def test_probe_pcov_via_glob_uses_glob_result(self, tmp_path: Path) -> None:
         """Glob fallback sets found from glob.glob — kills mutation to None.

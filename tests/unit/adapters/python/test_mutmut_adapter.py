@@ -46,6 +46,23 @@ def test_version_binary_not_found_raises(tmp_path: Path) -> None:
             _adapter().version(tmp_path)
 
 
+def test_version_calls_shutil_which_with_literal_mutmut(tmp_path: Path) -> None:
+    """version() must call shutil.which('mutmut') verbatim (kills mutmut_2: which(None))."""
+    with (
+        patch(
+            "harness_quality_gate.adapters.python.mutmut_adapter.shutil.which",
+            return_value="/usr/bin/mutmut",
+        ) as which_mock,
+        patch.object(
+            ToolAdapter,
+            "_run",
+            return_value=MagicMock(stdout="mutmut 3.3", stderr="", exitcode=0, duration_seconds=0.1),
+        ),
+    ):
+        _adapter().version(tmp_path)
+    which_mock.assert_called_once_with("mutmut")
+
+
 def test_name_property_returns_tool_name() -> None:
     """Accessing .name triggers the name property → covers line 27."""
     assert _adapter().name == "mutmut"

@@ -72,13 +72,21 @@ class TestComposerBinary:
 class TestVersion:
     """Tests for version() — kills binary resolution, subprocess args, version parsing."""
 
-    def test_version_raises_when_not_found(self) -> None:
-        """When composer binary not found → RuntimeError."""
+    def test_version_raises_when_not_found_exact_message(self) -> None:
+        """When composer binary not found → RuntimeError with EXACT message.
+
+        Anchored regex ^...$ forces exact string — 'XX...XX' wrap breaks it (H14).
+        """
+        import re
         with patch(
             "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
             return_value=None,
         ):
-            with pytest.raises(RuntimeError, match="composer not found"):
+            with pytest.raises(
+                RuntimeError,
+                # re.escape + anchors: fullmatch without using re.fullmatch()
+                match=r"^" + re.escape("composer not found on PATH") + r"$",
+            ):
                 _adapter().version(Path("/repo"))
 
     def test_version_successful_extraction_from_output(self) -> None:
