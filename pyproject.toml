@@ -100,8 +100,11 @@ backup = false
 mutate_only_covered_lines = true
 # Stack depth limit (matches ha-ev-trip-planner)
 max_stack_depth = 8
-# Timeout per mutant in seconds
-timeout = 600
+# Timeout configuration (mutmut 3.6.0 uses formula, not fixed value)
+# Formula: (duration_of_original_tests + timeout_constant) * timeout_multiplier
+# Increased to avoid false timeouts on slow mutants
+timeout_constant = 10.0
+timeout_multiplier = 30.0
 # Data dirs the package reads relative to the repo root (resolved via
 # __file__.parent.parent in checkpoint.validate() and installer config lookup).
 # mutmut runs the suite from the mutants/ sandbox, so these MUST be copied in or

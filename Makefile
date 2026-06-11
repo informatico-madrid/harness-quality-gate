@@ -1,5 +1,5 @@
 # Makefile for harness-quality-gate mutation testing
-# Mutmut 3.6.0 | 40-core parallel execution | Config: pyproject.toml [tool.mutmut]
+# Mutmut 3.6.0 | 18-core parallel execution | Config: pyproject.toml [tool.mutmut]
 #
 # ═══════════════════════════════════════════════════════════
 # COMPLETE MUTATION WORKFLOW — ANY AGENT CAN FOLLOW THIS
@@ -82,6 +82,12 @@
 
 .PHONY: mutation mutation-path check-tests coverage clean-mutmut help
 
+# Load .env file if it exists
+ifneq (,$(wildcard ./.env))
+include .env
+export
+endif
+
 MUTATION_MAX_CHILDREN ?= $(shell nproc)
 VENV = .venv
 
@@ -124,7 +130,7 @@ clean-mutmut:
 # ─────────────────────────────────────────────────────────
 # Config: pyproject.toml [tool.mutmut] — paths_to_mutate, runner, timeout, etc.
 # Source files: 19 Python files from paths_to_mutate config
-# Expected: ~6851 mutants, ~20 min on 40 cores
+# Expected: ~7047 mutants, ~25 min on 18 cores
 mutation:
 	@echo "╔══════════════════════════════════════════╗"
 	@echo "║   Mutation Testing — Full Parallel Run  ║"
