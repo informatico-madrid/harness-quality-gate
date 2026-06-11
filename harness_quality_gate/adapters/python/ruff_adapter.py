@@ -50,11 +50,10 @@ class RuffAdapter(ToolAdapter):
         cmd.append(str(repo))
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         findings: list[Finding] = []
         if not stdout.strip():
@@ -83,17 +82,18 @@ class RuffAdapter(ToolAdapter):
                 fix_msg = fix.get("message")
                 if isinstance(fix_msg, str):
                     fix_hint = fix_msg
-            detail = message
             if line:
                 detail = f"{filename}:{line}"
                 if col:
                     detail += f":{col}"
                 detail += f" [{code}]: {message}"
+            else:
+                detail = message or str(entry)
             findings.append(
                 Finding(
                     node=filename,
                     severity="warning" if code else "error",
-                    message=detail or message or str(entry),
+                    message=detail,
                     fix_hint=fix_hint,
                     tool="ruff",
                     layer="L2",

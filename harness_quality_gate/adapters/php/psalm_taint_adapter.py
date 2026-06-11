@@ -155,11 +155,10 @@ class PsalmTaintAdapter(ToolAdapter):
         cmd = self._psalm_binary(repo)
         if cmd is None:
             logger.warning("psalm not found; returning INFRA_INCOMPLETE")
+            # stdout/duration_seconds keep their dataclass defaults
             return ToolInvocation(
-                stdout="",
                 stderr="psalm not found on PATH or in vendor/bin",
                 exitcode=3,  # INFRA_INCOMPLETE
-                duration_seconds=0.0,
             )
         return self._run(
             [*cmd, *args],

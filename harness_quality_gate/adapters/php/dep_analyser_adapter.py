@@ -67,11 +67,10 @@ class DepAnalyserAdapter(ToolAdapter):
                 "composer-dependency-analyser not found; "
                 "returning INFRA_INCOMPLETE"
             )
+            # stdout/duration_seconds keep their dataclass defaults
             return ToolInvocation(
-                stdout="",
                 stderr="composer-dependency-analyser not found",
                 exitcode=3,
-                duration_seconds=0.0,
             )
         return self._run(
             [*cmd, *args],
@@ -118,7 +117,7 @@ class DepAnalyserAdapter(ToolAdapter):
                         file_name=item.get("file", ""),
                         line=item.get("line"),
                         violation_type=vtype,
-                        message=item.get("message", ""),
+                        message=item.get("message"),
                     )
                 )
             return findings
@@ -129,7 +128,8 @@ class DepAnalyserAdapter(ToolAdapter):
             for filepath, file_data in files.items():
                 if not isinstance(file_data, dict):
                     continue
-                violations = file_data.get("violations", [])
+                # the isinstance guard below collapses a missing key
+                violations = file_data.get("violations")
                 if not isinstance(violations, list):
                     continue
                 for v in violations:
@@ -144,7 +144,7 @@ class DepAnalyserAdapter(ToolAdapter):
                             file_name=filepath,
                             line=v.get("line"),
                             violation_type=vtype,
-                            message=v.get("message", ""),
+                            message=v.get("message"),
                         )
                     )
             return findings
@@ -158,7 +158,7 @@ class DepAnalyserAdapter(ToolAdapter):
         file_name: str,
         line: int | None,
         violation_type: str,
-        message: str,
+        message: str | None,
     ) -> Finding:
         """Build a Finding from a single dependency-analyser violation."""
         prefix = violation_type.replace("dep-", "")

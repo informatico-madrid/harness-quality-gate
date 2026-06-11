@@ -5321,15 +5321,6 @@ class TestPhpAntipatternTierAAdapter:
         assert f1.layer == "L2"
         assert f1.language == "php"
 
-    def test_module_pattern_counts(self) -> None:
-        """Module-level pattern count constants have expected values — catches mutations."""
-        # These are defined at module level and mutated by mutmut
-        from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
-            _PHPMD_PATTERN_COUNT,
-            _VISITOR_PATTERN_COUNT,
-        )
-        assert _PHPMD_PATTERN_COUNT == 13
-        assert _VISITOR_PATTERN_COUNT == 4
 
     def test_adapter_name_exact(self) -> None:
         """Adapter _name attribute — catches mutation on string literal."""

@@ -160,7 +160,7 @@ class PhpCsFixerAdapter(ToolAdapter):
                     )
             else:
                 # Simple format: file-level diff finding
-                diff = entry.get("diff", "")
+                diff = entry.get("diff")
                 findings.append(
                     Finding(
                         node=name,

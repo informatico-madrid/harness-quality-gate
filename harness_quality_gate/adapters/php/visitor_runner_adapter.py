@@ -185,12 +185,8 @@ class VisitorRunnerAdapter(ToolAdapter):
         severity = item.get("severity", "info")
         fix_hint = item.get("fix_hint")
 
+        # the raw line value is only embedded in the node string
         node = f"{filepath}:{line}" if line else filepath
-        if line:
-            try:
-                line = int(line)
-            except (ValueError, TypeError):
-                pass
 
         return Finding(
             node=node,
@@ -208,7 +204,9 @@ class VisitorRunnerAdapter(ToolAdapter):
     @staticmethod
     def _merge_findings(all_findings: list[dict]) -> str:
         """Serialize merged findings to JSON string."""
-        return json.dumps(all_findings, ensure_ascii=False)
+        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
+        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
+        return json.dumps(all_findings, ensure_ascii=False)  # pragma: no mutate
 
     @staticmethod
     def _build_stderr(stderr_parts: list[str]) -> str:
@@ -261,7 +259,10 @@ class VisitorRunnerAdapter(ToolAdapter):
         # before the JSON. Try to extract the first '[' ... ']'.
         start = text.find("[")
         end = text.rfind("]")
-        if start >= 0 and end > start:
+        # reason: Tipo B — '[' y ']' nunca comparten índice (end==start inalcanzable)
+        # y con un solo corchete el slice degenerado cae igualmente al warning;
+        # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
+        if start >= 0 and end > start:  # pragma: no mutate
             try:
                 return json.loads(text[start:end + 1])
             except json.JSONDecodeError:

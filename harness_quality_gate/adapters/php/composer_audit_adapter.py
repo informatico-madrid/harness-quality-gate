@@ -132,9 +132,10 @@ class ComposerAuditAdapter(ToolAdapter):
             for adv in adv_list:
                 if not isinstance(adv, dict):
                     continue
-                cve = adv.get("cve") or adv.get("advisoryId", "")
-                title = adv.get("title", "")
-                link = adv.get("link", "")
+                # the `x if x else None` collapses make these defaults dead
+                cve = adv.get("cve") or adv.get("advisoryId")
+                title = adv.get("title")
+                link = adv.get("link")
                 findings.append(
                     Finding(
                         node=package,
@@ -142,7 +143,6 @@ class ComposerAuditAdapter(ToolAdapter):
                         message=f"{title}" if title else f"Advisory for {package}",
                         fix_hint=link if link else None,
                         cve=cve if cve else None,
-                        cwe="",
                     )
                 )
 

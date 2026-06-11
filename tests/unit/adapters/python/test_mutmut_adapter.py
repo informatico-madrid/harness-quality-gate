@@ -533,11 +533,11 @@ def test_parse_returns_mutation_stats_type() -> None:
 
 
 def test_parse_with_stderr_parameter() -> None:
-    """stderr parameter accepted in signature but not used by parse()."""
+    """Extra positional compat args (stderr/exitcode) are accepted and ignored."""
     stats = _adapter().parse(
         json.dumps({"total": 10, "killed": 8, "survived": 2}),
-        stderr="warning: something",
-        exitcode=0,
+        "warning: something",
+        0,
     )
 
     assert stats.total == 10

@@ -86,14 +86,13 @@ class SecurityCheckerAdapter(ToolAdapter):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                check=False,
             )
             duration = (
                 datetime.now(timezone.utc) - start
             ).total_seconds()
             return ToolInvocation(
                 stdout=result.stdout,
-                stderr=result.stderr or "",
+                stderr=result.stderr,
                 exitcode=result.returncode,
                 duration_seconds=round(duration, 3),
             )
@@ -116,11 +115,10 @@ class SecurityCheckerAdapter(ToolAdapter):
                 duration_seconds=round(duration, 3),
             )
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse local-php-security-checker JSON output into :class:`Finding`.
 
@@ -163,10 +161,11 @@ class SecurityCheckerAdapter(ToolAdapter):
             if not isinstance(entry, dict):
                 continue
             package = entry.get("package", "unknown")
-            severity = self._normalise_severity(entry.get("severity", ""))
+            severity = self._normalise_severity(entry.get("severity"))
             vuln_versions = entry.get("vulnerable_versions", "")
             pkg_type = entry.get("type", "")
-            links = entry.get("links", [])
+            # the `if links` collapse makes a default redundant
+            links = entry.get("links")
             link_str = links[0] if links else None
             installed = entry.get("installed_version", "")
             findings.append(
@@ -178,8 +177,6 @@ class SecurityCheckerAdapter(ToolAdapter):
                         f"has vulnerability in {vuln_versions} ({pkg_type})"
                     ),
                     fix_hint=link_str,
-                    cve=None,
-                    cwe="",
                     tool=self._name,
                     layer="L4",
                     language="php",
@@ -198,7 +195,11 @@ class SecurityCheckerAdapter(ToolAdapter):
     }
 
     @staticmethod
-    def _normalise_severity(severity: str) -> str:
+    def _normalise_severity(severity: str | None) -> str:
+        if severity is None:
+            # reason: Tipo C — el valor de relleno es gemelo falsy: cualquier string
+            # fuera del _severity_map produce el mismo fallback "warning". # audited: 2026-06-11
+            severity = ""  # pragma: no mutate
         return SecurityCheckerAdapter._severity_map.get(
             severity.lower(), "warning"
         )

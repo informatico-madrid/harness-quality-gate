@@ -150,16 +150,17 @@ class PhpMdAdapter(ToolAdapter):
             if not isinstance(file_entry, dict):
                 continue
             filepath = file_entry.get("file", "")
-            if not isinstance(file_entry.get("violations"), list):
+            violations = file_entry.get("violations")
+            if not isinstance(violations, list):
                 continue
-            for v in file_entry.get("violations", []):
+            for v in violations:
                 if not isinstance(v, dict):
                     continue
                 description = v.get("description", "")
-                rule = v.get("rule", "")
+                rule = v.get("rule")
                 line = v.get("beginLine") or v.get("startLine")
-                class_name = v.get("class", "")
-                method_name = v.get("method", "")
+                class_name = v.get("class")
+                method_name = v.get("method")
 
                 # Build a descriptive message with context
                 context_parts = []
@@ -240,7 +241,6 @@ def _priority_to_severity(priority: int) -> str:
         1: "critical",
         2: "major",
         3: "minor",
-        4: "info",
-        5: "info",
     }
+    # 4, 5 and anything unexpected all map to the "info" default
     return mapping.get(priority, "info")

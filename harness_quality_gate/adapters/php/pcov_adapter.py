@@ -43,14 +43,7 @@ class PcovAdapter(ToolAdapter):
     ) -> str:
         raise NotImplementedError("pcov version detection not implemented (POC)")
 
-    def invoke(
-        self,
-        repo: Path,
-        args: list[str],
-        *,
-        env: Mapping[str, str] | None = None,
-        timeout: float = 300.0,
-    ) -> ToolInvocation:
+    def invoke(self, repo: Path, args: list[str], **_compat: object) -> ToolInvocation:
         raise NotImplementedError("pcov invocation not implemented (POC)")
 
     def parse(

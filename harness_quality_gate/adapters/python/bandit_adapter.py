@@ -49,11 +49,10 @@ class BanditAdapter(ToolAdapter):
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse bandit JSON output into :class:`Finding` objects."""
         findings: list[Finding] = []
@@ -65,18 +64,20 @@ class BanditAdapter(ToolAdapter):
         except json.JSONDecodeError:
             return findings
 
-        issues = data.get("results", []) if isinstance(data, dict) else []
+            # the isinstance guard below collapses a missing key — no default needed
+        issues = data.get("results") if isinstance(data, dict) else []
         if not isinstance(issues, list):
             return findings
 
-        severity_map = {"HIGH": "error", "MEDIUM": "warning", "LOW": "info"}
+        # MEDIUM (and anything unexpected) falls through to the "warning" default
+        severity_map = {"HIGH": "error", "LOW": "info"}
 
         for issue in issues:
             if not isinstance(issue, dict):
                 continue
             filename = issue.get("filename") or ""
             issue_id = issue.get("issue_id") or ""
-            severity_raw = issue.get("issue_severity") or "MEDIUM"
+            severity_raw = issue.get("issue_severity")
             message = issue.get("issue_text") or ""
             line_no = issue.get("line_number") or 0
             cwe = issue.get("cwe") or {}
@@ -86,7 +87,7 @@ class BanditAdapter(ToolAdapter):
             elif isinstance(cwe, str):
                 cwe_id = cwe
             detail = f"{filename}:{line_no} [{issue_id}]: {message}"
-            severity = severity_map.get(severity_raw, "warning")
+            severity = severity_map.get(severity_raw, "warning")  # type: ignore[arg-type]
 
             findings.append(
                 Finding(

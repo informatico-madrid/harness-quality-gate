@@ -191,9 +191,7 @@ def load(repo: Path) -> Config:
             f"or quality-gate.yaml.",
         )
 
-    raw: dict[str, Any] = cast(
-        dict, yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    ) or {}
-    raw = cast(dict, _expand_env_vars(raw))
+    raw: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = _expand_env_vars(raw)  # type: ignore[assignment]
 
     return validate(raw)

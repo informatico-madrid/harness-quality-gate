@@ -303,10 +303,9 @@ class TestParseTopLevelItemMissingMessageDefault:
         call_kwargs = mock_make.call_args[1]
         # Mutant 67: "XXXX" → desc = "class: XXXX" (also caught here)
         # Mutants 62/64: None → desc = "class" (same desc but different arg)
-        assert call_kwargs["message"] == "", (
-            f"message should be '' not {call_kwargs['message']!r} "
-            f"(kills mutmut_62, mutmut_64, mutmut_67)"
-        )
+        # New contract: the dead default was removed (Tipo C) — a missing key
+        # arrives as None and _make_finding collapses it to the bare prefix.
+        assert call_kwargs["message"] is None
 
 
 # ===========================================================================

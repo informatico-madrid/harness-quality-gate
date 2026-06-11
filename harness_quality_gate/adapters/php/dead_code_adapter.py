@@ -62,11 +62,10 @@ class DeadCodeAdapter(ToolAdapter):
         cmd = ["php", str(binary), *args]
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse JSON/JSON5 output into :class:`Finding` objects.
 
@@ -119,7 +118,6 @@ class DeadCodeAdapter(ToolAdapter):
                                     node=filepath,
                                     severity="warning",
                                     message=msg,
-                                    fix_hint=None,
                                     tool=self._name,
                                     layer="L4",
                                     language="php",
@@ -155,7 +153,6 @@ class DeadCodeAdapter(ToolAdapter):
                         node=line,
                         severity="warning",
                         message=line,
-                        fix_hint=None,
                         tool="dead-code-detector",
                         layer="L4",
                         language="php",

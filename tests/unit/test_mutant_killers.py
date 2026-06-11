@@ -295,16 +295,16 @@ def test_allow_list_audit_report_info_severity(tmp_path) -> None:
 # base.py _run — stderr default value and timeout stdout/stderr (kill "" → "XXXX")
 # ---------------------------------------------------------------------------
 
-def test_base_run_stderr_default_empty() -> None:
-    """Kill stderr='' → 'XXXX': verify stderr is empty string when process has no stderr."""
+def test_base_run_stderr_passthrough() -> None:
+    """stderr is passed through verbatim (capture_output+text guarantee str)."""
     from harness_quality_gate.adapters.php.phpstan_adapter import PhpStanAdapter
     import subprocess
     from unittest.mock import patch
-    completed = subprocess.CompletedProcess(['echo', 'hi'], 0, stdout='hi\n', stderr=None)
+    completed = subprocess.CompletedProcess(['echo', 'hi'], 0, stdout='hi\n', stderr='warn\n')
     with patch('subprocess.run', return_value=completed):
         result = PhpStanAdapter._run(['echo', 'hi'])
-    assert result.stderr == ""  # None → "" via "stderr or ''"
-
+    assert result.stderr == "warn\n"
+    assert result.stdout == "hi\n"
 
 def test_base_run_timeout_stdout_empty() -> None:
     """Kill else '' → else 'XXXX': timeout stdout empty when no partial output."""

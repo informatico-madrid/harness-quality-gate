@@ -191,12 +191,11 @@ class ToolAdapter(ABC):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                check=False,  # callers decide whether to check
             )
             duration = (datetime.now(timezone.utc) - start).total_seconds()
             return ToolInvocation(
                 stdout=result.stdout,
-                stderr=result.stderr or "",
+                stderr=result.stderr,
                 exitcode=result.returncode,
                 duration_seconds=round(duration, 3),
             )

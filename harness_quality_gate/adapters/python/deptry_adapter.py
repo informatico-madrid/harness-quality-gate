@@ -50,11 +50,10 @@ class DeptryAdapter(ToolAdapter):
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse deptry JSON output into :class:`Finding` objects.
 
@@ -92,19 +91,22 @@ class DeptryAdapter(ToolAdapter):
                     module = item.get("module", item.get("name", ""))
                     filepath = item.get("filepath") or ""
                     line = item.get("line") or item.get("line_no") or 0
+                    desc = f"{category}: {module}"
+                    detail = desc
+                    if filepath:
+                        detail = f"{filepath}:{line}" if line else f"{filepath}"
+                        detail += f" — {desc}"
+                    node = filepath or module or "<unknown>"
                 else:
+                    # plain string entries carry no location data
                     module = str(item)
-                    filepath = ""
-                    line = 0
-                desc = f"{category}: {module}"
-                detail = desc
-                if filepath:
-                    detail = f"{filepath}:{line}" if line else f"{filepath}"
-                    detail += f" — {desc}"
+                    desc = f"{category}: {module}"
+                    detail = desc
+                    node = module or "<unknown>"
 
                 findings.append(
                     Finding(
-                        node=filepath or module or "<unknown>",
+                        node=node,
                         severity=severity,
                         message=detail,
                         fix_hint=f"Review {category} for '{module}'",

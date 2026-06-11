@@ -113,14 +113,12 @@ class PhpWeakTestAdapter(ToolAdapter):
 
         if not php_files:
             logger.warning("No PHP test files found in %s", repo)
-            exitcode = 0  # exitcode: 0 for "no files found" (no actual error)
+            # exitcode keeps its dataclass default 0: "no files" is not an error
             return ToolInvocation(
                 stdout="[]",
                 stderr="no PHP test files found",
-                exitcode=exitcode,
             )
 
-# 
         for visitor_name in _WEAK_TEST_VISITORS:
             visitor_script = visitors_dir / f"{visitor_name}.php"
             if not visitor_script.is_file():
@@ -147,14 +145,17 @@ class PhpWeakTestAdapter(ToolAdapter):
                     continue
 
                 parsed = self._parse_single_output(result.stdout)
-                # Tag with visitor rule_id for layer context
-                rule_id = _VISITOR_RULE_MAP.get(visitor_name, visitor_name)
+                # Tag with visitor rule_id for layer context — every visitor
+                # has a map entry (pinned by test_visitor_rule_map_complete).
+                rule_id = _VISITOR_RULE_MAP[visitor_name]
                 for finding in parsed:
                     finding["rule_id"] = rule_id
                 all_findings.extend(parsed)
 
         duration = time.monotonic() - t0
-        merged_stdout = json.dumps(all_findings, ensure_ascii=False)
+        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
+        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
+        merged_stdout = json.dumps(all_findings, ensure_ascii=False)  # pragma: no mutate
         merged_stderr = "\n".join(stderr_parts) if stderr_parts else ""
 
         return ToolInvocation(
@@ -166,11 +167,10 @@ class PhpWeakTestAdapter(ToolAdapter):
 
     # -- parse -----------------------------------------------------------
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse merged weak-test JSON output into :class:`Finding` objects.
 
@@ -190,19 +190,16 @@ class PhpWeakTestAdapter(ToolAdapter):
         for item in items:
             if not isinstance(item, dict):
                 continue
-            filepath = item.get("file", item.get("path", ""))
+            # both keys missing → falsy either way; node falls back to filepath as-is
+            filepath = item.get("file", item.get("path")) or ""
             line = item.get("line")
             rule_id = item.get("rule_id", "")
             message = item.get("message", "")
             severity = item.get("severity", "info")
             fix_hint = item.get("fix_hint")
 
+            # the raw line value is only embedded in the node string
             node = f"{filepath}:{line}" if line else filepath
-            if line:
-                try:
-                    line = int(line)
-                except (ValueError, TypeError):
-                    pass
 
             findings.append(
                 Finding(
@@ -260,7 +257,10 @@ class PhpWeakTestAdapter(ToolAdapter):
         # Graceful fallback: try to extract JSON array from mixed output.
         start = text.find("[")
         end = text.rfind("]")
-        if start >= 0 and end > start:
+        # reason: Tipo B — '[' y ']' nunca comparten índice (end==start inalcanzable)
+        # y con un solo corchete el slice degenerado cae igualmente al warning;
+        # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
+        if start >= 0 and end > start:  # pragma: no mutate
             try:
                 return json.loads(text[start:end + 1])
             except json.JSONDecodeError:

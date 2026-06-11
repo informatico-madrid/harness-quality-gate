@@ -29,8 +29,6 @@ logger = logging.getLogger(__name__)  # pragma: no mutate
 # The visitor runner covers 4 PoC patterns (god_class, feature_envy,
 # data_clumps, long_parameter_list).  The gap is the 8 PHPMD antipatterns
 # that currently have no nikic/php-parser visitor.
-_PHPMD_PATTERN_COUNT = 13
-_VISITOR_PATTERN_COUNT = 4
 
 
 class PhpAntipatternTierAAdapter(ToolAdapter):
@@ -232,7 +230,9 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                     visitor_stdout[:200],
                 )
 
-        merged_stdout = json.dumps(merged_findings, ensure_ascii=False)
+        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
+        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
+        merged_stdout = json.dumps(merged_findings, ensure_ascii=False)  # pragma: no mutate
 
         all_stderr_parts: list[str] = []
         if phpmd_stderr:
@@ -248,11 +248,10 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
 
     # -- parse ---------------------------------------------------------------
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse merged antipattern JSON output into :class:`Finding` objects.
 
@@ -286,7 +285,8 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             if not isinstance(item, dict):
                 continue
 
-            source = item.get("source", "unknown")
+            # only consumed via == "phpmd" — a missing key is as non-phpmd as "unknown"
+            source = item.get("source")
             filepath = item.get("file", "")
             rule = item.get("rule", item.get("rule_id", ""))
             description = item.get("description", "")
@@ -297,11 +297,8 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             # Build descriptive message
             message_parts: list[str] = []
             if line:
-                try:
-                    line_int = int(line)
-                except (ValueError, TypeError):
-                    line_int = line
-                message_parts.append(f"Line {line_int}")
+                # str(3) and str("3") render identically — no conversion needed
+                message_parts.append(f"Line {line}")
             if description:
                 message_parts.append(description)
             message = ": ".join(message_parts) if message_parts else description
@@ -337,11 +334,10 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
 
 def _priority_to_severity(priority: int) -> str:
     """Map PHPMD priority (1-5) to severity string."""
+    # 4, 5 and anything unexpected all map to the "info" default
     mapping = {
         1: "critical",
         2: "major",
         3: "minor",
-        4: "info",
-        5: "info",
     }
     return mapping.get(priority, "info")

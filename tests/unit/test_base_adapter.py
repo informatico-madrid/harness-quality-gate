@@ -145,23 +145,12 @@ def test_run_exact_invocation_with_fixed_clock() -> None:
     assert kwargs["text"] is True
 
 
-def test_run_passes_check_false_explicit() -> None:
-    """Kill the check=False → check=None mutmut.
-
-    subprocess.run(..., check=False) and subprocess.run(..., check=None)
-    behave identically at runtime (the default IS False).  The mutation is
-    "equivalent" in behaviour but the call-site *opts in* to `False`
-    explicitly so callers can decide (see the comment on line 194).
-
-    ``is False`` distinguishes the two:  ``None is False`` → False;
-    ``False is False`` → True.
-    """
+def test_run_relies_on_subprocess_check_default() -> None:
+    """_run does not pass check= at all — subprocess.run defaults to False
+    (the redundant explicit kwarg was removed as dead code)."""
     fake_result = _ok()
     with patch(
-        "harness_quality_gate.adapters.base.subprocess.run",
-        return_value=fake_result,
+        "harness_quality_gate.adapters.base.subprocess.run", return_value=fake_result,
     ) as mock_run:
-        ToolAdapter._run(["echo", "x"], cwd=Path("/tmp"))
-    # Pin the exact kwarg — kills the None mutation
-    assert mock_run.call_args.kwargs.get("check") is False
-
+        ToolAdapter._run(["echo", "x"])
+    assert "check" not in mock_run.call_args.kwargs

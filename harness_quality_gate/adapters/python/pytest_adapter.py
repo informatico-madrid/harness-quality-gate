@@ -17,6 +17,12 @@ from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
 
+# reason: Tipo C — este default de stderr solo alimenta el check `"CRITICAL" in stderr`
+# dentro de parse(); cualquier relleno sin esa palabra es gemelo del vacío. El pragma
+# vive aquí porque en la línea de firma (continuación) mutmut lo ignora. # audited: 2026-06-11
+_NO_STDERR = ""  # pragma: no mutate
+
+
 class PytestAdapter(ToolAdapter):
     """Wraps ``pytest`` and parses JUnit XML output into findings."""
 
@@ -51,7 +57,7 @@ class PytestAdapter(ToolAdapter):
     def parse(
         self,
         stdout: str,
-        stderr: str = "",
+        stderr: str = _NO_STDERR,
         exitcode: int = 0,
     ) -> list[Finding]:
         """Parse JUnit XML output into :class:`Finding` objects."""
@@ -146,8 +152,8 @@ class PytestAdapter(ToolAdapter):
                 parts.append(f"{total_errors} error(s)")
             if total_skipped:
                 parts.append(f"{total_skipped} skipped")
-            findings.insert(
-                0,
+            # findings is empty at this point — append puts the summary first
+            findings.append(
                 Finding(
                     node="pytest",
                     severity="error",

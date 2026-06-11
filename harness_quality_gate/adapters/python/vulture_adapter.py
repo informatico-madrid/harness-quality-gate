@@ -49,11 +49,10 @@ class VultureAdapter(ToolAdapter):
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse vulture JSON output into :class:`Finding` objects."""
         findings: list[Finding] = []

@@ -117,7 +117,11 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # mutations produce semantically identical JSON for ASCII content.
-    payload = json.dumps(data, indent=2, default=str, ensure_ascii=False)
+    # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (idéntico en runtime);
+    # indent/True/removal los fija test_write_exact_payload_and_unicode. default=str era
+    # parámetro muerto (validate() garantiza datos JSON-serializables) y fue eliminado.
+    # audited: 2026-06-11
+    payload = json.dumps(data, indent=2, ensure_ascii=False)  # pragma: no mutate
 
     # Atomic write: write to temp file in same directory, then rename
     # only the temp filename, not the final written content or file location.
@@ -131,6 +135,7 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
         raise
 
     if output_path.name == "quality-gate-latest.json":
-        ts = data.get("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        # "timestamp" is schema-required — validate() above guarantees presence
+        ts = data["timestamp"]
         timestamped = output_path.with_name(f"quality-gate-{ts}.json")
         timestamped.write_text(payload, encoding="utf-8")

@@ -165,11 +165,10 @@ class AllowListAuditor:
         repo = Path(repo).resolve()
         selector = _LANGUAGE_SELECTORS.get(self.language)
         if selector is None:
+            # exit_code/ignored_count keep their dataclass defaults (0)
             return AuditReport(
                 findings=[],
                 summary=f"Unknown language: {self.language}",
-                exit_code=0,
-                ignored_count=0,
             )
 
         result = _ScanResult()
@@ -206,7 +205,7 @@ class AllowListAuditor:
                                 # audited: 2026-06-04
                                 message=(
                                     f"Justified {selector.marker_label} "
-                                    f"at line {i + 1}"  # pragma: no mutate
+                                    f"at line {i + 1}"
                                 ),
                             )
                         )
@@ -220,7 +219,7 @@ class AllowListAuditor:
                                 # audited: 2026-06-04
                                 message=(
                                     f"Unjustified {selector.marker_label} "
-                                    f"at line {i + 1}: "  # pragma: no mutate
+                                    f"at line {i + 1}: "
                                     f"missing reason/audited metadata"
                                 ),
                                 # reason: fix_hint exact wording is display-only metadata;

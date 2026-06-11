@@ -748,6 +748,12 @@ re-ejecutando el módulo). Si de verdad cuelga → Tipo I (§5).
 5. La verdad por archivo está en `mutants/<ruta>.py.meta`
    (`exit_code_by_key`: 0=survived, 1=killed, -24=ver H16);
    `scripts/extract_survivors.py` la resume por método.
+6. **Captura los diffs ANTES de `clean-mutmut`**: la limpieza destruye TODOS
+   los metas (también los de archivos que no ibas a re-medir). Vuelca primero
+   los supervivientes a un archivo de trabajo:
+   `mutmut show <id>` en bucle → `/tmp/survivors.txt` — y luego limpia.
+   Corolario: un `mutation-path` tras un clean repuebla SOLO el filtro pedido;
+   el resto del board queda vacío hasta el siguiente run amplio.
 
 ## Fuentes
 

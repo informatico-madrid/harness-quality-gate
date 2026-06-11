@@ -52,8 +52,7 @@ class MutmutAdapter(ToolAdapter):
     def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> MutationStats:
         """Parse mutmut JSON output into :class:`MutationStats`.
 

@@ -88,11 +88,10 @@ class PhpUnitAdapter(ToolAdapter):
             cmd.extend(args)
         return self._run(cmd, cwd=repo, timeout=timeout)
 
-    def parse(
+    def parse(  # type: ignore[override]
         self,
         stdout: str,
-        stderr: str = "",
-        exitcode: int = 0,
+        *_compat: object,
     ) -> list[Finding]:
         """Parse PHPUnit JUnit XML output into :class:`Finding` objects.
 
@@ -191,8 +190,9 @@ class PhpUnitAdapter(ToolAdapter):
         # Individual <testcase> elements
         for tc in root.iter("testcase"):
             tc_name = tc.get("name", "<unknown>")
-            tc_class = tc.get("classname", "")
-            tc_file = tc.get("file", "")
+            # missing attrs are as falsy as "" in the node-precedence chain
+            tc_class = tc.get("classname")
+            tc_file = tc.get("file")
 
             node = tc_class or tc_name
             if tc_file:
@@ -253,7 +253,8 @@ class PhpUnitAdapter(ToolAdapter):
                 )
 
         # Coverage stats from <testsuite> attributes
-        covered = root.get("coveredLines") or root.get("cover", "")
+        # the or-chain collapses a missing "cover" to falsy — no default needed
+        covered = root.get("coveredLines") or root.get("cover")
         total_lines = root.get("totalLines") or ""
         if covered and total_lines:
             findings.append(
