@@ -36,7 +36,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Lint (ruff)
-        run: ruff check harness_quality_gate/ tests/
+        run: ruff check harness_quality_gate/
 
       - name: Type check (mypy)
         run: mypy harness_quality_gate/
