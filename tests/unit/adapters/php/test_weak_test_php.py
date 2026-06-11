@@ -875,6 +875,58 @@ class TestInvokeDirect:
         # Should be rounded to at most 3 decimal places
         assert round(result.duration_seconds, 3) == result.duration_seconds
 
+    def test_invoke_duration_reasonable_value(self, tmp_path: Path) -> None:
+        """Kills invoke__metmut_79: time.monotonic() - t0 → time.monotonic() + t0.
+
+        §4.1 Duration must be reasonable. If mutation changes - to +,
+        duration would be astronomically large (> 10^9).
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.write_text("<?php class FooTest {}")
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0, stdout='[{"file":"t.php","line":1}]',
+                )
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # §4.1 Real duration is small (< 10s); +t0 mutation gives huge values
+        assert result.duration_seconds < 10.0, (
+            "mutmut_79: duration must be reasonable. Got "
+            f"{result.duration_seconds} (implies -→+ mutation survived)"
+        )
+
+    def test_invoke_all_visitors_succeed_empty_stderr(self, tmp_path: Path) -> None:
+        """Kills invoke__metmut_84: stderr becomes "XXXX" when stderr_parts is empty.
+
+        §4.2 Exact empty string: when all visitors succeed (returncode=0),
+        stderr_parts stays empty → merged_stderr should be exactly "" (not "XXXX").
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.write_text("<?php class FooTest {}")
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file],
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0, stdout='[{"file":"t.php","line":1}]',
+                )
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # §4.2 Exact empty string — kills mutmut_84 (merge → "XXXX")
+        assert result.stderr == "", (
+            f"mutmut_84: stderr must be exact '' when all visitors succeed. "
+            f"Got: {result.stderr!r}"
+        )
+
     def test_invoke_subprocess_env_merged(self, tmp_path: Path) -> None:
         """env vars are merged with os.environ and passed to subprocess.run."""
         tests_dir = tmp_path / "tests"
@@ -1564,101 +1616,34 @@ class TestInvokeSurvivorsMutationKilling:
         """Kills mutmut_78 (log XX prefix) and mutmut_79 (log case mutation).
 
         §4.3 String exact equality: assert the full decoded log message
-        equals the expected string exactly, not via 'in' operator.
+        matches the expected format exactly.
 
-        mutmut_78 mutates the log string to 'XXWeak-test visitor %s ...XX'
-        → full message assertion catches the XX prefix/suffix.
-        mutmut_79 changes 'Weak-test' (capital W) to 'weak-test' (lower w)
-        → case-sensitive full-match catches the capitalization change.
+        We use real visitor scripts and mock subprocess to FAIL, triggering
+        the actual logger.debug("Weak-test visitor %s failed on %s: %s",...)
+        path where mutmut_78/79 mutations are applied.
         """
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "FooTest.php").touch()
 
-        # Mock Path to simulate a missing visitor, triggering the debug log path
-        class FakeVisitorsPath(Path):
-            def is_file(self):
-                return False
-            def __truediv__(self, other):
-                return self
-
         import harness_quality_gate.adapters.php.weak_test_php as wt_module
-        original_path = wt_module.Path
-        wt_module.Path = FakeVisitorsPath
+        from harness_quality_gate.adapters.php.weak_test_php import _WEAK_TEST_VISITORS
 
-        try:
-            logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
-            logger.setLevel(logging.DEBUG)
-            caplog.set_level(logging.DEBUG, "harness_quality_gate.adapters.php.weak_test_php")
-
-            adapter = PhpWeakTestAdapter()
-            with patch.object(adapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
-                result = adapter.invoke(tmp_path, [])
-
-            # Extract debug log messages about failed visitors
-            debug_messages = [
-                r.getMessage() for r in caplog.records
-                if r.levelno == logging.DEBUG and "Weak-test visitor" in r.getMessage()
-            ]
-
-            # With 8 visitor scripts, if any fail we should get debug logs
-            # The key: the EXACT log message must match, catching §4.3 mutations
-            for msg in debug_messages:
-                # mutmut_78: XX prefix/suffix → "XXWeak-test visitor..."
-                assert not msg.startswith("XXWeak"), (
-                    f"mutmut_78 detected: debug log has XX mutation prefix. Got: {msg}"
-                )
-                # mutmut_79: 'Weak'→'weak' → "weak-test visitor..."
-                assert "Weak-test visitor" in msg, (
-                    f"mutmut_79 detected: debug log should have 'Weak-test' (capital W). Got: {msg}"
-                )
-                # Full exact format: "Weak-test visitor {name} failed on {path}: {stderr}"
-                assert msg.startswith("Weak-test visitor ")
-                assert "failed on" in msg
-        finally:
-            wt_module.Path = original_path
-
-        assert result.exitcode == 0  # missing visitors are warnings, not errors
-
-    def test_invoke_continue_across_all_visitors_counts_failures(self, tmp_path: Path, caplog) -> None:
-        """Kills mutmut_81 (continue→break: only first failure logged).
-
-        §4.6 Iteration count — with 'continue', ALL 8 visitors are attempted.
-        With 'break', only the first one is attempted.
-        We count how many visitor failure messages appear.
-
-        With break → 1 failure warning. With continue → 8 failure warnings.
-        The exact count distinguishes the two.
-        """
-        import harness_quality_gate.adapters.php.weak_test_php as wt_module
-        from harness_quality_gate.adapters.base import ToolInvocation
-
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "FooTest.php").touch()
-
-        # Get the real visitors directory
         real_visitors_dir = Path(wt_module.__file__).parent / "visitors"
-
         if not real_visitors_dir.exists():
             pytest.skip("No visitors directory")
 
-        visitor_scripts = sorted([f for f in real_visitors_dir.iterdir() if f.suffix == ".php"])
-        visitor_count = len(visitor_scripts)
+        # Use the defined visitor list, not all .php files
+        visitor_count = len(_WEAK_TEST_VISITORS)
         if visitor_count == 0:
-            pytest.skip("No visitor scripts")
+            pytest.skip("No weak test visitors defined")
 
-        call_count = [0]
-        visitor_index = [0]
-
-        def side_effect(*args, **kwargs):
-            call_count[0] += 1
+        # Make subprocess run FAIL for every visitor → triggers logger.debug
+        def fail_side(*args, **kwargs):
             m = MagicMock()
-            # ALL visitors fail to test the continue/break path
             m.returncode = 1
             m.stdout = ""
-            m.stderr = "visitor failure"
-            visitor_index[0] += 1
+            m.stderr = "visitor error"
             return m
 
         logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
@@ -1666,7 +1651,7 @@ class TestInvokeSurvivorsMutationKilling:
         caplog.set_level(logging.DEBUG, "harness_quality_gate.adapters.php.weak_test_php")
 
         with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tests_dir / "FooTest.php"]):
-            with patch("subprocess.run", side_effect=side_effect):
+            with patch("subprocess.run", side_effect=fail_side):
                 with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
                     mock_resolve = MagicMock()
                     mock_resolve.parent = real_visitors_dir.parent
@@ -1674,11 +1659,96 @@ class TestInvokeSurvivorsMutationKilling:
                     MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
                     result = PhpWeakTestAdapter().invoke(tmp_path, [])
 
-        # mutmut_81: continue→break means only 1 subprocess call
-        # With continue: 8 visitors × 1 file = 8 calls
-        # With break: 1 call stops the loop
-        assert call_count[0] == 8, (
-            f"mutmut_81 detected: expected 8 subprocess calls (continue), got {call_count[0]} (break?)"
+        # Extract debug log messages about failed visitors
+        debug_messages = [
+            r.getMessage() for r in caplog.records
+            if r.levelno == logging.DEBUG and "Weak-test visitor" in r.getMessage()
+        ]
+
+        # All visitors should have logged a debug failure
+        assert len(debug_messages) == visitor_count, (
+            f"Expected {visitor_count} debug logs (one per visitor), got {len(debug_messages)}"
+        )
+
+        # mutmut_78: XX prefix/suffix → "XXWeak-test visitor...XX"
+        for msg in debug_messages:
+            assert not msg.startswith("XXWeak-test"), (
+                f"mutmut_78 detected: XX mutation prefix on debug log. Got: {msg}"
+            )
+            assert not msg.endswith("XX"), (
+                f"mutmut_78 detected: XX mutation suffix on debug log. Got: {msg}"
+            )
+            # mutmut_79: 'Weak-test' → 'weak-test' (lowercase w)
+            assert "Weak-test visitor" in msg, (
+                f"mutmut_79 detected: case mutation on debug log. Got: {msg}"
+            )
+            # Full exact format starts with "Weak-test visitor "
+            assert msg.startswith("Weak-test visitor "), (
+                f"Debug log must start with 'Weak-test visitor '. Got: {msg}"
+            )
+            assert "failed on" in msg, (
+                f"Debug log must contain 'failed on'. Got: {msg}"
+            )
+
+        assert result.exitcode == 1  # non-zero exitcode because stderr_parts populated
+
+    def test_invoke_continue_across_all_visitors_counts_failures(self, tmp_path: Path, caplog) -> None:
+        """Kills mutmut_81 (continue→break in inner loop).
+
+        §4.6: 'continue' in the inner loop means ALL files for ALL visitors
+        are attempted. 'break' means first file exit stops the inner loop.
+
+        We mock subprocess.run to ALWAYS fail (returncode=1), triggering the
+        inner-loop continue/break path. We count calls:
+        - continue: N visitors × 2 files = 2N calls
+        - break: N visitors × 1 file = N calls
+        """
+        import harness_quality_gate.adapters.php.weak_test_php as wt_module
+        from harness_quality_gate.adapters.php.weak_test_php import _WEAK_TEST_VISITORS
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "FooTest.php").touch()
+        (tests_dir / "BarTest.php").touch()
+        php_files = [tests_dir / "FooTest.php", tests_dir / "BarTest.php"]
+
+        visitor_count = len(_WEAK_TEST_VISITORS)
+        if visitor_count == 0:
+            pytest.skip("No weak test visitors defined")
+
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            m = MagicMock()
+            m.returncode = 1  # force failure → triggers continue/break
+            m.stdout = ""
+            m.stderr = "visitor failure"
+            return m
+
+        logger = logging.getLogger("harness_quality_gate.adapters.php.weak_test_php")
+        logger.setLevel(logging.DEBUG)
+        caplog.set_level(logging.DEBUG, "harness_quality_gate.adapters.php.weak_test_php")
+
+        with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=php_files):
+            with patch("subprocess.run", side_effect=side_effect):
+                with patch("harness_quality_gate.adapters.php.weak_test_php.Path") as MockPath:
+                    mock_resolve = MagicMock()
+                    mock_resolve.parent = Path(wt_module.__file__).parent / "visitors"
+                    MockPath.return_value.resolve.return_value = mock_resolve
+                    MockPath.side_effect = lambda *a, **kw: Path(*a, **kw)
+                    result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # continue/break distinction:
+        # - continue → all visitor_file combinations attempted: visitor_count × 2 = 2N
+        # - break → only 1st file per visitor: visitor_count × 1 = N
+        expected_continue = visitor_count * 2
+        expected_break = visitor_count
+        assert call_count[0] == expected_continue, (
+            f"mutmut_81: continue→break mutation detected. "
+            f"Expecting {expected_continue} subprocess calls (continue), "
+            f"got {call_count[0]} (break={expected_break}?), "
+            f"visitors={visitor_count}, files=2"
         )
 
     def test_invoke_all_findings_have_rule_id_from_get_default(self, tmp_path: Path) -> None:
@@ -2524,6 +2594,29 @@ class TestParseSingleOutputBoundaryAndOr:
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["file"] == "f.php"
+
+    def test_parse_single_output_find_vs_rfind_differ(self) -> None:
+        """Kill _parse_single_output__metmut_6 (find→rfind on [)
+        and _parse_single_output__metmut_10 (rfind→find on ]).
+
+        We need multiple `[` AND multiple `]` at different positions:
+        - text has JSON inside, then extra `[` and extra `]` after JSON
+
+        Text: 'prefix text[[{"file":"x.php"}]]extra['
+        - find("[") finds FIRST `[` (before JSON, position 12)
+        - rfind("[") finds LAST `[` (in "extra[", position 35)
+        - rfind("]") finds LAST `]` (after JSON, position 30)
+        
+        Original: text[12:31] = '[{"file":"x.php"}]' → valid JSON ✓
+        Mutant6: text[35:31] → 35 > 30 so condition fails → returns [] ✗
+        Mutant10: text[12:15] where find("]")=15 inside "[[{" → truncated ✗
+        """
+        text = 'prefix text[[{"file":"x.php"}]]extra['
+        result = PhpWeakTestAdapter._parse_single_output(text)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        # Result parses as nested array: [[{file:"x.php"}]]
+        assert result[0] == [{"file": "x.php"}]
 
 
 # ═══════════════════════════════════════════════════════════════════════

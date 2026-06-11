@@ -1551,17 +1551,80 @@ class TestRunRuffHelper:
         pars_args = a.ruff.parse.call_args[0]
         assert pars_args[0] is not None and isinstance(pars_args[0], str)
 
-    def test_run_ruff_tool_not_found(self, tmp_path: Path):
+
+    def test_run_ruff_shell_which_arg_exact(self, tmp_path, monkeypatch):
+        """shutil.which() called with exact string "ruff", not mutated.
+
+        Kills string mutations on the "ruff" literal:
+        - mutmut_6: shutil.which("ruff") -> shutil.which("XXruffXX")
+        - mutmut_7: similar string prefix/suffix mutations
+        - mutmut_8: uppercase/lowercase mutation on "ruff"
+
+        Strategy: mock shutil.which and capture args to verify EXACT string.
+        """
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        which_calls = []
+
+        def spy_which(name):
+            which_calls.append(name)
+            return "/bin/ruff"
+
+        monkeypatch.setattr(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            spy_which,
+        )
+        a._run_ruff(tmp_path, {})
+        assert len(which_calls) == 1
+        assert which_calls[0] == "ruff", (
+            f'shutil.which must be called with exact "ruff", '
+            f'got {repr(which_calls[0])} (kills H8 string mutations)'
+        )
+
+    def test_run_ruff_parse_passthrough(self, tmp_path, monkeypatch):
+        """Verify stdout/stderr from invoke are passed correctly to parse.
+
+        Kills attribute mutations (H1) like inv.stdout/inv.stderr swap.
+        Uses different values for stdout and stderr so a swap is detectable.
+        """
+        a = self._adapter()
+        mock_ruff = MagicMock()
+        inv_result = MagicMock(stdout="my_stdout_val", stderr="my_stderr_val", exitcode=0)
+        mock_ruff.invoke.return_value = inv_result
+        mock_ruff.parse.return_value = []
+        a.ruff = mock_ruff
+        with _all_tools_on_path({"ruff": "/bin/ruff"}):
+            a._run_ruff(tmp_path, {})
+        assert mock_ruff.parse.called
+        parse_args = mock_ruff.parse.call_args[0]
+        assert parse_args[0] == "my_stdout_val", (
+            "invoke().stdout must be passed as first arg to parse "
+            "(kills stdout/stderr swap mutant)"
+        )
+        assert parse_args[1] == "my_stderr_val", (
+            "invoke().stderr must be passed as second arg to parse "
+            "(kills stdout/stderr swap mutant)"
+        )
+
+    def test_run_ruff_tool_not_found(self, tmp_path: Path, caplog):
         """Ruff not on PATH -> return [] (not None).
 
-        Kills return []→None mutations on the early-return branch.
+        Kills return []→None mutations and H8 string log mutations.
         """
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            findings = a._run_ruff(tmp_path, {})
+            with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+                findings = a._run_ruff(tmp_path, {})
         assert isinstance(findings, list), "return must be list (kills return→None)"
         assert findings is not None
         assert findings == []
+        # Kill H8 string mutation in log msg: assert EXACT message
+        warn_msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warn_msgs) == 1
+        assert warn_msgs[0] == "ruff not found on PATH, skipping", (
+            f"Logger must emit exact message, got {warn_msgs[0]!r} "
+            "(kills H8 string mutation)"
+        )
 
     def test_run_ruff_parse_error(self, tmp_path: Path, caplog):
         """Ruff parse raises RuntimeError -> caught, empty list returned."""
@@ -1585,6 +1648,9 @@ class TestRunRuffHelper:
                      if r.levelname == "WARNING" and "ruff" in r.message.lower() and "invocation failed" in r.message]
         assert len(ruff_warn) == 1, "Logger must emit ruff invocation warning"
         assert "parse err" in ruff_warn[0].getMessage(), "Exception message must be in log"
+        # Kill H8 string mutation: verify format
+        assert ruff_warn[0].getMessage().startswith("ruff invocation failed:"), \
+            f"Log format must start with 'ruff invocation failed:', got {ruff_warn[0].getMessage()!r}" 
 
     def test_run_ruff_oserror_on_invoke(self, tmp_path: Path, caplog):
         """Ruff.invoke raises OSError -> caught, empty list returned."""
@@ -1608,6 +1674,9 @@ class TestRunRuffHelper:
                      if r.levelname == "WARNING" and "ruff" in r.message.lower() and "invocation failed" in r.message]
         assert len(ruff_warn) == 1, "Logger must emit ruff invocation warning"
         assert "ruff exec failed" in ruff_warn[0].getMessage(), "Exception message must be in log"
+        # Kill H8 string mutation: exact log format
+        assert ruff_warn[0].getMessage().startswith("ruff invocation failed:"), \
+            f"Log format must start with 'ruff invocation failed:', got {ruff_warn[0].getMessage()!r}" 
 
     def test_run_ruff_runtimeerror_on_invoke(self, tmp_path: Path, caplog):
         """Ruff.invoke raises RuntimeError -> caught, empty list returned.

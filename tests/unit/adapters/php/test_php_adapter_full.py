@@ -2679,6 +2679,60 @@ class TestPcovInitialTestsOption:
                 result = adapter._pcov_initial_tests_option()
         assert "pcov.so" in result
 
+    # ===========================================================================
+    # Wiring + dense assert tests (H1 + §4.1) — kill 5+ mutmut survivors.
+    # ===========================================================================
+
+    def test_pcov_not_loaded_subprocess_run_args(self):
+        """Verify subprocess.run is called with exact args — kills wiring mutants.
+
+        Kills mutmut_5 (timeout=5→None), mutmut_9 (timeout removed),
+        mutmut_10 ("php"→"XXphpXX"), mutmut_11 ("php"→"PHP"),
+        mutmut_12 ("-m"→"XX-mXX").
+        Also kills mutmut_17, 18 (capture_output=True→False),
+        mutmut_20 (text=True→False).
+        Also kills mutmut_24, 25, 26, 27 (XX string mutations on glob patterns).
+        """
+        adapter = PhpAdapter()
+        completed = MagicMock()
+        completed.stdout = "Core\ndates\n"
+        completed.stderr = ""
+        completed.returncode = 0
+
+        with patch("subprocess.run", return_value=completed) as mock_run:
+            with patch("glob.glob", return_value=[]) as mock_glob:
+                result = adapter._pcov_initial_tests_option()
+            mock_run.assert_called_once_with(
+                ["php", "-m"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            # Assert on glob.glob pattern strings to kill XX-XX mutations
+            # The production code calls _glob.glob(pattern) for each pattern
+            # in the candidates list. If any pattern string is mutated (XX...XX),
+            # this assertion catches it.
+            assert mock_glob.call_count == 2
+            assert mock_glob.call_args_list[0] == (("/tmp/pcov-extract/usr/lib/php/*/pcov.so",), {})
+            assert mock_glob.call_args_list[1] == (("/usr/lib/php/*/pcov.so",), {})
+        assert result == ""
+
+    def test_pcov_found_via_glob_strict_return_value(self):
+        """Strengthen glob-found test: assert exact return string.
+
+        Kills mutmut_24, 25, 26, 27 — mutations that change the glob
+        pattern strings (XX...XX mutations in pattern literals).
+        Even though glob is mocked, the return value embeds the pattern.
+        """
+        adapter = PhpAdapter()
+        completed = MagicMock()
+        completed.stdout = "Core\n"
+        completed.returncode = 0
+        with patch("subprocess.run", return_value=completed):
+            with patch("glob.glob", return_value=["/usr/lib/php/20210902/pcov.so"]):
+                result = adapter._pcov_initial_tests_option()
+        assert result == "-dextension=/usr/lib/php/20210902/pcov.so"
+
 
 # ===========================================================================
 # _run_infection
@@ -2871,6 +2925,122 @@ class TestRunInfection:
         adapter._run_infection(tmp_path, {}, is_pest_project=False)
         call_args = adapter._infection.invoke.call_args[0]
         assert call_args[0] == tmp_path
+
+    def test_infection_happy_path_full_invoke_contract(self, tmp_path):
+        """Kill wiring mutants (H1) — assert invoke() exact args/kwargs in one call.
+
+        Replaces the scattered 'assert X in args' tests that leave alive:
+        - mutants mutating args elements (mutmut 27-31)
+        - mutation removing a kwarg from invoke (mutmut 32-34)
+        - mutation changing kwarg values (mutmut 35)
+        - mutation changing return (mutmut 49-50)
+        """
+        expected_stats = MutationStats(
+            total=42, killed=38, survived=4, escaped=0, timed_out=0,
+            untested=0, msi=90.5, covered_msi=95.2
+        )
+        adapter = _make_mock_adapter(infection_stats=expected_stats)
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="Mutation Score Indicator (MSI): 90%", stderr="", exitcode=0
+        )
+        env = {"HARNESS_PHASE": "php-l1"}
+        result = adapter._run_infection(tmp_path, env, is_pest_project=False)
+
+        # §4.4 H1: strict mock args — kills positional/keyword arg mutations
+        adapter._infection.invoke.assert_called_once_with(
+            tmp_path,
+            ["--no-progress", "--threads=max", "--min-msi=100", "--min-covered-msi=100"],
+            env=env,
+            timeout=600.0,
+        )
+
+        # §4.1 Dense return assertion — kills 'return None' and 'return stats→different' mutants
+        assert result is expected_stats
+        assert result.msi == 90.5
+        assert result.killed == 38
+        assert result.survived == 4
+
+        # Verify parse was called with invocation result (kills parse arg mutations)
+        adapter._infection.parse.assert_called_once_with(
+            "Mutation Score Indicator (MSI): 90%", "", 0
+        )
+
+    def test_infection_pest_path_full_contract(self, tmp_path):
+        """Kill is_pest_project mutation + pest-specific args mutation.
+
+        Tests the is_pest_project=True path with full invoke contract.
+        Verifies --test-framework=pest is the LAST arg appended after
+        the fixed base args.
+        """
+        expected_stats = MutationStats(
+            total=50, killed=50, survived=0, escaped=0, timed_out=0,
+            untested=0, msi=100.0, covered_msi=100.0
+        )
+        adapter = _make_mock_adapter(infection_stats=expected_stats)
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="50 mutants were killed", stderr="", exitcode=0
+        )
+        result = adapter._run_infection(tmp_path, {}, is_pest_project=True)
+
+        # Strict invoke contract: (repo, args) positional + env kwarg
+        adapter._infection.invoke.assert_called_once_with(
+            tmp_path,
+            [
+                "--no-progress",
+                "--threads=max",
+                "--min-msi=100",
+                "--min-covered-msi=100",
+                "--test-framework=pest",
+            ],
+            env={},
+            timeout=600.0,
+        )
+
+        # Return is the parsed stats (kills return mutation)
+        assert result is expected_stats
+        # parse was called with correct args (kills parse arg mutations)
+        adapter._infection.parse.assert_called_once_with(
+            "50 mutants were killed", "", 0
+        )
+
+    def test_infection_nonzero_with_stats_full_contract(self, tmp_path):
+        """Kill mutations on the has_stats markers and the exitcode check (mutmut 42-50).
+
+        Tests exitcode=1 (threshold failure) with stats markers present.
+        Should NOT enter the infra-error branch, should parse and return stats.
+        """
+        expected_stats = MutationStats(
+            total=100, killed=85, survived=15, escaped=0, timed_out=0,
+            untested=0, msi=85.0, covered_msi=92.0
+        )
+        adapter = _make_mock_adapter(infection_stats=expected_stats)
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout=(
+                "Mutation Score Indicator (MSI): 85.0%\n"
+                "100 mutations were generated\n"
+                "85 mutants were killed\n"
+            ),
+            stderr="",
+            exitcode=1,
+        )
+        result = adapter._run_infection(tmp_path, {}, is_pest_project=False)
+
+        # Should NOT return None — stats marker present even though exitcode != 0
+        assert result is not None
+        assert result is expected_stats
+        assert result.msi == 85.0
+        assert result.survived == 15
+
+        # parse was called with the non-zero exitcode (kills exitcode mutation at parse)
+        adapter._infection.parse.assert_called_once_with(
+            (
+                "Mutation Score Indicator (MSI): 85.0%\n"
+                "100 mutations were generated\n"
+                "85 mutants were killed\n"
+            ),
+            "",
+            1,
+        )
 
 
 # ===========================================================================

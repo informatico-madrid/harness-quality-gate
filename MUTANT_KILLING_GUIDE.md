@@ -8,6 +8,28 @@ parece equivalente**.
 
 ---
 
+## TL;DR — Árbol de decisión (si solo lees una cosa, lee esto)
+
+Para CADA superviviente, en este orden y sin saltarte pasos:
+
+1. `mutmut show <id>` — lee el diff. Sin diff no hay diagnóstico.
+2. ¿El cambio es observable (retorno, excepción, string, llamada a una
+   dependencia)? → **escribe/endurece un test** que lo fije (§4): asersión
+   densa, frontera exacta, string exacto o `assert_called_once_with` completo.
+3. ¿No es observable porque es un default muerto, rama inalcanzable o código
+   redundante? → **refactoriza para que el mutante no pueda existir** (§5:
+   p. ej. `d.get(k, X)` → `d.get(k)` cuando `X` es inobservable). El código
+   queda más limpio y el mutante desaparece.
+4. ¿Ni test ni refactor posibles (caso raro y PROBADO)? → **pragma** con
+   `# reason:` + `# audited:` (§7). Último recurso, no el primero.
+5. **Nunca** termines en "es equivalente" escrito solo en un informe: si el
+   código no cambió (test, refactor o pragma), el mutante NO está resuelto.
+
+Verificación obligatoria en todos los caminos: el test pasa con el código
+original y falla con `mutmut apply <id>` aplicado (revertir después).
+
+---
+
 ## 0. Reglas de oro (no negociables)
 
 1. **Prioridad estricta**: test que mata > refactor que elimina el mutante > pragma.
@@ -16,15 +38,23 @@ parece equivalente**.
    Antes de declarar un mutante equivalente, debes haber intentado las
    estrategias de §4 y §5 para su tipo. La mayoría de "equivalentes" son
    tests débiles.
-3. **Nunca modificar el código fuente de mutmut** (`.venv/lib/python*/site-packages/mutmut/`).
+3. **Declarar "equivalente" exige actuar en el CÓDIGO, no en el informe.**
+   Toda equivalencia termina en uno de dos sitios: un REFACTOR que elimina el
+   mutante (§5) o un pragma auditado (§7). Un informe que lista "equivalentes"
+   sin tocar el código deja los supervivientes restando MSI y obliga al
+   siguiente agente a repetir el triage desde cero. Caso real (2026-06-10):
+   6 supervivientes de `psalm_taint_adapter.py` declarados equivalentes solo en
+   el informe — con razonamiento falso en 2 de ellos (`isinstance([], list)` ES
+   `True`) — cuando el Tipo C los eliminaba quitando el default muerto.
+4. **Nunca modificar el código fuente de mutmut** (`.venv/lib/python*/site-packages/mutmut/`).
    Si mutmut se comporta raro (menos mutantes de los esperados, 0 mutantes,
    resultados extraños): desinstalar y reinstalar mutmut ANTES de investigar.
-4. **Nunca debilitar el código de producción para matar un mutante.** Un
+5. **Nunca debilitar el código de producción para matar un mutante.** Un
    refactor que elimina un mutante equivalente debe preservar el comportamiento
    (los 1139 tests deben seguir en verde y coverage en 100%).
-5. **Regenerar `.coverage` antes de cada run** (con `mutate_only_covered_lines = true`,
+6. **Regenerar `.coverage` antes de cada run** (con `mutate_only_covered_lines = true`,
    un coverage viejo manda mutantes a `no_tests`). El `make mutation` ya lo gestiona.
-6. Paralelismo: `--max-children 40` (servidor de 40+ cores; el Makefile usa `nproc`).
+7. Paralelismo: `--max-children 40` (servidor de 40+ cores; el Makefile usa `nproc`).
 
 ---
 
@@ -335,6 +365,12 @@ loop con frontera exacta).
 5. Si un subagente lleva 3+ intentos con el mismo mutante sin matarlo: STOP,
    aplicar el mutante en disco (§1) y entender el porqué antes de escribir
    más tests a ciegas.
+6. **Informe de subagente: evidencia por mutante, no veredictos.** Cada mutante
+   reportado debe citar su evidencia verificable: qué test lo mata (y que ese
+   test FALLA con `mutmut apply <id>` aplicado), o qué refactor/pragma lo
+   eliminó (diff concreto). Una columna "Reason" redactada sin haber aplicado
+   el mutante no es evidencia — así se cuelan razonamientos falsos. El
+   coordinador rechaza tablas de "equivalentes declarados" sin diff asociado.
 
 ---
 
@@ -372,6 +408,9 @@ timeout: float = 600.0,  # pragma: no mutate
 [ ] ¿Equivalente? → clasificar en §5 y aplicar el REFACTOR del tipo
 [ ] ¿Refactor imposible sin romper API? → pragma con reason+audited (§7)
 [ ] Verificar: test pasa en original, mutante muere, suite verde, coverage 100%
+[ ] Informe: evidencia por mutante (test que falla con apply / diff de refactor
+    o pragma). PROHIBIDO "equivalente" sin acción en el código (§0 regla 3)
+
 ```
 
 ---
