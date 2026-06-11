@@ -30,6 +30,7 @@ jobs:
 
       - name: Composer install
         run: composer install --no-progress --prefer-dist
+        working-directory: harness_quality_gate/adapters/php/visitors
 
       - name: Install Python package
         run: pip install -e ".[dev]"
