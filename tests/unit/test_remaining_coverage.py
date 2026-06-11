@@ -578,22 +578,23 @@ class TestPhpAdapterL3AL2L3BL4:
         assert result.layer == "L3A"
         assert result.passed is True
 
-    def test_run_l2_skip(self, tmp_path):
+    def test_run_l3b_skip(self, tmp_path):
         a = self._adapter()
         with patch.object(a._antipattern, "invoke", side_effect=RuntimeError("missing")):
-            result = a.run_l2(tmp_path, {})
-        assert result.layer == "L2"
+            with patch.object(a._deptrac, "invoke", side_effect=RuntimeError("missing")):
+                result = a.run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
         assert result.passed is True
 
-    def test_run_l3b_delegates(self, tmp_path):
+    def test_run_l2_delegates(self, tmp_path):
         a = self._adapter()
         mock_result = MagicMock()
-        mock_result.layer = "L3B"
+        mock_result.layer = "L2"
         mock_result.passed = True
         mock_result.findings = []
-        with patch.object(a._weak_test, "run_l3b", return_value=mock_result):
-            result = a.run_l3b(tmp_path, {})
-        assert result.layer == "L3B"
+        with patch.object(a._weak_test, "run_l2", return_value=mock_result):
+            result = a.run_l2(tmp_path, {})
+        assert result.layer == "L2"
 
     def test_run_l4_all_tools_skip(self, tmp_path):
         a = self._adapter()
@@ -602,8 +603,7 @@ class TestPhpAdapterL3AL2L3BL4:
                 with patch.object(a._security_checker, "invoke", side_effect=RuntimeError("missing")):
                     with patch.object(a._dead_code, "invoke", side_effect=RuntimeError("missing")):
                         with patch.object(a._dep_analyser, "invoke", side_effect=RuntimeError("missing")):
-                            with patch.object(a._deptrac, "invoke", side_effect=RuntimeError("missing")):
-                                result = a.run_l4(tmp_path, {})
+                            result = a.run_l4(tmp_path, {})
         assert result.layer == "L4"
         assert result.passed is True
 
@@ -1279,7 +1279,7 @@ class TestPhpWeakTestAdapter:
         findings = a.parse(stdout)
         assert len(findings) == 1
         assert findings[0].rule_id == "A1"
-        assert findings[0].layer == "L3B"
+        assert findings[0].layer == "L2"
 
     def test_parse_line_conversion_error(self):
         a = self._adapter()

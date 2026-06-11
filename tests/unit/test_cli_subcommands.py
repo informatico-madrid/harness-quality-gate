@@ -167,6 +167,7 @@ class TestCmdAll:
         adapter = self._make_mock_adapter(passed=True)
         with (
             patch("harness_quality_gate.cli.PhpAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli._missing_php_tools", return_value=[]),
             patch("harness_quality_gate.cli.write_checkpoint"),
         ):
             code = _cmd_all(_make_args(repo=str(tmp_path)))
@@ -225,6 +226,7 @@ class TestCmdAll:
             )
         with (
             patch("harness_quality_gate.cli.PhpAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli._missing_php_tools", return_value=[]),
             patch("harness_quality_gate.cli.write_checkpoint") as mock_write,
         ):
             (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
@@ -290,6 +292,7 @@ class TestCmdAll:
         with (
             patch("harness_quality_gate.cli.PhpAdapter", return_value=php_adapter),
             patch("harness_quality_gate.cli.PythonAdapter", return_value=py_adapter),
+            patch("harness_quality_gate.cli._missing_php_tools", return_value=[]),
             patch("harness_quality_gate.cli.write_checkpoint"),
         ):
             _cmd_all(_make_args(repo=str(tmp_path)))
@@ -691,14 +694,14 @@ class TestCmdAuditIgnores:
         return AuditReport(findings=[], summary="clean", exit_code=exit_code, ignored_count=0)
 
     def test_python_pragma_unjustified_fails(self, tmp_path):
-        (tmp_path / "m.py").write_text("x = 1  # pragma: no mutate\n", encoding="utf-8")
+        (tmp_path / "m.py").write_text("x = 1  # pragma: " "no mutate\n", encoding="utf-8")
         assert _cmd_audit_ignores(_make_args(repo=str(tmp_path))) == FAIL
 
     def test_python_pragma_justified_passes(self, tmp_path):
         (tmp_path / "m.py").write_text(
             "# reason: provably-equivalent mutant\n"
             "# audited: 2026-06-03\n"
-            "x = 1  # pragma: no mutate\n",
+            "x = 1  # pragma: " "no mutate\n",
             encoding="utf-8",
         )
         assert _cmd_audit_ignores(_make_args(repo=str(tmp_path))) == PASS
@@ -739,7 +742,7 @@ class TestCmdAuditIgnores:
     def test_json_output_merges_languages(self, tmp_path, capsys):
         (tmp_path / "m.py").write_text(
             "# reason: provably-equivalent\n# audited: 2026-06-03\n"
-            "x = 1  # pragma: no mutate\n",
+            "x = 1  # pragma: " "no mutate\n",
             encoding="utf-8",
         )
         code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), json=True))
@@ -789,7 +792,7 @@ class TestCmdAuditIgnores:
     def test_unjustified_pragma_json_exit_code_is_fail(self, tmp_path, capsys):
         """Kill exit_code=FAIL if has_unjustified else PASS removal from AuditReport.
         When unjustified pragma exists, merged JSON must have exit_code=FAIL (not default 0)."""
-        (tmp_path / "m.py").write_text("x = 1  # pragma: no mutate\n", encoding="utf-8")
+        (tmp_path / "m.py").write_text("x = 1  # pragma: " "no mutate\n", encoding="utf-8")
         code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), json=True))
         assert code == FAIL
         out = json.loads(capsys.readouterr().out)

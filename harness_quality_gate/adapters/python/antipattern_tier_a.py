@@ -416,7 +416,7 @@ def detect_ap02(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         non_static = cls["all_methods"] - cls["static_methods"] - cls["class_methods"]
         if non_static == 0 and cls["all_methods"] >= 3:
             violations.append({
-                "XXidXX": "AP02", "name": "Functional Decomposition",
+                "id": "AP02", "name": "Functional Decomposition",
                 "class": cls["name"], "lineno": cls["lineno"],
                 "issue": "all " + str(cls["all_methods"]) + " methods are static/class methods, no instance state",
             })

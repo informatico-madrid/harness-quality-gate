@@ -42,7 +42,7 @@ class TestParseCompleteEntry:
         assert f.message == "src/a.py:1:80 [E501]: Line too long"
         assert f.fix_hint is None
         assert f.tool == "ruff"
-        assert f.layer == "L2"
+        assert f.layer == "L3A"
         assert f.language == "python"
 
 
@@ -691,7 +691,7 @@ class TestParseEdgeCases:
         assert f.message == "/home/user/src/main.py:55:3 [F841]: local variable 'x' is assigned to but never used"
         assert f.fix_hint == "Remove unused variable"
         assert f.tool == "ruff"
-        assert f.layer == "L2"
+        assert f.layer == "L3A"
         assert f.language == "python"
         assert f.rule_id == "F841"
 
@@ -710,6 +710,6 @@ class TestParseEdgeCases:
         assert f.severity == "error"
         assert f.rule_id is None
         assert f.tool == "ruff"
-        assert f.layer == "L2"
+        assert f.layer == "L3A"
         assert f.language == "python"
         assert f.fix_hint is None

@@ -124,6 +124,20 @@ _LANGUAGE_SELECTORS: dict[str, _LangSelector] = {
     "python": _PYTHON_SELECTOR,
 }
 
+#: Directories whose contents are third-party or generated copies (composer
+#: vendor, npm, virtualenvs, mutmut workspace/cache). Their suppression
+#: annotations are not ours to justify, so the audit must not scan them.
+_EXCLUDED_DIRS = frozenset({
+    "vendor",
+    "node_modules",
+    ".venv",
+    "venv",
+    "mutants",
+    ".mutmut",
+    ".git",
+    "__pycache__",
+})
+
 
 @dataclass
 class _ScanResult:
@@ -173,8 +187,11 @@ class AllowListAuditor:
 
         result = _ScanResult()
 
-        # Scan language-appropriate source files recursively.
+        # Scan language-appropriate source files recursively, skipping
+        # third-party / generated trees (vendor, .venv, mutants, ...).
         for src_file in sorted(repo.rglob(selector.file_glob)):
+            if _EXCLUDED_DIRS.intersection(src_file.relative_to(repo).parts):
+                continue
             # reason: encoding="utf-8"/errors="replace" string mutations are equivalent
             # for ASCII test files — error handler not invoked; "UTF-8" case-insensitive.
             # audited: 2026-06-04

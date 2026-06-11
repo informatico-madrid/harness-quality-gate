@@ -9,6 +9,12 @@ granularity: fine
 delivery: phased (5 PRs)
 updated: 2026-05-26
 ---
+> ⚠️ **Documento histórico del diseño original.** Tras el refactor de la
+> campaña MSI (69b05df y posteriores) varias piezas aquí descritas fueron
+> eliminadas deliberadamente (12 subcomandos, detector/dispatcher/doctor/
+> installer/configurator, detección híbrida). El estado vigente está en
+> [decisions.md](decisions.md) — donde contradigan, manda decisions.md.
+
 
 # Tasks: php-support
 

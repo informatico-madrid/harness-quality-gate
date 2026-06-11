@@ -103,24 +103,25 @@ cd {project-root} && python3 -m pytest tests/ \
 cd {project-root} && . .venv/bin/activate && mutmut run 2>&1 || true
 ```
 
-### 1.4.2 Run mutation gate with per-module thresholds
+### 1.4.2 Run mutation gate (100/100 hard gate)
 
 ```bash
-. .venv/bin/activate && python3 ${CLAUDE_SKILL_DIR}/harness_quality_gate.bmad.mutation_analyzer {project-root} --gate 2>&1
+. .venv/bin/activate && python3 -m harness_quality_gate.bmad.mutation_analyzer {project-root} --gate 2>&1
 ```
 
 **This command:**
 - Runs `mutmut results --all true` to get per-mutant status (killed/survived/timeout/no_tests)
 - Extracts module name from mutant identifiers (e.g., `src/my_module/my_func.py::my_func__mutmut_42: killed` → module `my_module`)
-- Reads `pyproject.toml` `[tool.quality-gate.mutation]` for per-module thresholds
-- Compares each module's kill rate against its threshold
-- Outputs a human-readable table + JSON with OK/NOK gate result
+- Gates on the 100/100 policy: every module must have 0 survivors and 0 timeouts
+  (per-module threshold ramps are deliberately not supported — same hard gate as
+  Infection `--min-msi=100` on the PHP side)
+- Outputs JSON with the per-module kill-map and OK/NOK gate result
 - Exit code: 0 = OK, 1 = NOK
 
 **Capture:**
 - Gate result (OK/NOK) from exit code
-- Per-module kill rates and thresholds from JSON output
-- Overall kill rate
+- Per-module kill rates from `mutation_kill_map` in the JSON output
+- Overall kill rate from `overall_kill_rate`
 
 **Update state:**
 ```json

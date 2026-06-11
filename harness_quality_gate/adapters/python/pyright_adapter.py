@@ -72,7 +72,11 @@ class PyrightAdapter(ToolAdapter):
             detail += f" [{rule}]: {message}"
         return detail
 
-    def parse(self, stdout: str) -> list[Finding]:
+    def parse(  # type: ignore[override]
+        self,
+        stdout: str,
+        *_compat: object,
+    ) -> list[Finding]:
         """Parse pyright JSON output into :class:`Finding` objects."""
         findings: list[Finding] = []
         if not stdout.strip():

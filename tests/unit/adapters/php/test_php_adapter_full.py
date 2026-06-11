@@ -1398,14 +1398,17 @@ class TestRunL1ToolSpecific:
 # run_l2
 # ===========================================================================
 
-class TestRunL2:
-    def test_l2_no_findings(self, tmp_path):
+class TestRunL3b:
+    def test_l3b_no_findings(self, tmp_path):
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        result = adapter.run_l2(tmp_path, {})
-        assert result.layer == "L2"
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
         assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
@@ -1416,16 +1419,19 @@ class TestRunL2:
         assert call[1]["env"] == {}
         assert call[1]["timeout"] == 300.0
 
-    def test_l2_with_findings(self, tmp_path):
+    def test_l3b_with_findings(self, tmp_path):
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout='[{"file":"src/Foo.php","rule":"LongVariable"}]', stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = [Finding(
             node="src/Foo.php", severity="warning", message="LongVariable",
-            tool="antipattern", layer="L2", language="php"
+            tool="antipattern", layer="L3B", language="php"
         )]
-        result = adapter.run_l2(tmp_path, {})
-        assert result.layer == "L2"
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
         assert result.language == "php"
         assert result.passed is False
         assert len(result.findings) >= 1
@@ -1434,14 +1440,17 @@ class TestRunL2:
         assert call[0][0] == tmp_path
         assert call[1]["env"] == {}
 
-    def test_l2_runtime_error_skipped(self, tmp_path, caplog):
+    def test_l3b_runtime_error_skipped(self, tmp_path, caplog):
         caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.side_effect = RuntimeError("antipattern not found")
         adapter._antipattern.parse.return_value = []
-        result = adapter.run_l2(tmp_path, {})
-        assert result.layer == "L2"
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
         assert result.language == "php"
         assert result.passed is True
         assert result.duration_sec >= 0
@@ -1452,41 +1461,50 @@ class TestRunL2:
         assert call[0][1] == []            # mutmut_18/19: args=[] or args=None
         assert call[1]["env"] == {}        # mutmut_20: env → None
         assert call[1]["timeout"] == 300.0 # mutmut_21/22: timeout removed
-        # Kill H3: logger.warning("L2 antipattern-tier-A skipped: %s", exc) → various string
+        # Kill H3: logger.warning("L3B antipattern-tier-A skipped: %s", exc) → various string
         # mutations (None→"XX", case, removed format) — exact message assertion
-        warnings = [m for m in caplog.messages if "L2 antipattern-tier-A skipped" in m]
+        warnings = [m for m in caplog.messages if "L3B antipattern-tier-A skipped" in m]
         assert len(warnings) == 1, f"Expected exactly one skip warning, got: {warnings}"
-        assert warnings[0] == "L2 antipattern-tier-A skipped: antipattern not found"
-        # Kill mutmut_31: layer="L2" → None — assert layer field type and value
-        assert isinstance(result.layer, str) and result.layer == "L2"
+        assert warnings[0] == "L3B antipattern-tier-A skipped: antipattern not found"
+        # Kill mutmut_31: layer="L3B" → None — assert layer field type and value
+        assert isinstance(result.layer, str) and result.layer == "L3B"
 
-    def test_l2_duration_non_negative(self, tmp_path):
+    def test_l3b_duration_non_negative(self, tmp_path):
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        result = adapter.run_l2(tmp_path, {})
+        result = adapter.run_l3b(tmp_path, {})
         assert result.duration_sec >= 0
 
-    def test_l2_env_passed_to_invoke(self, tmp_path):
-        """Kill env=env removal mutations in run_l2."""
+    def test_l3b_env_passed_to_invoke(self, tmp_path):
+        """Kill env=env removal mutations in run_l3b."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
         env = {"FOO": "bar"}
-        adapter.run_l2(tmp_path, env)
+        adapter.run_l3b(tmp_path, env)
         call = adapter._antipattern.invoke.call_args
         assert call[0][0] == tmp_path
         assert call[1]["env"] == env
 
-    def test_l2_invoke_args_list_not_empty(self, tmp_path):
-        """Kill mutmut_3: args=[] → args=None in run_l2 invoke call."""
+    def test_l3b_invoke_args_list_not_empty(self, tmp_path):
+        """Kill mutmut_3: args=[] → args=None in run_l3b invoke call."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        adapter.run_l2(tmp_path, {})
+        adapter.run_l3b(tmp_path, {})
         # mutmut_3: args=[] → args=None
         # If mutated, the invocation would pass None instead of []
         call = adapter._antipattern.invoke.call_args
@@ -1494,45 +1512,54 @@ class TestRunL2:
             "Mut3: args list must be [] (empty list), not mutated to None"
         )
 
-    def test_l2_parse_return_not_none(self, tmp_path):
-        """Kill mutmut_9: parse() → None in run_l2."""
+    def test_l3b_parse_return_not_none(self, tmp_path):
+        """Kill mutmut_9: parse() → None in run_l3b."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        result = adapter.run_l2(tmp_path, {})
+        result = adapter.run_l3b(tmp_path, {})
         # mutmut_9: parse(inv.stdout) → None
         # If mutated, `findings` would be None and `extend` would fail
         # Verify parse was called and returned a list
         call = adapter._antipattern.parse.call_args
         assert call[0][0] == "[]"  # stdout was passed, not mutated to None
 
-    def test_l2_result_layer_field(self, tmp_path):
+    def test_l3b_result_layer_field(self, tmp_path):
         """Kill mutmut_24/25: layer field mutation in LayerResult."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[{\"file\":\"x\",\"rule\":\"y\"}]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = [Finding(
             node="x", severity="warning", message="y", tool="antipattern",
-            layer="L2", language="php"
+            layer="L3B", language="php"
         )]
-        result = adapter.run_l2(tmp_path, {})
-        assert result.layer == "L2"
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.layer == "L3B"
         assert result.language == "php"
         assert result.passed is False
         assert len(result.findings) == 1
         assert result.duration_sec >= 0
         # Verify exact field types - kills mutmut_24/25 (layer→None, layer→"")
-        assert isinstance(result.layer, str) and result.layer == "L2"
+        assert isinstance(result.layer, str) and result.layer == "L3B"
         assert isinstance(result.language, str) and result.language == "php"
 
-    def test_l2_findings_not_none(self, tmp_path):
+    def test_l3b_findings_not_none(self, tmp_path):
         """Kill mutmut_50/51: findings=[] → findings=None mutation."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        result = adapter.run_l2(tmp_path, {})
+        result = adapter.run_l3b(tmp_path, {})
         # mutmut_50: findings=None | mutmut_51: remove findings param
         assert isinstance(result.findings, list)
         # Verify `passed` calculation kills comparison mutations (mut_mut_16: == 0 → != 0)
@@ -1543,13 +1570,16 @@ class TestRunL2:
         assert passed is True
         assert result.findings == []  # Exact match kills "" → None mutation
 
-    def test_l2_invoke_passed_args_not_mutated(self, tmp_path):
+    def test_l3b_invoke_passed_args_not_mutated(self, tmp_path):
         """Kill mutmut_17-20: argument mutations in antipattern.invoke()."""
         adapter = PhpAdapter()
         adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
-        adapter.run_l2(tmp_path, {"FOO": "bar"})
+        adapter.run_l3b(tmp_path, {"FOO": "bar"})
         call = adapter._antipattern.invoke.call_args
         assert call[0][0] == tmp_path  # mutmut_17: repo → None
         assert call[0][1] == []  # mutmut_18-19: args=[] or args=None
@@ -2044,22 +2074,22 @@ class TestRunL3a:
 
 
 # ===========================================================================
-# run_l3b
+# run_l2 (weak-test delegation)
 # ===========================================================================
 
-class TestRunL3b:
-    def test_l3b_delegates_to_weak_test(self, tmp_path):
+class TestRunL2:
+    def test_l2_delegates_to_weak_test(self, tmp_path):
         adapter = PhpAdapter()
         expected_result = LayerResult(
-            layer="L3B", language="php", passed=True, findings=[],
+            layer="L2", language="php", passed=True, findings=[],
             duration_sec=0.0
         )
         adapter._weak_test = MagicMock()
-        adapter._weak_test.run_l3b.return_value = expected_result
-        result = adapter.run_l3b(tmp_path, {})
-        assert result.layer == "L3B"
+        adapter._weak_test.run_l2.return_value = expected_result
+        result = adapter.run_l2(tmp_path, {})
+        assert result.layer == "L2"
         assert result.passed is True
-        adapter._weak_test.run_l3b.assert_called_once_with(tmp_path, {})
+        adapter._weak_test.run_l2.assert_called_once_with(tmp_path, {})
 
 
 # ===========================================================================
@@ -2070,7 +2100,7 @@ class TestRunL4:
     def _make_l4_mock_adapter(self):
         adapter = PhpAdapter()
         for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
-                      "_dead_code", "_dep_analyser", "_deptrac"):
+                      "_dead_code", "_dep_analyser"):
             a = MagicMock()
             a.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
             a.parse.return_value = []
@@ -2092,7 +2122,7 @@ class TestRunL4:
         assert result.duration_sec >= 0
         # Kill mutations on each tool invoke call parameters
         for tool_name in ("_psalm_taint", "_composer_audit", "_security_checker",
-                          "_dead_code", "_dep_analyser", "_deptrac"):
+                          "_dead_code", "_dep_analyser"):
             call = getattr(adapter, tool_name).invoke.call_args
             assert call[0][0] == tmp_path
             assert call[1]["env"] == {}
@@ -2105,7 +2135,6 @@ class TestRunL4:
             ("_security_checker", 300.0),
             ("_dead_code", 300.0),
             ("_dep_analyser", 300.0),
-            ("_deptrac", 300.0),
         ):
             inv_call = getattr(adapter, tool_name).invoke.call_args
             assert inv_call[1]["timeout"] == timeout
@@ -2131,8 +2160,8 @@ class TestRunL4:
         # Each successful tool should log an info message with its name
         log_records = [r for r in caplog.records if r.levelno == logging.INFO]
         log_texts = [r.message for r in log_records]
-        # 6 tools = 6 info log messages
-        assert len(log_records) == 6
+        # 5 tools = 5 info log messages (deptrac runs in L3B, not L4)
+        assert len(log_records) == 5
         # Check each tool logs exactly one message matching the expected pattern
         # Each message must: contain the tool name AND contain a digit (not literal %d)
         # This kills: arg removal (msg becomes "L4 ...: %d findings"), string mutations ("XX...XX")
@@ -2141,7 +2170,6 @@ class TestRunL4:
         assert any("security-checker" in t and "findings" in t and "%" not in t for t in log_texts)
         assert any("dead-code" in t and "findings" in t and "%" not in t for t in log_texts)
         assert any("dep-analyser" in t and "findings" in t and "%" not in t for t in log_texts)
-        assert any("deptrac" in t and "findings" in t and "%" not in t for t in log_texts)
         # Kill string mutations: verify exact message format for each tool
         # The format is "L4 <tool-name>: <number> findings"
         psalm_msg = [t for t in log_texts if "Psalm" in t and "taint" in t]
@@ -2159,9 +2187,6 @@ class TestRunL4:
         depa_msg = [t for t in log_texts if "dep-analyser" in t]
         assert len(depa_msg) == 1
         assert depa_msg[0] == "L4 dep-analyser: 0 findings"
-        deptr_msg = [t for t in log_texts if "deptrac" in t]
-        assert len(deptr_msg) == 1
-        assert deptr_msg[0] == "L4 deptrac: 0 findings"
 
     def test_l4_finds_change_passed(self, tmp_path):
         """Test that findings correctly flip passed status."""
@@ -2227,18 +2252,10 @@ class TestRunL4:
         result = adapter.run_l4(tmp_path, {})
         assert any(f.tool == "composer-dependency-analyser" for f in result.findings)
 
-    def test_l4_deptrac_finds(self, tmp_path):
-        adapter = self._make_l4_mock_adapter()
-        adapter._deptrac.parse.return_value = [Finding(
-            node="src/Forbidden.php", severity="error", message="Architecture violation", tool="deptrac"
-        )]
-        result = adapter.run_l4(tmp_path, {})
-        assert any(f.tool == "deptrac" for f in result.findings)
-
     def test_l4_all_tools_error_skipped(self, tmp_path, caplog):
         adapter = self._make_l4_mock_adapter()
         for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
-                      "_dead_code", "_dep_analyser", "_deptrac"):
+                      "_dead_code", "_dep_analyser"):
             mock_invoke = MagicMock(side_effect=RuntimeError("not found"))
             setattr(getattr(adapter, attr), "invoke", mock_invoke)
         with caplog.at_level(logging.WARNING, logger="harness_quality_gate.adapters.php"):
@@ -2284,15 +2301,6 @@ class TestRunL4:
             assert sec_warn[0] == "L4 security-checker skipped: not found", (
                 f"Security-checker skip warning content mutated. Got: {sec_warn[0]}"
             )
-            # Kill deptrac skip warning string/arg mutations (same pattern as psalm/composer)
-            deptr_warn = [m for m in all_msgs if m.startswith("L4 deptrac skipped:")]
-            assert len(deptr_warn) == 1, (
-                f'Expected exactly 1 deptrac skip warning starting with "L4 deptrac skipped: ", '
-                f'got: {all_msgs}'
-            )
-            assert deptr_warn[0] == "L4 deptrac skipped: not found", (
-                f"Deptrac skip warning content mutated. Got: {deptr_warn[0]}"
-            )
 
     def test_l4_duration_non_negative(self, tmp_path):
         adapter = self._make_l4_mock_adapter()
@@ -2319,12 +2327,6 @@ class TestRunL4:
         adapter.run_l4(tmp_path, {})
         call_args = adapter._security_checker.invoke.call_args[0][1]
         assert "--format=json" in call_args
-
-    def test_l4_deptrac_args(self, tmp_path):
-        adapter = self._make_l4_mock_adapter()
-        adapter.run_l4(tmp_path, {})
-        call_args = adapter._deptrac.invoke.call_args[0][1]
-        assert "--formatter=json" in call_args
 
     def test_l4_psalm_invoke_args(self, tmp_path):
         """Verify all invoke arguments passed to kill parameter mutation survivors."""
@@ -2383,21 +2385,12 @@ class TestRunL4:
         assert call[1]["env"] == {}
         assert call[1]["timeout"] == 300.0
 
-    def test_l4_deptrac_invoke_args(self, tmp_path):
-        """Verify all invoke arguments for deptrac."""
-        adapter = self._make_l4_mock_adapter()
-        adapter.run_l4(tmp_path, {})
-        call = adapter._deptrac.invoke.call_args
-        assert call[0][0] == tmp_path
-        assert call[1]["env"] == {}
-        assert call[1]["timeout"] == 300.0
-
     def test_l4_env_passed_to_all_invokes(self, tmp_path):
         """Kill mutations where env=env is removed or mutated to None."""
         adapter = self._make_l4_mock_adapter()
         adapter.run_l4(tmp_path, {"CUSTOM_ENV": "value"})
         for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
-                      "_dead_code", "_dep_analyser", "_deptrac"):
+                      "_dead_code", "_dep_analyser"):
             call = getattr(adapter, attr).invoke.call_args
             assert call[1]["env"] == {"CUSTOM_ENV": "value"}
     def test_l4_invoke_timeout_params(self, tmp_path):
@@ -2408,7 +2401,7 @@ class TestRunL4:
         assert adapter._psalm_taint.invoke.call_args[1]["timeout"] == 600.0
         for attr in ("_composer_audit", "_security_checker"):
             assert getattr(adapter, attr).invoke.call_args[1]["timeout"] == 300.0
-        for attr in ("_dead_code", "_dep_analyser", "_deptrac"):
+        for attr in ("_dead_code", "_dep_analyser"):
             assert getattr(adapter, attr).invoke.call_args[1]["timeout"] == 300.0
 
 
@@ -3744,11 +3737,11 @@ class TestSecurityCheckerGaps:
 # ===========================================================================
 
 class TestPhpWeakTestLayerAdapter:
-    def test_run_l3b_delegates(self, tmp_path):
+    def test_run_l2_delegates(self, tmp_path):
         from harness_quality_gate.adapters.php.weak_test_php import PhpWeakTestLayerAdapter
         adapter = PhpWeakTestLayerAdapter()
-        result = adapter.run_l3b(tmp_path, {})
-        assert result.layer == "L3B"
+        result = adapter.run_l2(tmp_path, {})
+        assert result.layer == "L2"
 
 
 # ===========================================================================
@@ -5036,7 +5029,7 @@ class TestRunL4SurvivorKillers:
         env = {"K": "V"}
         for i, attr in enumerate((
             "_psalm_taint", "_composer_audit", "_security_checker",
-            "_dead_code", "_dep_analyser", "_deptrac",
+            "_dead_code", "_dep_analyser",
         )):
             tool = getattr(adapter, attr)
             tool.invoke.return_value = MagicMock(
@@ -5064,12 +5057,10 @@ class TestRunL4SurvivorKillers:
         adapter._dep_analyser.invoke.assert_called_once_with(
             tmp_path, ["--format=json"], env=env, timeout=300.0,
         )
-        adapter._deptrac.invoke.assert_called_once_with(
-            tmp_path, ["--formatter=json"], env=env, timeout=300.0,
-        )
+        adapter._deptrac.invoke.assert_not_called()
         for i, attr in enumerate((
             "_psalm_taint", "_composer_audit", "_security_checker",
-            "_dead_code", "_dep_analyser", "_deptrac",
+            "_dead_code", "_dep_analyser",
         )):
             getattr(adapter, attr).parse.assert_called_once_with(
                 f"out-{i}", f"err-{i}", i,
@@ -5080,7 +5071,6 @@ class TestRunL4SurvivorKillers:
             "L4 security-checker: 0 findings",
             "L4 dead-code: 0 findings",
             "L4 dep-analyser: 0 findings",
-            "L4 deptrac: 0 findings",
         ]
         assert result.duration_sec == 1.235
 
@@ -5089,7 +5079,7 @@ class TestRunL4SurvivorKillers:
         for attr, tag in (
             ("_psalm_taint", "psalm"), ("_composer_audit", "audit"),
             ("_security_checker", "checker"), ("_dead_code", "dead"),
-            ("_dep_analyser", "dep"), ("_deptrac", "deptrac"),
+            ("_dep_analyser", "dep"),
         ):
             getattr(adapter, attr).invoke.side_effect = RuntimeError(f"boom-{tag}")
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
@@ -5100,14 +5090,13 @@ class TestRunL4SurvivorKillers:
             "L4 security-checker skipped: boom-checker",
             "L4 dead-code skipped: boom-dead",
             "L4 dep-analyser skipped: boom-dep",
-            "L4 deptrac skipped: boom-deptrac",
         ]
         assert result.passed is True
         assert result.findings == []
 
 
-class TestRunL2SurvivorKillers:
-    def test_l2_exact_invocation_parse_log_and_duration(self, tmp_path, caplog):
+class TestRunL3bSurvivorKillers:
+    def test_l3b_exact_invocation_parse_log_and_duration(self, tmp_path, caplog):
         adapter = _make_mock_adapter()
         env = {"E": "1"}
         adapter._antipattern.invoke.return_value = MagicMock(
@@ -5119,23 +5108,72 @@ class TestRunL2SurvivorKillers:
             "harness_quality_gate.adapters.php.php_adapter.time.monotonic",
             side_effect=[10.0, 11.23456],
         ):
-            result = adapter.run_l2(tmp_path, env)
+            result = adapter.run_l3b(tmp_path, env)
         adapter._antipattern.invoke.assert_called_once_with(
             tmp_path, [], env=env, timeout=300.0,
         )
         adapter._antipattern.parse.assert_called_once_with("AP-OUT")
-        assert _messages(caplog) == ["L2 antipattern-tier-A: 2 findings"]
+        assert _messages(caplog) == ["L3B antipattern-tier-A: 2 findings", "L3B deptrac: 0 findings"]
         assert result.duration_sec == 1.235
         assert result.passed is False
         assert result.findings == [f, f]
 
-    def test_l2_skip_path_exact_warning(self, tmp_path, caplog):
+    def test_l3b_skip_path_exact_warning(self, tmp_path, caplog):
         adapter = _make_mock_adapter()
         adapter._antipattern.invoke.side_effect = RuntimeError("ap-boom")
         with caplog.at_level(logging.WARNING, logger=_LOGGER):
-            result = adapter.run_l2(tmp_path, {})
-        assert _messages(caplog) == ["L2 antipattern-tier-A skipped: ap-boom"]
+            result = adapter.run_l3b(tmp_path, {})
+        assert _messages(caplog) == ["L3B antipattern-tier-A skipped: ap-boom"]
         assert result.passed is True
+
+    def test_l3b_deptrac_exact_invocation_and_parse_passthrough(self, tmp_path):
+        """deptrac runs in L3B (architecture = deep quality per spec glossary)."""
+        adapter = _make_mock_adapter()
+        env = {"E": "1"}
+        adapter._deptrac.invoke.return_value = MagicMock(
+            stdout="DT-OUT", stderr="DT-ERR", exitcode=2,
+        )
+        adapter._deptrac.parse.return_value = []
+        adapter.run_l3b(tmp_path, env)
+        adapter._deptrac.invoke.assert_called_once_with(
+            tmp_path, ["--formatter=json"], env=env, timeout=300.0,
+        )
+        adapter._deptrac.parse.assert_called_once_with("DT-OUT", "DT-ERR", 2)
+
+    def test_l3b_deptrac_findings_flip_passed(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        violation = Finding(
+            node="src/Forbidden.php", severity="error",
+            message="Architecture violation", tool="deptrac",
+            layer="L3B", language="php",
+        )
+        adapter._deptrac.parse.return_value = [violation]
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            result = adapter.run_l3b(tmp_path, {})
+        assert result.passed is False
+        assert any(f.tool == "deptrac" for f in result.findings)
+        assert "L3B deptrac: 1 findings" in _messages(caplog)
+
+    def test_l3b_deptrac_skip_path_exact_warning(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        adapter._deptrac.invoke.side_effect = RuntimeError("dt-boom")
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            result = adapter.run_l3b(tmp_path, {})
+        assert _messages(caplog) == ["L3B deptrac skipped: dt-boom"]
+        # antipattern mock returns [] so only deptrac decides; skip → passed
+        assert result.passed is True
+
+    def test_l3b_deptrac_oserror_degrades_to_skip(self, tmp_path, caplog):
+        """P10: vendor/bin/deptrac missing raises FileNotFoundError (OSError)."""
+        adapter = _make_mock_adapter()
+        adapter._deptrac.invoke.side_effect = FileNotFoundError(
+            2, "No such file or directory", "vendor/bin/deptrac",
+        )
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            result = adapter.run_l3b(tmp_path, {})
+        assert result.passed is True
+        assert len(_messages(caplog)) == 1
+        assert _messages(caplog)[0].startswith("L3B deptrac skipped:")
 
 
 class TestRunL1SurvivorKillers:

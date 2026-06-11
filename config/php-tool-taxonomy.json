@@ -19,7 +19,7 @@
   },
   {
     "name": "infection",
-    "layer": "L3B",
+    "layer": "L1",
     "language": "php",
     "tier": "A",
     "criticality": "critical",
@@ -37,7 +37,7 @@
   },
   {
     "name": "deptrac",
-    "layer": "L3A",
+    "layer": "L3B",
     "language": "php",
     "tier": "A",
     "criticality": "critical",
@@ -100,7 +100,7 @@
   },
   {
     "name": "shipmonk/dead-code-detector",
-    "layer": "L3A",
+    "layer": "L4",
     "language": "php",
     "tier": "A",
     "criticality": "optional",
@@ -109,7 +109,7 @@
   },
   {
     "name": "shipmonk/composer-dependency-analyser",
-    "layer": "L3A",
+    "layer": "L4",
     "language": "php",
     "tier": "A",
     "criticality": "optional",

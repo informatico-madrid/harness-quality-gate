@@ -126,7 +126,7 @@ class TestParseKnownCategories:
         assert result[0].severity == "warning"
         assert result[0].rule_id == "unused_imports"
         assert result[0].tool == "deptry"
-        assert result[0].layer == "L2"
+        assert result[0].layer == "L4"
         assert result[0].language == "python"
 
     def test_missing_imports_severity_error(self, adapter):
@@ -356,7 +356,7 @@ class TestParseMultipleItems:
         assert f.severity == "warning"
         assert f.rule_id == "unused_imports"
         assert f.tool == "deptry"
-        assert f.layer == "L2"
+        assert f.layer == "L4"
         assert f.language == "python"
         assert f.fix_hint is not None
 
@@ -624,7 +624,7 @@ class TestProperties:
         assert f.message == "src/client.py:37 — unused_imports: requests"
         assert f.fix_hint == "Review unused_imports for 'requests'"
         assert f.tool == "deptry"
-        assert f.layer == "L2"
+        assert f.layer == "L4"
         assert f.language == "python"
         assert f.rule_id == "unused_imports"
 

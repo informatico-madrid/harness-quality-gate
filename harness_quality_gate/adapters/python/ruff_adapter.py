@@ -96,7 +96,7 @@ class RuffAdapter(ToolAdapter):
                     message=detail,
                     fix_hint=fix_hint,
                     tool="ruff",
-                    layer="L2",
+                    layer="L3A",
                     language="python",
                     rule_id=code or None,
                 )

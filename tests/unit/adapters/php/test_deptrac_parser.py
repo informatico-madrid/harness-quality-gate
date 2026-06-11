@@ -75,7 +75,7 @@ def test_parse_violations_list() -> None:
     assert f.message == "Controller calls Repository"
     assert f.fix_hint == "Use Service instead"
     assert f.tool == "deptrac"
-    assert f.layer == "L4"
+    assert f.layer == "L3B"
     assert f.language == "php"
     # Violations is a list, so violations_count = the list itself
     assert isinstance(a.architecture.get("violations"), list)
@@ -98,7 +98,7 @@ def test_parse_violations_list_multiple() -> None:
     for f in findings:
         assert f.severity == "error"
         assert f.tool == "deptrac"
-        assert f.layer == "L4"
+        assert f.layer == "L3B"
         assert f.language == "php"
     assert findings[0].message == "V1"
     assert findings[1].message == "V2"

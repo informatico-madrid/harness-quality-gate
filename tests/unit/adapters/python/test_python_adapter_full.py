@@ -286,11 +286,21 @@ class TestRunL3A:
 # ---------------------------------------------------------------------------
 
 class TestRunL1:
-    """Test run_l1 branch coverage: pytest with xml report."""
+    """Test run_l1 branch coverage: pytest with xml report.
+
+    The mutation half of L1 is mocked clean here; it has its own dedicated
+    coverage in TestRunL1MutationGate.
+    """
 
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
-        return PythonAdapter()
+        a = PythonAdapter()
+        a.mutmut = _mock_subadapter()
+        a.mutmut.parse.return_value = MutationStats(
+            total=0, killed=0, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+        )
+        return a
 
     def test_l1_all_pass(self, tmp_path: Path):
         """No pytest failure findings -> passed=True."""
@@ -465,276 +475,162 @@ class TestRunL1:
 
 
 # ---------------------------------------------------------------------------
-# Run L2 (ruff + vulture + deptry)
+# Run L2 (weak-test detection + diversity)
 # ---------------------------------------------------------------------------
 
 class TestRunL2:
-    """Test run_l2 branch coverage: code quality tools."""
+    """Test run_l2 branch coverage: weak-test detection (A1-A8) + diversity."""
 
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
 
-    def test_l2_all_pass(self, tmp_path: Path, caplog):
-        """All tools return 0 findings -> passed=True.
+    @staticmethod
+    def _write_weak_test_repo(repo: Path) -> None:
+        """One test with a single assertion -> A1 (ERROR) + A2/A3/A5 (WARNING)."""
+        tests = repo / "tests"
+        tests.mkdir()
+        (tests / "test_calc.py").write_text(
+            "def test_add():\n"
+            "    result = 1 + 1\n"
+            "    assert result == 2\n",
+            encoding="utf-8",
+        )
+        src = repo / "src"
+        src.mkdir()
+        (src / "calc.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8",
+        )
 
-        Kills: mutmut_9 (format string → None), mutmut_10 (count → None),
-        mutmut_11 (format string removed), mutmut_12 (len → None).
-        Verifies logger.info called with exact format string and numeric count.
-        Kills mutmut_17,18 (env keyword arg mutation), mutmut_57,58 (logger msg mutations).
-        Kills mutmut_63 (return value mutations).
-        """
+    def test_l2_no_tests_dir_passes_with_warning(self, tmp_path: Path, caplog):
+        """Repo without tests/ -> 0 findings, passed=True, exact warning."""
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
-                layer = a.run_l2(tmp_path, {})
+        with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
+            layer = a.run_l2(tmp_path, {})
         assert layer.layer == "L2"
+        assert layer.language == "python"
         assert layer.passed is True
-        assert isinstance(layer.passed, bool), f"passed must be bool (kills mutmut_37-40,46)"
         assert layer.findings == []
-        assert isinstance(layer.duration_sec, float)
-        # Kills: mutmut_9 (format string → None), mutmut_10 (count → None), mutmut_11 (no format)
-        assert "ruff (L2)" in caplog.text
-        assert "vulture" in caplog.text
-        assert "deptry" in caplog.text
-        # Verify log messages contain numeric count values (kills count → None mutations)
-        for line in caplog.messages:
-            if "ruff (L2)" in line or "vulture" in line or "deptry" in line:
-                # Message is "tool: %d findings" % count — count must be numeric
-                assert isinstance(int(str(line.split(":")[1].split()[0])), int)
-        # Kill mutmut_17, 18: _run_ruff passes env=dict(env) if env else {}
-        assert a.ruff.invoke.called
-        inv_kwargs = a.ruff.invoke.call_args.kwargs
-        assert "env" in inv_kwargs, "ruff.invoke() called with env= kwarg (kills mutmut_17,18)"
-        # Kill mutmut_63: validate LayerResult creation (ensure not returning wrong type)
-        assert isinstance(layer, LayerResult), "return must be LayerResult (kills mutmut_63)"
+        warn = [m for m in caplog.messages if "no tests/ directory" in m]
+        assert len(warn) == 1
+        assert warn[0] == f"no tests/ directory in {tmp_path}, skipping weak-test analysis"
+        div = layer.tool_specific["diversity"]
+        assert div["total_tests"] == 0
+        assert div["diversity_score"] == 1.0
 
-    def test_l2_vulture_invoke_args(self, tmp_path: Path):
-        """Assert vulture.invoke called with correct args."""
+    def test_l2_weak_test_produces_error_findings_and_fails(self, tmp_path: Path):
+        """A1 (ERROR) gates the layer; finding fields mapped exactly."""
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
-        assert a.vulture.invoke.called
-        inv_args = a.vulture.invoke.call_args[0]
-        assert inv_args[0] is tmp_path, "invoke() first arg = repo"
-        assert inv_args[1] == [], "invoke() second arg = []"
+        self._write_weak_test_repo(tmp_path)
+        layer = a.run_l2(tmp_path, {})
+        assert layer.layer == "L2"
+        assert layer.language == "python"
+        assert layer.passed is False
+        rules = {f.rule_id for f in layer.findings}
+        assert "A1" in rules
+        assert "A2" in rules
+        a1 = next(f for f in layer.findings if f.rule_id == "A1")
+        assert a1.severity == "error"
+        assert a1.tool == "weak-test"
+        assert a1.layer == "L2"
+        assert a1.language == "python"
+        assert a1.node == "test_calc.py:1"
+        assert a1.message == "test_add: only 1 assertion(s) -- suspicious"
+        a2 = next(f for f in layer.findings if f.rule_id == "A2")
+        assert a2.severity == "warning"
+        assert a2.message == "test_add: only 1 assertion(s) -- insufficient coverage"
 
-    def test_l2_deptry_invoke_args(self, tmp_path: Path):
-        """Assert deptry.invoke called with correct args."""
+    def test_l2_warnings_only_still_pass(self, tmp_path: Path):
+        """3+ assertions avoid A1/A2; WARNING-only rules must not gate."""
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_calc.py").write_text(
+            "def test_add():\n"
+            "    result = 1 + 1\n"
+            "    assert result == 2\n"
+            "    assert result > 1\n"
+            "    assert result < 3\n",
+            encoding="utf-8",
+        )
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
-        assert a.deptry.invoke.called
-        inv_args = a.deptry.invoke.call_args[0]
-        assert inv_args[0] is tmp_path, "invoke() first arg = repo"
-        assert inv_args[1] == [], "invoke() second arg = []"
-        # Kill H1 wiring: deptry.invoke(repo, env) — catches mutmut_46/18
-        assert a.deptry.invoke.call_args[0][0] is tmp_path
-        assert a.deptry.invoke.call_args[0][1] == []
+        layer = a.run_l2(tmp_path, {})
+        assert layer.findings, "expected WARNING findings (A3/A5)"
+        assert all(f.severity == "warning" for f in layer.findings)
+        assert layer.passed is True
+
+    def test_l2_diversity_in_tool_specific(self, tmp_path: Path):
+        """Diversity report travels in tool_specific and is JSON-serialisable."""
+        import json as _json
+        self._write_weak_test_repo(tmp_path)
+        a = self._adapter()
+        layer = a.run_l2(tmp_path, {})
+        div = layer.tool_specific["diversity"]
+        assert div["total_tests"] == 1
+        assert "diversity_score" in div
+        assert "summary" in div
+        _json.dumps(div)  # must be plain data, no dataclasses
+
+    def test_l2_src_dir_fallback_to_repo(self, tmp_path: Path):
+        """Without src/, the analysis uses the repo root as source dir."""
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_x.py").write_text(
+            "def test_x():\n"
+            "    value = 5\n"
+            "    assert value == 5\n",
+            encoding="utf-8",
+        )
+        a = self._adapter()
+        layer = a.run_l2(tmp_path, {})
+        # A1 fires regardless of src dir resolution
+        assert any(f.rule_id == "A1" for f in layer.findings)
+        assert layer.passed is False
 
     def test_l2_duration_rounding_exact(self, tmp_path: Path):
-        """Round(duration, 3) must produce a float (H2).
-
-        Kills mutmut_34-38 (duration_sec: round arg mutations and pass).
-        """
+        """round(duration, 3) must produce a float with 3-decimal precision."""
         a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        ticks = iter([100.0, 102.765432])
-        with _all_tools_on_path():
-            with patch(
-                "harness_quality_gate.adapters.python.python_adapter.time.monotonic",
-                side_effect=lambda: next(ticks),
-            ):
-                layer = a.run_l2(tmp_path, {})
-        assert isinstance(layer.duration_sec, float), \
-            "round(_, 3) must return float (kills round(_, None) -> int: mutmut_36, 38)"
-        assert layer.duration_sec == 2.765, \
-            "duration_sec must be exactly round(2.765432, 3) = 2.765"
-
-    def test_l2_logger_all_tool_format_strings(self, tmp_path: Path, caplog):
-        """Verify ALL three logger.info calls exist with exact format (H3).
-
-        Kills mutmut_57 (ruff logger format string mutation),
-        mutmut_depxx (vulture/deptry logger format string mutations).
-        Kills logger.info REMOVAL mutations (call-removed).
-        """
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            with caplog.at_level("INFO",
-                                  logger="harness_quality_gate.adapters.python.python_adapter"):
-                layer = a.run_l2(tmp_path, {})
-        # Kill logger info call REMOVAL mutations (H3): each log must be present
-        ruff_msgs = [r.getMessage() for r in caplog.records
-                      if r.levelname == "INFO" and "ruff (L2)" in r.message and "findings" in r.message]
-        vulture_msgs = [r.getMessage() for r in caplog.records
-                        if r.levelname == "INFO" and "vulture" in r.message and "findings" in r.message]
-        deptry_msgs = [r.getMessage() for r in caplog.records
-                       if r.levelname == "INFO" and "deptry" in r.message and "findings" in r.message]
-        assert len(ruff_msgs) >= 1, \
-            "Logger must emit ruff message (kills ruff logger.info REMOVAL: mutmut_57)"
-        assert len(vulture_msgs) >= 1, \
-            "Logger must emit vulture message (kills vulture logger.info REMOVAL)"
-        assert len(deptry_msgs) >= 1, \
-            "Logger must emit deptry message (kills deptry logger.info REMOVAL)"
-        # Exact format check for each: "tool: N findings" with N being an integer
-        for label, messages in [("ruff (L2)", ruff_msgs), ("vulture", vulture_msgs),
-                                 ("deptry", deptry_msgs)]:
-            for msg in messages:
-                assert label in msg, \
-                    f"Message must contain '{label}' (kills format string mutation: XX{label}XX)"
-                assert "findings" in msg, f"'{label}': must contain 'findings'"
-                parts = msg.split(": ", 1)
-                assert len(parts) >= 2, \
-                    f"'{label}': must have ':' separator"
-                int(parts[1].split()[0]), \
-                    f"'{label}': count must be parseable as int (kills count->None)"
-
-    def test_l2_passed_type_when_fail(self, tmp_path: Path):
-        """passed must be exact bool False when findings exist (mutmut_37-40,46)."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
+        ticks = iter([100.0, 101.123456])
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.time.monotonic",
+            side_effect=lambda: next(ticks),
+        ):
             layer = a.run_l2(tmp_path, {})
-        assert layer.passed is False
-        assert isinstance(layer.passed, bool), f"passed must be bool, got {type(layer.passed)} (kills mutmut_37-40,46)"
+        assert isinstance(layer.duration_sec, float)
+        assert layer.duration_sec == 1.123
 
-    def test_l2_ruff_findings(self, tmp_path: Path):
-        """Ruff returns findings -> included.
-
-        Kills: mutmut_4 (repo → None in _run_ruff call), mutmut_5 (env → None
-        in _run_ruff call). Verifies invoke is called with correct (repo, env) args.
-        """
+    def test_l2_logger_messages_exact(self, tmp_path: Path, caplog):
+        """weak-test and diversity log lines are emitted with real counts."""
         a = self._adapter()
-        env_arg: dict[str, str] = {}
-        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, env_arg)
-        assert layer.passed is False
-        assert len(layer.findings) == 1
-        assert layer.findings[0].tool == "ruff"
-        # Kills mutmut_4 (repo→None): first positional arg must be tmp_path
-        assert a.ruff.invoke.call_args[0][0] is tmp_path
-        # Kills mutmut_5 (env→None): env keyword arg must be actual env dict (not None)
-        assert a.ruff.invoke.call_args.kwargs.get("env") == env_arg
-
-    def test_l2_vulture_findings(self, tmp_path: Path):
-        """Vulture returns findings -> included."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[_make_finding(tool="vulture", severity="warning")])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
+        self._write_weak_test_repo(tmp_path)
+        with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
             layer = a.run_l2(tmp_path, {})
-        assert layer.passed is False
-        assert len(layer.findings) == 1
-        assert layer.findings[0].tool == "vulture"
-        assert layer.findings[0].severity == "warning"
-
-    def test_l2_deptry_findings(self, tmp_path: Path):
-        """Deptry returns findings -> included."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[_make_finding(tool="deptry")])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
-        assert layer.passed is False
-        assert layer.findings[0].tool == "deptry"
-
-    def test_l2_all_findings(self, tmp_path: Path):
-        """All three tools return findings -> all merged."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
-        a.vulture = _mock_subadapter(findings=[_make_finding(tool="vulture")])
-        a.deptry = _mock_subadapter(findings=[_make_finding(tool="deptry")])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
-        assert layer.passed is False
-        assert len(layer.findings) == 3
-
-    def test_l2_ruff_error(self, tmp_path: Path):
-        """Ruff raises -> skipped, other tools still run."""
-        a = self._adapter()
-        with patch.object(a.ruff, "invoke", side_effect=OSError("ruff broken")):
-            a.vulture = _mock_subadapter(findings=[_make_finding(tool="vulture")])
-            a.deptry = _mock_subadapter(findings=[])
-            with _all_tools_on_path():
-                layer = a.run_l2(tmp_path, {})
-        assert len(layer.findings) == 1
-        assert layer.findings[0].tool == "vulture"
-
-    def test_l2_vulture_error(self, tmp_path: Path):
-        """Vulture raises -> skipped, ruff and deptry still run."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[_make_finding(tool="ruff")])
-        with patch.object(a.vulture, "invoke", side_effect=RuntimeError("vulture broke")):
-            a.deptry = _mock_subadapter(findings=[_make_finding(tool="deptry")])
-            with _all_tools_on_path():
-                layer = a.run_l2(tmp_path, {})
-        assert len(layer.findings) == 2
-
-    def test_l2_deptry_error(self, tmp_path: Path):
-        """Deptry raises -> skipped, ruff and vulture still run."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        with patch.object(a.deptry, "invoke", side_effect=OSError("deptry err")):
-            with _all_tools_on_path():
-                layer = a.run_l2(tmp_path, {})
-            assert layer.findings == []
-
-    def test_l2_all_error(self, tmp_path: Path):
-        """All three raise -> empty findings, passed=True."""
-        a = self._adapter()
-        with patch.object(a.ruff, "invoke", side_effect=OSError("fail")):
-            with patch.object(a.vulture, "invoke", side_effect=OSError("fail")):
-                with patch.object(a.deptry, "invoke", side_effect=OSError("fail")):
-                    with _all_tools_on_path():
-                        layer = a.run_l2(tmp_path, {})
-        assert layer.passed is True
-        assert layer.findings == []
-
-    def test_l2_non_dict_items_in_parse(self, tmp_path: Path):
-        """Sub-adapter parse receives non-dict results -> skips them."""
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        a.vulture = _mock_subadapter(findings=[])
-        a.deptry = _mock_subadapter(findings=[])
-        with _all_tools_on_path():
-            layer = a.run_l2(tmp_path, {})
-        assert isinstance(layer, LayerResult)
+        msgs = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+        assert f"weak-test: {len(layer.findings)} findings" in msgs
+        div = layer.tool_specific["diversity"]
+        assert (
+            f"diversity: score {div['diversity_score']} over {div['total_tests']} tests"
+            in msgs
+        )
 
 
 # ---------------------------------------------------------------------------
-# Run L3B (mutmut)
+# Run L1 mutation gate (mutmut runs in L1 per spec glossary)
 # ---------------------------------------------------------------------------
 
-class TestRunL3B:
-    """Test run_l3b branch coverage: mutation testing."""
+class TestRunL1MutationGate:
+    """Test run_l1 mutation-gate coverage (mutmut).
+
+    The pytest half of L1 is mocked clean here; it has its own dedicated
+    coverage in TestRunL1.
+    """
 
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
-        return PythonAdapter()
+        a = PythonAdapter()
+        a.pytest = _mock_subadapter(findings=[])
+        return a
 
-    def test_l3b_no_mutants(self, tmp_path: Path):
+    def test_l1mut_no_mutants(self, tmp_path: Path):
         """All mutants killed -> passed=True, no remediation key."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -744,8 +640,8 @@ class TestRunL3B:
         )
         with patch.object(a, 'mutmut', mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
-        assert layer.layer == "L3B"
+                layer = a.run_l1(tmp_path, {})
+        assert layer.layer == "L1"
         assert layer.passed is True
         assert layer.findings == []
         ms = layer.tool_specific["mutation_stats"]
@@ -753,7 +649,7 @@ class TestRunL3B:
         assert ms.survived == 0
         assert "remediation" not in layer.tool_specific
 
-    def test_l3b_survived_mutants(self, tmp_path: Path):
+    def test_l1mut_survived_mutants(self, tmp_path: Path):
         """Some mutants survived -> passed=False + remediation key present."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -763,7 +659,7 @@ class TestRunL3B:
         )
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         assert layer.passed is False
         ms = layer.tool_specific["mutation_stats"]
         assert ms.survived == 3
@@ -775,7 +671,7 @@ class TestRunL3B:
         assert rem["timed_out"] == 0
         assert "3 mutant(s) survived" in rem["summary"]
 
-    def test_l3b_timed_out(self, tmp_path: Path):
+    def test_l1mut_timed_out(self, tmp_path: Path):
         """Some mutants timed out -> passed=False + remediation key present."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -785,7 +681,7 @@ class TestRunL3B:
         )
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         assert layer.passed is False
         ms = layer.tool_specific["mutation_stats"]
         assert ms.timed_out == 2
@@ -795,7 +691,7 @@ class TestRunL3B:
         assert rem["survived"] == 0
         assert "2 mutant(s) timed out" in rem["summary"]
 
-    def test_l3b_escaped_mutants(self, tmp_path: Path):
+    def test_l1mut_escaped_mutants(self, tmp_path: Path):
         """Escaped mutants -> survived > 0, passed=False."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -805,12 +701,12 @@ class TestRunL3B:
         )
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         assert layer.passed is False
         ms = layer.tool_specific["mutation_stats"]
         assert ms.escaped == 1
 
-    def test_l3b_no_mutants_found(self, tmp_path: Path):
+    def test_l1mut_no_mutants_found(self, tmp_path: Path):
         """Zero mutants total (0,0,0) -> passed=True."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -820,12 +716,12 @@ class TestRunL3B:
         )
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         assert layer.passed is True
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
 
-    def test_l3b_mutmut_not_on_path(self, tmp_path: Path, caplog):
+    def test_l1mut_mutmut_not_on_path(self, tmp_path: Path, caplog):
         """mutmut not found -> empty stats + exact warning message.
 
         Kills mutmut_5 (None), mutmut_6 (XX...XX), mutmut_7 (path→PATH),
@@ -834,7 +730,7 @@ class TestRunL3B:
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
         assert ms.killed == 0
@@ -855,31 +751,31 @@ class TestRunL3B:
             if record.levelname == "WARNING" and "mutmut not found" in record.getMessage():
                 assert record.getMessage() == "mutmut not found on PATH, returning empty stats"
 
-    def test_l3b_mutmut_raises_oserror(self, tmp_path: Path):
+    def test_l1mut_mutmut_raises_oserror(self, tmp_path: Path):
         """mutmut.invoke raises OSError -> empty fallback stats."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         with patch.object(a, "mutmut", mock_mutmut):
             with patch.object(mock_mutmut, "invoke", side_effect=OSError("mutmut broken")):
                 with _all_tools_on_path():
-                    layer = a.run_l3b(tmp_path, {})
+                    layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
         assert layer.passed is True
 
-    def test_l3b_mutmut_raises_runtimeerror(self, tmp_path: Path):
+    def test_l1mut_mutmut_raises_runtimeerror(self, tmp_path: Path):
         """mutmut.invoke raises RuntimeError -> empty fallback stats."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         with patch.object(a, "mutmut", mock_mutmut):
             with patch.object(mock_mutmut, "invoke", side_effect=RuntimeError("boom")):
                 with _all_tools_on_path():
-                    layer = a.run_l3b(tmp_path, {})
+                    layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
         assert layer.passed is True
 
-    def test_l3b_mutmut_parse_return_full_stats(self, tmp_path: Path):
+    def test_l1mut_mutmut_parse_return_full_stats(self, tmp_path: Path):
         """Parsed MutationStats contains all expected fields."""
         a = self._adapter()
         expected = MutationStats(
@@ -890,7 +786,7 @@ class TestRunL3B:
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
                 mock_mutmut.parse.return_value = expected
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 50
         assert ms.killed == 30
@@ -901,7 +797,7 @@ class TestRunL3B:
         assert ms.msi == 0.6
         assert ms.covered_msi == 0.7
 
-    def test_l3b_layer_name_and_language(self, tmp_path: Path):
+    def test_l1mut_layer_name_and_language(self, tmp_path: Path):
         """Layer name and language are set correctly."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
@@ -911,11 +807,11 @@ class TestRunL3B:
                     total=0, killed=0, survived=0, timed_out=0,
                     escaped=0, untested=0, msi=0.0, covered_msi=0.0,
                 )
-                layer = a.run_l3b(tmp_path, {})
-                assert layer.layer == "L3B"
+                layer = a.run_l1(tmp_path, {})
+                assert layer.layer == "L1"
         assert layer.language == "python"
 
-    def test_l3b_invoke_and_parse_args_strict(self, tmp_path: Path):
+    def test_l1mut_invoke_and_parse_args_strict(self, tmp_path: Path):
         """Assert _run_mutmut calls invoke/parse with correct args.
 
         Kills mutations on _run_mutmut:
@@ -946,10 +842,10 @@ class TestRunL3B:
 
         with patch.object(a, "mutmut", mock_mutmut):
             with _all_tools_on_path():
-                layer = a.run_l3b(tmp_path, {})
+                layer = a.run_l1(tmp_path, {})
         # Layer-level correctness
         assert layer.passed is True
-        assert layer.layer == "L3B"
+        assert layer.layer == "L1"
         assert layer.language == "python"
         ms = layer.tool_specific["mutation_stats"]
         # Full assertion on parsed stats (kills return-value mutations)
@@ -968,6 +864,115 @@ class TestRunL3B:
         assert inv_args[1] == [], "invoke() second arg must be [] (not None/removed)"
         # After mutation 38, real parse(None) raises TypeError and we never get here
 
+
+
+# ---------------------------------------------------------------------------
+# Run L3B (SOLID metrics + antipattern Tier A)
+# ---------------------------------------------------------------------------
+
+class TestRunL3B:
+    """Test run_l3b branch coverage: SOLID + antipattern Tier A (in-process)."""
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_l3b_empty_repo_passes(self, tmp_path: Path):
+        a = self._adapter()
+        layer = a.run_l3b(tmp_path, {})
+        assert layer.layer == "L3B"
+        assert layer.language == "python"
+        assert layer.passed is True
+        assert layer.findings == []
+        assert layer.tool_specific is None
+
+    def test_l3b_solid_srp_violation_in_src_dir(self, tmp_path: Path):
+        """Class with >7 public methods in src/ -> SOLID-S finding, exact fields."""
+        src = tmp_path / "src"
+        src.mkdir()
+        methods = "\n".join(
+            f"    def m{i}(self):\n        return {i}" for i in range(9)
+        )
+        (src / "fat.py").write_text(f"class Fat:\n{methods}\n", encoding="utf-8")
+        a = self._adapter()
+        layer = a.run_l3b(tmp_path, {})
+        assert layer.passed is False
+        s = next(f for f in layer.findings if f.rule_id == "SOLID-S")
+        assert s.severity == "warning"
+        assert s.tool == "solid-metrics"
+        assert s.layer == "L3B"
+        assert s.language == "python"
+        assert s.node == "Fat"
+        assert "public_methods=9 > 7 (SRP)" in s.message
+        assert s.message.startswith("SOLID S: ")
+
+    def test_l3b_solid_issue_key_variant(self, tmp_path: Path):
+        """O-principle violations use the 'issue' key (not 'issues' list)."""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "one.py").write_text(
+            "class One:\n    def a(self):\n        return 1\n", encoding="utf-8",
+        )
+        a = self._adapter()
+        layer = a.run_l3b(tmp_path, {})
+        o = next(f for f in layer.findings if f.rule_id == "SOLID-O")
+        assert o.message.startswith("SOLID O: abstractness=")
+        assert o.node == "O"  # no class/file key -> falls back to principle
+
+    def test_l3b_tier_a_ap02_finding(self, tmp_path: Path):
+        """Static-only class (>=3 methods) -> AP02 Finding.
+
+        Regression guard: the violation dict key was the live mutant
+        "XXidXX" instead of "id" (antipattern_tier_a.py:419), which made
+        AP02 violations invisible to run_tier_a's by-id grouping.
+        """
+        (tmp_path / "util.py").write_text(
+            "class Util:\n"
+            "    @staticmethod\n"
+            "    def a():\n"
+            "        return 1\n"
+            "    @staticmethod\n"
+            "    def b():\n"
+            "        return 2\n"
+            "    @staticmethod\n"
+            "    def c():\n"
+            "        return 3\n",
+            encoding="utf-8",
+        )
+        a = self._adapter()
+        layer = a.run_l3b(tmp_path, {})
+        ap02 = [f for f in layer.findings if f.rule_id == "AP02"]
+        assert len(ap02) >= 1
+        f = ap02[0]
+        assert f.tool == "antipattern-tier-a"
+        assert f.severity == "warning"
+        assert f.layer == "L3B"
+        assert f.language == "python"
+        assert "Functional Decomposition" in f.message
+        assert "all 3 methods are static/class methods" in f.message
+        assert f.node == "Util:1"  # class name + lineno
+        assert layer.passed is False
+
+    def test_l3b_logger_messages_exact(self, tmp_path: Path, caplog):
+        a = self._adapter()
+        with caplog.at_level("INFO", logger="harness_quality_gate.adapters.python.python_adapter"):
+            a.run_l3b(tmp_path, {})
+        msgs = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+        assert msgs == [
+            "solid-metrics: 0 findings",
+            "antipattern-tier-a: 0 findings",
+        ]
+
+    def test_l3b_duration_rounding_exact(self, tmp_path: Path):
+        a = self._adapter()
+        ticks = iter([100.0, 101.123456])
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.time.monotonic",
+            side_effect=lambda: next(ticks),
+        ):
+            layer = a.run_l3b(tmp_path, {})
+        assert isinstance(layer.duration_sec, float)
+        assert layer.duration_sec == 1.123
 
 
 # ---------------------------------------------------------------------------
@@ -1036,10 +1041,10 @@ class TestMutationRemediation:
         assert "mutation-testing-guide" in rem["summary"]
         assert "MUTANT_KILLING_GUIDE.md" in rem["summary"]
 
-    def test_summary_contains_l3b_label(self):
-        """summary starts with 'L3B FAILED' so agents can grep for it."""
+    def test_summary_contains_l1_label(self):
+        """summary starts with 'L1 FAILED' so agents can grep for it."""
         rem = self._rem(survived=1, timed_out=0)
-        assert rem["summary"].startswith("L3B FAILED")
+        assert rem["summary"].startswith("L1 FAILED")
 
     def test_priority_hint_in_summary(self):
         """summary includes priority section references for agents."""
@@ -3063,55 +3068,58 @@ class TestPyAdapterSurvivorKillers:
 
     def test_l1_exact_calls_logs_duration(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
+        stats = MutationStats(
+            total=5, killed=5, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=100.0, covered_msi=100.0,
+        )
+        a.mutmut.parse.return_value = stats
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
              patch(_PA_WHICH, return_value="/usr/bin/x"), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l1(tmp_path, self.ENV)
         a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.pytest.parse.assert_called_once_with("out-2", "err-2", 2)
+        a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
         assert _pa_messages(caplog) == ["pytest: 0 findings"]
         assert result.duration_sec == 1.235
         assert result.layer == "L1"
         assert result.language == "python"
+        assert result.passed is True
+        assert result.tool_specific == {"mutation_stats": stats}
 
-    def test_l2_exact_calls_logs_duration(self, tmp_path, caplog):
+    def test_l2_exact_logs_and_duration(self, tmp_path, caplog):
+        """run_l2 is in-process (weak-test + diversity): exact logs + duration."""
+        (tmp_path / "tests").mkdir()  # avoid the no-tests/ warning record
         a = _pa_full_mock_adapter()
-        f = _make_finding()
-        a.vulture.parse.return_value = [f]
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/x"), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l2(tmp_path, self.ENV)
-        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
-        a.vulture.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
-        a.deptry.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
-        a.vulture.parse.assert_called_once_with("out-5", "err-5", 5)
-        a.deptry.parse.assert_called_once_with("out-6", "err-6", 6)
         assert _pa_messages(caplog) == [
-            "ruff (L2): 0 findings", "vulture: 1 findings", "deptry: 0 findings",
+            "weak-test: 0 findings",
+            "diversity: score 1.0 over 0 tests",
         ]
         assert result.duration_sec == 1.235
         assert result.layer == "L2"
         assert result.language == "python"
-        assert result.passed is False
+        assert result.passed is True
+        assert result.tool_specific["diversity"]["total_tests"] == 0
 
-    def test_l3b_exact_calls_duration_and_remediation_absent(self, tmp_path):
+    def test_l3b_exact_logs_and_duration(self, tmp_path, caplog):
+        """run_l3b is in-process (solid + tier-a): exact logs + duration."""
         a = _pa_full_mock_adapter()
-        stats = MutationStats(
-            total=5, killed=5, survived=0, timed_out=0,
-            escaped=0, untested=0, msi=100.0, covered_msi=100.0,
-        )
-        a.mutmut.parse.return_value = stats
-        with patch(_PA_WHICH, return_value="/usr/bin/x"), \
+        with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l3b(tmp_path, self.ENV)
-        a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
-        a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
+        assert _pa_messages(caplog) == [
+            "solid-metrics: 0 findings",
+            "antipattern-tier-a: 0 findings",
+        ]
         assert result.duration_sec == 1.235
         assert result.layer == "L3B"
         assert result.language == "python"
         assert result.passed is True
-        assert result.tool_specific == {"mutation_stats": stats}
+        assert result.tool_specific is None
 
     def test_l4_exact_calls_logs_duration(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
@@ -3121,7 +3129,13 @@ class TestPyAdapterSurvivorKillers:
             result = a.run_l4(tmp_path, self.ENV)
         a.bandit.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.bandit.parse.assert_called_once_with("out-4", "err-4", 4)
-        assert _pa_messages(caplog) == ["bandit: 0 findings"]
+        a.vulture.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.vulture.parse.assert_called_once_with("out-5", "err-5", 5)
+        a.deptry.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.deptry.parse.assert_called_once_with("out-6", "err-6", 6)
+        assert _pa_messages(caplog) == [
+            "bandit: 0 findings", "vulture: 0 findings", "deptry: 0 findings",
+        ]
         assert result.duration_sec == 1.235
         assert result.layer == "L4"
         assert result.language == "python"
@@ -3218,7 +3232,7 @@ class TestPyAdapterSurvivorKillers:
             "guide": "MUTANT_KILLING_GUIDE.md",
             "instructions": "SUBAGENT_MUTATION_INSTRUCTIONS.md",
             "summary": (
-                "L3B FAILED — 1 mutant(s) survived, 1 mutant(s) timed out. "
+                "L1 FAILED — 1 mutant(s) survived, 1 mutant(s) timed out. "
                 "Read skill 'mutation-testing-guide' or MUTANT_KILLING_GUIDE.md Part II "
                 "(cases H1-H12). "
                 "Priority: assert_called_once_with complete (§4.4), dense assertions (§4.1), "
@@ -3229,7 +3243,7 @@ class TestPyAdapterSurvivorKillers:
             "timed_out": 1,
         }
 
-    def test_l3b_remediation_present_when_survivors(self, tmp_path):
+    def test_l1_remediation_present_when_survivors(self, tmp_path):
         a = _pa_full_mock_adapter()
         stats = MutationStats(
             total=5, killed=4, survived=1, timed_out=0,
@@ -3237,7 +3251,198 @@ class TestPyAdapterSurvivorKillers:
         )
         a.mutmut.parse.return_value = stats
         with patch(_PA_WHICH, return_value="/usr/bin/x"):
-            result = a.run_l3b(tmp_path, self.ENV)
+            result = a.run_l1(tmp_path, self.ENV)
         assert result.passed is False
         assert result.tool_specific["mutation_stats"] is stats
         assert result.tool_specific["remediation"]["survived"] == 1
+
+
+# ---------------------------------------------------------------------------
+# L2/L3B helper contracts — synthetic reports that exercise every fallback
+# (kills the v17 survivors in _weak_test_findings/_solid_findings/
+#  _tier_a_findings/_src_dir/run_l2 diversity wiring)
+# ---------------------------------------------------------------------------
+
+class TestSrcDirResolution:
+    def test_src_dir_used_when_present(self, tmp_path: Path):
+        """Exact name "src" (lowercase) — kills XXsrcXX/SRC mutants."""
+        (tmp_path / "src").mkdir()
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        assert PythonAdapter._src_dir(tmp_path) == tmp_path / "src"
+
+    def test_repo_fallback_when_no_src(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        assert PythonAdapter._src_dir(tmp_path) == tmp_path
+
+
+class TestRunL2DiversityWiring:
+    def test_diversity_called_with_repo_and_python(self, tmp_path: Path):
+        """Exact language arg — kills "python"→None/"PYTHON"/XX mutants."""
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        report = {"diversity_score": 1.0, "total_tests": 0}
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.diversity",
+            return_value=report,
+        ) as div:
+            layer = a.run_l2(tmp_path, {})
+        div.assert_called_once_with(tmp_path, "python")
+        assert layer.tool_specific == {"diversity": report}
+
+
+class TestWeakTestFindingsContract:
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_analysis_invoked_with_tests_and_src_dirs(self, tmp_path: Path):
+        """Exact (tests_dir, src_dir) args — kills str(None) arg mutants."""
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src").mkdir()
+        a = self._adapter()
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.run_weak_test_analysis",
+            return_value={"weak_tests": []},
+        ) as rwta:
+            assert a._weak_test_findings(tmp_path) == []
+        rwta.assert_called_once_with(
+            str(tmp_path / "tests"), str(tmp_path / "src"),
+        )
+
+    def test_missing_optional_keys_fall_back_to_exact_defaults(self, tmp_path: Path):
+        """weak item without file/lineno/name and violation without
+        rule/description/severity → defaults '' / 0 / warning, exactly."""
+        (tmp_path / "tests").mkdir()
+        a = self._adapter()
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.run_weak_test_analysis",
+            return_value={"weak_tests": [{"violations": [{}]}]},
+        ):
+            findings = a._weak_test_findings(tmp_path)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == ":0"
+        assert f.message == ": "
+        assert f.severity == "warning"
+        assert f.rule_id is None
+        assert f.tool == "weak-test"
+        assert f.layer == "L2"
+        assert f.language == "python"
+
+    def test_partial_keys_keep_real_values(self, tmp_path: Path):
+        (tmp_path / "tests").mkdir()
+        a = self._adapter()
+        weak = {
+            "file": "t.py",
+            "violations": [{"rule": "A6", "severity": "ERROR"}],
+        }
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.run_weak_test_analysis",
+            return_value={"weak_tests": [weak]},
+        ):
+            findings = a._weak_test_findings(tmp_path)
+        f = findings[0]
+        assert f.node == "t.py:0"       # lineno default exactly 0
+        assert f.severity == "error"
+        assert f.rule_id == "A6"
+        assert f.message == ": "        # name/description defaults exactly ''
+
+    def test_weak_tests_key_missing_yields_empty(self, tmp_path: Path):
+        (tmp_path / "tests").mkdir()
+        a = self._adapter()
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.run_weak_test_analysis",
+            return_value={},
+        ):
+            assert a._weak_test_findings(tmp_path) == []
+
+
+class TestSolidFindingsContract:
+    def _findings(self, tmp_path, report):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.analyze_solid",
+            return_value=report,
+        ):
+            return a._solid_findings(tmp_path)
+
+    def test_all_five_principles_in_order(self, tmp_path: Path):
+        """Every principle key letter exact — kills tuple element mutants."""
+        report = {
+            p: {"status": "FAIL", "violations": [{"issue": f"viol-{p}"}]}
+            for p in ("S", "O", "L", "I", "D")
+        }
+        findings = self._findings(tmp_path, report)
+        assert [f.rule_id for f in findings] == [
+            "SOLID-S", "SOLID-O", "SOLID-L", "SOLID-I", "SOLID-D",
+        ]
+        assert [f.message for f in findings] == [
+            "SOLID S: viol-S", "SOLID O: viol-O", "SOLID L: viol-L",
+            "SOLID I: viol-I", "SOLID D: viol-D",
+        ]
+
+    def test_issues_list_joined_exactly(self, tmp_path: Path):
+        report = {"S": {"status": "FAIL", "violations": [
+            {"issues": ["a > 7", "b > 5"], "class": "Fat"},
+        ]}}
+        findings = self._findings(tmp_path, report)
+        assert findings[0].message == "SOLID S: a > 7; b > 5"
+        assert findings[0].node == "Fat"
+
+    def test_file_fallback_when_no_class(self, tmp_path: Path):
+        report = {"D": {"status": "FAIL", "violations": [{"file": "src/g.py", "issue": "cycle"}]}}
+        findings = self._findings(tmp_path, report)
+        assert findings[0].node == "src/g.py"
+
+    def test_empty_violation_falls_back_to_principle_and_str(self, tmp_path: Path):
+        report = {"O": {"status": "FAIL", "violations": [{}]}}
+        findings = self._findings(tmp_path, report)
+        assert findings[0].node == "O"
+        assert findings[0].message == "SOLID O: {}"
+
+    def test_pass_status_skipped(self, tmp_path: Path):
+        report = {"S": {"status": "PASS", "violations": [{"issue": "x"}]}}
+        assert self._findings(tmp_path, report) == []
+
+
+class TestTierAFindingsContract:
+    def _findings(self, tmp_path, report):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.run_tier_a",
+            return_value=report,
+        ):
+            return a._tier_a_findings(tmp_path)
+
+    def test_file_fallback_and_or_chain(self, tmp_path: Path):
+        """class missing → file used, never the ap_id — kills or→and."""
+        report = {"AP02": {"status": "FAIL", "violations": [{"file": "x.py", "issue": "bad"}]}}
+        findings = self._findings(tmp_path, report)
+        assert findings[0].node == "x.py"
+
+    def test_ap_id_fallback_without_lineno(self, tmp_path: Path):
+        report = {"AP05": {"status": "FAIL", "violations": [{}]}}
+        findings = self._findings(tmp_path, report)
+        f = findings[0]
+        assert f.node == "AP05"
+        assert f.message == "AP05: "    # name defaults to ap_id, issue to ''
+        assert f.rule_id == "AP05"
+
+    def test_lineno_suffix_when_present(self, tmp_path: Path):
+        report = {"AP01": {"status": "FAIL", "violations": [
+            {"class": "God", "lineno": 7, "name": "God Class", "issue": "too big"},
+        ]}}
+        findings = self._findings(tmp_path, report)
+        assert findings[0].node == "God:7"
+        assert findings[0].message == "God Class: too big"
+
+    def test_sorted_by_ap_id_and_pass_skipped(self, tmp_path: Path):
+        report = {
+            "AP09": {"status": "FAIL", "violations": [{"issue": "b"}]},
+            "AP01": {"status": "FAIL", "violations": [{"issue": "a"}]},
+            "AP05": {"status": "PASS", "violations": [{"issue": "z"}]},
+        }
+        findings = self._findings(tmp_path, report)
+        assert [f.rule_id for f in findings] == ["AP01", "AP09"]

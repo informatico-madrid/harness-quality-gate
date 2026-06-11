@@ -133,7 +133,7 @@ class PcovAdapter(ToolAdapter):
         """
         try:
             driver = self.probe(repo)
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             return LayerResult(
                 layer="L1",
                 language="php",

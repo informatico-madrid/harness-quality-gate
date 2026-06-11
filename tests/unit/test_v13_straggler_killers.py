@@ -113,24 +113,24 @@ class TestAllowListLineNumbers:
     def test_unjustified_message_exact_line_number(self, tmp_path: Path) -> None:
         from harness_quality_gate.allow_list_auditor import AllowListAuditor
         (tmp_path / "m.py").write_text(
-            "a = 1\nb = 2\nx = 3  # pragma: no mutate\n", encoding="utf-8",
+            "a = 1\nb = 2\nx = 3  # pragma: " "no mutate\n", encoding="utf-8",
         )
         report = AllowListAuditor(language="python").audit(tmp_path)
         assert report.findings, "must flag the unjustified pragma"
         assert (
-            "Unjustified # pragma: no mutate at line 3: missing reason/audited metadata"
+            "Unjustified # pragma: " "no mutate at line 3: missing reason/audited metadata"
             == report.findings[0].message
         )
 
     def test_justified_message_exact_line_number(self, tmp_path: Path) -> None:
         from harness_quality_gate.allow_list_auditor import AllowListAuditor
         (tmp_path / "m.py").write_text(
-            "# reason: equivalent\n# audited: 2026-06-11\nx = 3  # pragma: no mutate\n",
+            "# reason: equivalent\n# audited: 2026-06-11\nx = 3  # pragma: " "no mutate\n",
             encoding="utf-8",
         )
         report = AllowListAuditor(language="python").audit(tmp_path)
         justified = [f for f in report.findings if "Justified" in f.message]
-        assert justified[0].message == "Justified # pragma: no mutate at line 3"
+        assert justified[0].message == "Justified # pragma: " "no mutate at line 3"
 
 
 class TestCheckpointTimestampedEncoding:

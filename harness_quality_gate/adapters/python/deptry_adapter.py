@@ -111,7 +111,7 @@ class DeptryAdapter(ToolAdapter):
                         message=detail,
                         fix_hint=f"Review {category} for '{module}'",
                         tool="deptry",
-                        layer="L2",
+                        layer="L4",
                         language="python",
                         rule_id=category,
                     )

@@ -9,13 +9,15 @@
 1. [Installation Quick Reference](#installation)
 2. [Composer Audit — PHP Dependency CVEs](#composer-audit)
 3. [PHP-CS-Fixer — Security Rules](#php-cs-fixer)
-4. [Gitleaks — Secret Detection](#gitleaks)
-5. [Semgrep — Semantic Security Rules](#semgrep)
-6. [Checkov — YAML/Config Validation](#checkov)
-7. [Pre-commit Integration](#pre-commit)
-8. [Suppressing False Positives](#suppressing-false-positives)
-9. [LLM Triage — False Positive Elimination](#llm-triage)
-10. [OWASP Category Mapping](#owasp-mapping)
+4. [Psalm Taint Analysis](#psalm-taint-analysis-l4)
+5. [ShipMonk Tools (dead-code, dependency-analyser)](#shipmonk-tools-l4)
+6. [Gitleaks — Secret Detection](#gitleaks)
+7. [Semgrep — Semantic Security Rules](#semgrep)
+8. [Checkov — YAML/Config Validation](#checkov)
+9. [Pre-commit Integration](#pre-commit)
+10. [Suppressing False Positives](#suppressing-false-positives)
+11. [LLM Triage — False Positive Elimination](#llm-triage)
+12. [OWASP Category Mapping](#owasp-mapping)
 
 ---
 
@@ -90,6 +92,54 @@ Common security anti-patterns in PHP code style:
 
 ```bash
 php-cs-fixer fix --rules=@PSR12,+security
+```
+
+---
+
+## Psalm Taint Analysis (L4)
+
+### What it detects
+Psalm's `--taint-analysis` mode traces tainted input (`$_GET`, `$_POST`,
+request payloads) through the call graph to dangerous sinks:
+- SQL injection (TaintedSql)
+- XSS via HTML output (TaintedHtml)
+- Shell injection (TaintedShell)
+- SSRF / file inclusion (TaintedSSRF, TaintedInclude)
+
+It is the only mainstream PHP static analyzer with native taint tracking.
+
+### Running
+
+```bash
+vendor/bin/psalm --taint-analysis --no-progress --output-format=json
+```
+
+### Configuration
+Requires a `psalm.xml` at the repo root (`vendor/bin/psalm --init` to
+generate one). The adapter (`PsalmTaintAdapter`) returns INFRA_INCOMPLETE
+semantics when psalm is not installed instead of crashing.
+
+---
+
+## ShipMonk Tools (L4)
+
+### shipmonk/dead-code-detector
+PHPStan extension; framework-aware (Symfony/Laravel/Doctrine reflection)
+dead-code finder — the **vulture equivalent for PHP**.
+
+```bash
+composer require --dev shipmonk/dead-code-detector
+vendor/bin/phpstan analyse --error-format=json   # rules run inside PHPStan
+```
+
+### shipmonk/composer-dependency-analyser
+Single-tool replacement for `composer-unused` + `composer-require-checker`;
+finds unused, shadow and misplaced dependencies in one pass — the **deptry
+equivalent for PHP**.
+
+```bash
+composer require --dev shipmonk/composer-dependency-analyser
+vendor/bin/composer-dependency-analyser --format=json
 ```
 
 ---

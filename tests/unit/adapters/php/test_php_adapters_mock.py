@@ -3923,7 +3923,7 @@ class TestPhpWeakTestAdapter:
         assert f.node == "tests/FooTest.php:42"
         assert f.severity == "error"
         assert f.rule_id == "A1"
-        assert f.layer == "L3B"
+        assert f.layer == "L2"
         assert f.language == "php"
         assert f.fix_hint == "Add an assertion"
 
@@ -4551,7 +4551,7 @@ class TestPhpAntipatternTierAAdapter:
         # Verify ALL fields on the Finding object
         assert f.severity == "critical"
         assert f.node == "src/Foo.php:10"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
         assert f.tool == "antipattern-tier-a"
         assert f.rule_id == "GodClass"
@@ -4573,7 +4573,7 @@ class TestPhpAntipatternTierAAdapter:
         f = findings[0]
         assert f.severity == "info"
         assert f.node == "src/Bar.php:5"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
         assert f.tool == "antipattern-tier-a"
         assert f.rule_id == "god_class"
@@ -4667,7 +4667,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f.fix_hint == "Rule: TooManyMethods"
         assert f.rule_id == "TooManyMethods"
         assert f.tool == "antipattern-tier-a"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
 
     # -----------------------------------------------------------------------
@@ -4722,7 +4722,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f0.fix_hint == "Rule: R1"
         assert f0.rule_id == "R1"
         assert f0.tool == "antipattern-tier-a"
-        assert f0.layer == "L2"
+        assert f0.layer == "L3B"
         assert f0.language == "php"
 
         f1 = findings[1]
@@ -4732,7 +4732,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f1.fix_hint == "Rule: V1"
         assert f1.rule_id == "V1"
         assert f1.tool == "antipattern-tier-a"
-        assert f1.layer == "L2"
+        assert f1.layer == "L3B"
         assert f1.language == "php"
 
     def test_parse_missing_fix_hint_with_rule(self) -> None:
@@ -4760,7 +4760,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f.message == "test desc"  # mutmut_80: message = None would fail here
         assert f.severity == "minor"
         assert f.node == "src/X.php"
-        assert f.layer == "L2"  # mutmut_99: layer = None
+        assert f.layer == "L3B"  # mutmut_99: layer = None
         assert f.language == "php"  # mutmut_112: language = "PHP" or None
 
     def test_parse_empty_string_list_input(self) -> None:
@@ -4803,7 +4803,7 @@ class TestPhpAntipatternTierAAdapter:
         for i, f in enumerate(findings):
             # All findings must have these invariant fields
             assert f.tool == "antipattern-tier-a", f"Finding {i}: tool mutation"
-            assert f.layer == "L2", f"Finding {i}: layer = None or mutated (mutmut_99)"
+            assert f.layer == "L3B", f"Finding {i}: layer = None or mutated (mutmut_99)"
             assert f.language == "php", f"Finding {i}: language = None or 'PHP' (mutmut_100,112)"
             assert f.fix_hint is not None, f"Finding {i}: fix_hint is None (mutmut_86)"
 
@@ -4839,7 +4839,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f.fix_hint == "Rule: short_variable"
         assert f.rule_id == "short_variable"
         assert f.tool == "antipattern-tier-a"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
 
     def test_parse_message_format_no_line(self) -> None:
@@ -5181,7 +5181,7 @@ class TestPhpAntipatternTierAAdapter:
         data = [{"source": "unknown", "file": "x.php", "rule": "R", "description": "d"}]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
         assert len(findings) == 1
-        assert findings[0].layer == "L2"
+        assert findings[0].layer == "L3B"
         assert findings[0].language == "php"
         assert findings[0].severity == "info"
 
@@ -5222,7 +5222,7 @@ class TestPhpAntipatternTierAAdapter:
         """Verify exact 'L2' and 'php' strings in output — catches default string mutations."""
         data = [{"source": "phpmd", "file": "x.php", "rule": "R", "description": "d", "priority": 1}]
         findings = PhpAntipatternTierAAdapter().parse(json.dumps(data))
-        assert findings[0].layer == "L2"
+        assert findings[0].layer == "L3B"
         assert findings[0].language == "php"
 
     def test_parse_message_format_line_prefix(self) -> None:
@@ -5257,7 +5257,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f.fix_hint == "Rule: GodClass"
         assert f.rule_id == "GodClass"
         assert f.tool == "antipattern-tier-a"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
 
     def test_full_pipeline_visitor(self, tmp_path: Path) -> None:
@@ -5278,7 +5278,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f.fix_hint == "Rule: narrowing_type_hint"
         assert f.rule_id == "narrowing_type_hint"
         assert f.tool == "antipattern-tier-a"
-        assert f.layer == "L2"
+        assert f.layer == "L3B"
         assert f.language == "php"
 
     def test_full_pipeline_both_sources(self, tmp_path: Path) -> None:
@@ -5307,7 +5307,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f0.fix_hint == "Rule: R"
         assert f0.rule_id == "R"
         assert f0.tool == "antipattern-tier-a"
-        assert f0.layer == "L2"
+        assert f0.layer == "L3B"
         assert f0.language == "php"
         
         # Visitor finding
@@ -5318,7 +5318,7 @@ class TestPhpAntipatternTierAAdapter:
         assert f1.fix_hint == "Rule: v"
         assert f1.rule_id == "v"
         assert f1.tool == "antipattern-tier-a"
-        assert f1.layer == "L2"
+        assert f1.layer == "L3B"
         assert f1.language == "php"
 
 

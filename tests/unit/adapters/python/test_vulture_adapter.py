@@ -301,7 +301,7 @@ def test_parse_valid_finding_minimal() -> None:
     assert f.severity == "warning"
     assert f.message == "unused: unused_var"
     assert f.tool == "vulture"
-    assert f.layer == "L2"
+    assert f.layer == "L4"
     assert f.language == "python"
     assert f.rule_id == "unused"
 
@@ -421,7 +421,7 @@ def test_parse_finding_all_fields_set(tmp_path: Path) -> None:
     assert "src/dead.py:99" in f.message
     assert "Remove unused unused" in f.fix_hint
     assert f.tool == "vulture"
-    assert f.layer == "L2"
+    assert f.layer == "L4"
     assert f.language == "python"
     assert f.rule_id == "unused"
     # cve is None by default
@@ -456,7 +456,7 @@ def test_parse_multiple_findings_all_correct() -> None:
     assert len(findings) == 2
     for f in findings:
         assert f.tool == "vulture"
-        assert f.layer == "L2"
+        assert f.layer == "L4"
         assert f.language == "python"
         assert f.severity == "warning"
         assert f.rule_id == "unused"

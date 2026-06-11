@@ -94,7 +94,7 @@ class PhpAdapter(BaseAdapter):
         for tool in (self._phpstan, self._phpmd, self._cs_fixer):
             try:
                 versions[tool.name] = tool.version(Path.cwd(), env={})
-            except RuntimeError:
+            except (OSError, RuntimeError):
                 versions[tool.name] = "MISSING"
         return versions
 
@@ -104,7 +104,7 @@ class PhpAdapter(BaseAdapter):
         for tool in (self._phpstan, self._phpmd, self._cs_fixer):
             try:
                 tool.version(Path.cwd(), env={})
-            except RuntimeError:
+            except (OSError, RuntimeError):
                 missing.append(tool.name)
         if missing:
             raise RuntimeError(
@@ -367,7 +367,7 @@ class PhpAdapter(BaseAdapter):
             phpstan_findings = self._phpstan.run_l3a(repo, env)
             all_findings.extend(phpstan_findings)
             logger.info("L3A PHPStan: %d findings", len(phpstan_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L3A PHPStan skipped: %s", exc)
 
         # --- PHPMD — antipattern analysis (FR-9) --------------------------
@@ -375,7 +375,7 @@ class PhpAdapter(BaseAdapter):
             phpmd_findings = self._phpmd.run_l3a(repo, env)
             all_findings.extend(phpmd_findings)
             logger.info("L3A PHPMD: %d findings", len(phpmd_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L3A PHPMD skipped: %s", exc)
 
         # --- php-cs-fixer — code style (FR-8) -----------------------------
@@ -395,7 +395,7 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(cs_findings)
             logger.info("L3A php-cs-fixer: %d findings", len(cs_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L3A php-cs-fixer skipped: %s", exc)
 
         # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
@@ -403,7 +403,7 @@ class PhpAdapter(BaseAdapter):
             tier_a_findings = self._antipattern_invoke_and_parse(repo, env)
             all_findings.extend(tier_a_findings)
             logger.info("L3A tier-A visitors: %d findings", len(tier_a_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L3A tier-A visitors skipped: %s", exc)
 
         duration = time.monotonic() - t0
@@ -444,7 +444,7 @@ class PhpAdapter(BaseAdapter):
         try:
             driver = self._pcov.probe(repo)
             logger.info("L1 coverage driver: %s", driver)
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L1 coverage driver probe failed: %s", exc)
             all_findings.append(
                 Finding(
@@ -475,7 +475,7 @@ class PhpAdapter(BaseAdapter):
                 all_findings.extend(test_findings)
                 logger.info("L1 PHPUnit tests: %d findings", len(test_findings))
 
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L1 test execution skipped: %s", exc)
             all_findings.append(
                 Finding(
@@ -554,7 +554,7 @@ class PhpAdapter(BaseAdapter):
                         mutation_stats.escaped,
                     )
 
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L1 mutation testing skipped: %s", exc)
 
         duration = time.monotonic() - t0
@@ -642,7 +642,7 @@ class PhpAdapter(BaseAdapter):
             findings = self._phpunit.parse(
                 invocation.stdout, invocation.stderr, invocation.exitcode
             )
-        except RuntimeError:
+        except (OSError, RuntimeError):
             # Tool not found — skip silently
             pass
         return findings
@@ -671,7 +671,7 @@ class PhpAdapter(BaseAdapter):
                         language="php",
                     )
                 )
-        except RuntimeError:
+        except (OSError, RuntimeError):
             # Tool not found — skip silently
             pass
         return findings
@@ -742,54 +742,17 @@ class PhpAdapter(BaseAdapter):
             stats = self._infection.parse(invocation.stdout, invocation.stderr, invocation.exitcode)
             return stats
 
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("Infection invocation failed: %s", exc)
             return None
 
-    # -- L2 (Code-quality gates) -------------------------------------------
+    # -- L2 (Test quality: weak-test detection) ------------------------------
 
     def run_l2(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
-        """Run antipattern tier-A analysis (PHPMD + visitors merge).
-
-        PHPMD covers 13 antipattern categories; the nikic/php-parser
-        visitor runner covers 4 additional patterns not in PHPMD.
-        The 8 PHPMD antipatterns with no visitor equivalent are tracked
-        via ``PhpAntipatternTierAAdapter.parity_gap``.
-
-        Returns:
-            ``LayerResult`` with merged antipattern findings.
-        """
-        t0 = time.monotonic()
-        all_findings: list[Finding] = []
-
-        try:
-            # Invoke antipattern tier-A (PHPMD + visitors)
-            invocation = self._antipattern.invoke(
-                repo, [], env=env, timeout=300.0
-            )
-            findings = self._antipattern.parse(invocation.stdout)
-            all_findings.extend(findings)
-            logger.info("L2 antipattern-tier-A: %d findings", len(findings))
-        except RuntimeError as exc:
-            logger.warning("L2 antipattern-tier-A skipped: %s", exc)
-
-        duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
-
-        return LayerResult(
-            layer="L2",
-            language="php",
-            passed=passed,
-            findings=all_findings,
-            duration_sec=round(duration, 3),
-        )
-
-    # -- L3B (Weak-test detection) -----------------------------------------
-
-    def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Run all weak-test visitors (A1-A8) via PhpWeakTestLayerAdapter.
 
-        Detects:
+        L2 is the test-quality layer per the spec glossary (weak-test
+        detection + diversity + mutation kill-map).  Detects:
         - A1: Zero-assertion tests
         - A2-PHP: Mocks-only tests
         - A3: SUT-mocked tests
@@ -802,12 +765,75 @@ class PhpAdapter(BaseAdapter):
         Returns:
             ``LayerResult`` with weak-test findings.
         """
-        return self._weak_test.run_l3b(repo, env)
+        return self._weak_test.run_l2(repo, env)
+
+    # -- L3B (Deep quality: antipatterns Tier A + architecture) -------------
+
+    def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
+        """Run deep-quality checks: antipattern tier-A + deptrac architecture.
+
+        L3B is the deep-quality layer per the spec glossary (SOLID +
+        antipatterns + architecture).  The deterministic part runs here:
+
+        - Antipattern tier-A (PHPMD + nikic/php-parser visitors merge).
+          PHPMD covers 13 antipattern categories; the visitor runner covers
+          4 additional patterns.  The 8 PHPMD antipatterns with no visitor
+          equivalent are tracked via ``PhpAntipatternTierAAdapter.parity_gap``.
+        - deptrac architecture violations (FR-19).
+
+        The Tier B BMAD multi-judge consensus is orchestrated by the LLM
+        through the skill steps, not by this adapter.
+
+        Returns:
+            ``LayerResult`` with merged antipattern + architecture findings.
+        """
+        t0 = time.monotonic()
+        all_findings: list[Finding] = []
+
+        try:
+            # Invoke antipattern tier-A (PHPMD + visitors)
+            invocation = self._antipattern.invoke(
+                repo, [], env=env, timeout=300.0
+            )
+            findings = self._antipattern.parse(invocation.stdout)
+            all_findings.extend(findings)
+            logger.info("L3B antipattern-tier-A: %d findings", len(findings))
+        except (OSError, RuntimeError) as exc:
+            logger.warning("L3B antipattern-tier-A skipped: %s", exc)
+
+        # --- deptrac architecture violations (FR-19) -------------------
+        try:
+            deptrac_invocation = self._deptrac.invoke(
+                repo,
+                ["--formatter=json"],
+                env=env,
+                timeout=300.0,
+            )
+            deptrac_findings = self._deptrac.parse(
+                deptrac_invocation.stdout,
+                deptrac_invocation.stderr,
+                deptrac_invocation.exitcode,
+            )
+            all_findings.extend(deptrac_findings)
+            logger.info("L3B deptrac: %d findings", len(deptrac_findings))
+        except (OSError, RuntimeError) as exc:
+            logger.warning("L3B deptrac skipped: %s", exc)
+
+        duration = time.monotonic() - t0
+        passed = len(all_findings) == 0
+
+        return LayerResult(
+            layer="L3B",
+            language="php",
+            passed=passed,
+            findings=all_findings,
+            duration_sec=round(duration, 3),
+        )
 
     # -- L4 (Security + architecture) --------------------------------------
 
     def run_l4(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
-        """Run all L4 security and architecture tools.
+        """Run all L4 security tools.
 
         Tools:
         - Psalm taint analysis (FR-21, US-9)
@@ -815,10 +841,12 @@ class PhpAdapter(BaseAdapter):
         - local-php-security-checker (FR-21)
         - ShipMonk dead-code-detector (FR-21)
         - ShipMonk composer-dependency-analyser (FR-21)
-        - deptrac architecture violations (FR-19)
+
+        deptrac (architecture) runs in L3B — deep quality per the spec
+        glossary.
 
         Returns:
-            ``LayerResult`` with security/architecture findings.
+            ``LayerResult`` with security findings.
         """
         t0 = time.monotonic()
         all_findings: list[Finding] = []
@@ -838,7 +866,7 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(psalm_findings)
             logger.info("L4 Psalm taint: %d findings", len(psalm_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L4 Psalm taint skipped: %s", exc)
 
         # --- Composer security audit (FR-21) ---------------------------
@@ -856,7 +884,7 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(audit_findings)
             logger.info("L4 composer-audit: %d findings", len(audit_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L4 composer-audit skipped: %s", exc)
 
         # --- local-php-security-checker (FR-21) ------------------------
@@ -873,7 +901,7 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(checker_findings)
             logger.info("L4 security-checker: %d findings", len(checker_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L4 security-checker skipped: %s", exc)
 
         # --- ShipMonk dead-code-detector (FR-21) -----------------------
@@ -891,7 +919,7 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(dead_code_findings)
             logger.info("L4 dead-code: %d findings", len(dead_code_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L4 dead-code skipped: %s", exc)
 
         # --- ShipMonk dep-analyser (FR-21) -----------------------------
@@ -909,26 +937,8 @@ class PhpAdapter(BaseAdapter):
             )
             all_findings.extend(dep_analyser_findings)
             logger.info("L4 dep-analyser: %d findings", len(dep_analyser_findings))
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("L4 dep-analyser skipped: %s", exc)
-
-        # --- deptrac architecture violations (FR-19) -------------------
-        try:
-            deptrac_invocation = self._deptrac.invoke(
-                repo,
-                ["--formatter=json"],
-                env=env,
-                timeout=300.0,
-            )
-            deptrac_findings = self._deptrac.parse(
-                deptrac_invocation.stdout,
-                deptrac_invocation.stderr,
-                deptrac_invocation.exitcode,
-            )
-            all_findings.extend(deptrac_findings)
-            logger.info("L4 deptrac: %d findings", len(deptrac_findings))
-        except RuntimeError as exc:
-            logger.warning("L4 deptrac skipped: %s", exc)
 
         duration = time.monotonic() - t0
         passed = len(all_findings) == 0

@@ -38,7 +38,7 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
     underlying PHPMD + visitor runner tools.  Its ``invoke`` method runs
     both tool chains and merges their JSON output into a single
     :class:`ToolInvocation`.  ``parse`` then converts the merged JSON into
-    a unified ``Finding[]`` list with per-finding ``layer="L2"`` and
+    a unified ``Finding[]`` list with per-finding ``layer="L3B"`` and
     ``tool="antipattern-tier-a"`` metadata.
 
     Attributes:
@@ -68,13 +68,13 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
         """Return a composite version string ``phpmd:<v> visitors:poC``."""
         try:
             phpmd_ver = self._phpmd.version(repo, env)
-        except RuntimeError:
+        except (OSError, RuntimeError):
             phpmd_ver = "MISSING"
         try:
             visitor_ver = self._visitors.version(repo, env)
         except NotImplementedError:
             visitor_ver = "poC"
-        except RuntimeError:
+        except (OSError, RuntimeError):
             visitor_ver = "MISSING"
         return f"phpmd:{phpmd_ver} visitors:{visitor_ver}"
 
@@ -124,7 +124,7 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             phpmd_stdout = phpmd_invocation.stdout
             phpmd_stderr = phpmd_invocation.stderr
             phpmd_exitcode = phpmd_invocation.exitcode
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("PHPMD skipped: %s", exc)
 
         # --- Visitor runner --------------------------------------------------
@@ -138,7 +138,7 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
             logger.info("Visitor runner not yet implemented for version()")
             # Use sentinel default (same as the initial assignment).
             # The sentinel JSON parses to a marker dict; test asserts on it.
-        except RuntimeError as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("Visitor runner skipped: %s", exc)
 
         # Guard: defaults are always str (catches mutmut defaults to None).
@@ -257,7 +257,7 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
 
         Each entry in the merged JSON array carries a ``source`` field:
         ``"phpmd"`` or ``"visitor"``.  The output is annotated with
-        ``layer="L2"``, ``tool="antipattern-tier-a"``, and
+        ``layer="L3B"``, ``tool="antipattern-tier-a"``, and
         ``language="php"``.
 
         Args:
@@ -319,7 +319,7 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                     fix_hint=fix_hint,
                     rule_id=rule,
                     tool=self._name,
-                    layer="L2",
+                    layer="L3B",
                     language="php",
                 )
             )

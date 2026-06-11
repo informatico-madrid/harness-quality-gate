@@ -1,6 +1,6 @@
-"""Tests for PhpWeakTestLayerAdapter.run_l3b in weak_test_php.py.
+"""Tests for PhpWeakTestLayerAdapter.run_l2 in weak_test_php.py.
 
-Targets: run_l3b method of PhpWeakTestLayerAdapter which wraps
+Targets: run_l2 method of PhpWeakTestLayerAdapter which wraps
 PhpWeakTestAdapter and returns LayerResult.
 """
 from __future__ import annotations
@@ -25,23 +25,23 @@ def _mock_ok(stdout: str = "[]", stderr: str = "", exitcode: int = 0):
 
 
 class TestRunL3b:
-    """Tests for PhpWeakTestLayerAdapter.run_l3b."""
+    """Tests for PhpWeakTestLayerAdapter.run_l2."""
 
-    def test_run_l3b_no_test_files(self, tmp_path: Path) -> None:
+    def test_run_l2_no_test_files(self, tmp_path: Path) -> None:
         """No test files in repo → LayerResult passed=True, no findings."""
         import harness_quality_gate.adapters.php.weak_test_php as wtm
 
         adapter = PhpWeakTestLayerAdapter()
         with patch.object(wtm, "_WEAK_TEST_VISITORS", []):
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
-        assert result.layer == "L3B"
+        assert result.layer == "L2"
         assert result.language == "php"
         assert result.passed is True
         assert result.findings == []
         assert result.duration_sec >= 0
 
-    def test_run_l3b_with_mocked_findings(self, tmp_path: Path) -> None:
+    def test_run_l2_with_mocked_findings(self, tmp_path: Path) -> None:
         """When invoke returns findings → LayerResult passed=False."""
         findings_data = [
             {
@@ -59,10 +59,10 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ) as mock_invoke:
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         mock_invoke.assert_called_once()
-        assert result.layer == "L3B"
+        assert result.layer == "L2"
         assert result.language == "php"
         assert result.passed is False
         assert len(result.findings) == 1
@@ -71,11 +71,11 @@ class TestRunL3b:
         assert f.severity == "error"
         assert f.rule_id == "A1"
         assert f.message == "No assertions"
-        assert f.layer == "L3B"
+        assert f.layer == "L2"
         assert f.language == "php"
         assert f.tool == "weak-test-php"
 
-    def test_run_l3b_multiple_findings(self, tmp_path: Path) -> None:
+    def test_run_l2_multiple_findings(self, tmp_path: Path) -> None:
         """Multiple findings from different rules → all returned."""
         findings_data = [
             {"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "msg1"},
@@ -88,7 +88,7 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.passed is False
         assert len(result.findings) == 3
@@ -97,7 +97,7 @@ class TestRunL3b:
         assert "A2-PHP" in rule_ids
         assert "A5" in rule_ids
 
-    def test_run_l3b_finding_without_line(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_without_line(self, tmp_path: Path) -> None:
         """Finding with no line number → node is just filepath."""
         findings_data = [
             {"file": "tests/Something.php", "rule_id": "A3", "message": "no line"},
@@ -108,11 +108,11 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].node == "tests/Something.php"
 
-    def test_run_l3b_finding_with_invalid_line(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_with_invalid_line(self, tmp_path: Path) -> None:
         """Finding with non-integer line → node contains raw line value."""
         findings_data = [
             {"file": "tests/X.php", "line": "abc", "rule_id": "A4", "message": "bad line"},
@@ -123,11 +123,11 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert len(result.findings) == 1
 
-    def test_run_l3b_with_findings_and_stderr(self, tmp_path: Path) -> None:
+    def test_run_l2_with_findings_and_stderr(self, tmp_path: Path) -> None:
         """Invoke with non-zero exitcode due to stderr findings still produces LayerResult."""
         findings_data = [
             {"file": "tests/Test.php", "line": 5, "rule_id": "A6", "message": "spare ignore"},
@@ -143,13 +143,13 @@ class TestRunL3b:
             return_value=invocation,
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.passed is False
         assert len(result.findings) == 1
         assert result.duration_sec >= 0
 
-    def test_run_l3b_finding_no_fix_hint(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_no_fix_hint(self, tmp_path: Path) -> None:
         """Finding without fix_hint field → fix_hint is None."""
         findings_data = [
             {"file": "tests/Z.php", "line": 1, "rule_id": "A7", "message": "constructor only"},
@@ -160,25 +160,25 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].fix_hint is None
 
-    def test_run_l3b_env_passed_to_subprocess(self, tmp_path: Path) -> None:
-        """run_l3b calls invoke which propagates env to subprocess."""
+    def test_run_l2_env_passed_to_subprocess(self, tmp_path: Path) -> None:
+        """run_l2 calls invoke which propagates env to subprocess."""
         with patch.object(
             PhpWeakTestAdapter,
             "invoke",
             return_value=_mock_ok(),
         ) as mock_invoke:
             adapter = PhpWeakTestLayerAdapter()
-            adapter.run_l3b(tmp_path, {"FOO": "BAR"})
+            adapter.run_l2(tmp_path, {"FOO": "BAR"})
 
         call_kwargs = mock_invoke.call_args
         assert call_kwargs[1]["env"] == {"FOO": "BAR"}
 
-    def test_run_l3b_passes_empty_args_list_to_invoke(self) -> None:
-        """run_l3b must pass [] as the second positional arg to _adapter.invoke.
+    def test_run_l2_passes_empty_args_list_to_invoke(self) -> None:
+        """run_l2 must pass [] as the second positional arg to _adapter.invoke.
 
         Kills mutmut_8 which removes the [] (changes
         ``invoke(repo, [], env=env, timeout=300.0)`` → ``invoke(repo, env=env, timeout=300.0)``).
@@ -191,7 +191,7 @@ class TestRunL3b:
             return_value=_mock_ok(),
         ) as mock_invoke:
             adapter = PhpWeakTestLayerAdapter()
-            adapter.run_l3b(Path("/tmp/repo"), {})
+            adapter.run_l2(Path("/tmp/repo"), {})
 
         call_args = mock_invoke.call_args
         # Original: invoke(repo, [], env=env, timeout=300.0)
@@ -213,7 +213,7 @@ class TestRunL3b:
             )
             assert call_args.kwargs["args"] == []
 
-    def test_run_l3b_empty_findings_passed(self, tmp_path: Path) -> None:
+    def test_run_l2_empty_findings_passed(self, tmp_path: Path) -> None:
         """No findings → LayerResult.passed=True."""
         with patch.object(
             PhpWeakTestAdapter,
@@ -221,12 +221,12 @@ class TestRunL3b:
             return_value=_mock_ok(stdout="[]"),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.passed is True
         assert len(result.findings) == 0
 
-    def test_run_l3b_finding_with_path_key(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_with_path_key(self, tmp_path: Path) -> None:
         """Finding with 'path' key instead of 'file' is accepted."""
         findings_data = [
             {"path": "tests/Alt.php", "line": 3, "rule_id": "A8", "message": "tautology"},
@@ -237,11 +237,11 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].node == "tests/Alt.php:3"
 
-    def test_run_l3b_finding_severity_levels(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_severity_levels(self, tmp_path: Path) -> None:
         """Different severity values are passed through."""
         findings_data = [
             {"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "e", "severity": "error"},
@@ -254,14 +254,14 @@ class TestRunL3b:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         sevs = {f.severity for f in result.findings}
         assert "error" in sevs
         assert "warning" in sevs
         assert "info" in sevs
 
-    def test_run_l3b_findings_duration_non_zero(self, tmp_path: Path) -> None:
+    def test_run_l2_findings_duration_non_zero(self, tmp_path: Path) -> None:
         """Duration is measured and reported."""
         with patch.object(
             PhpWeakTestAdapter,
@@ -269,16 +269,16 @@ class TestRunL3b:
             return_value=_mock_ok(),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert isinstance(result.duration_sec, float)
         assert result.duration_sec >= 0
 
 
 class TestRunL3bWithRealFiles:
-    """run_l3b with actual .php files but mocked subprocess."""
+    """run_l2 with actual .php files but mocked subprocess."""
 
-    def test_run_l3b_with_real_php_test_files(self, tmp_path: Path) -> None:
+    def test_run_l2_with_real_php_test_files(self, tmp_path: Path) -> None:
         """Create real Test.php files → invoke collects them, subprocess mocked."""
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
@@ -311,12 +311,12 @@ class TestRunL3bWithRealFiles:
             ])),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.passed is False
         assert result.findings[0].rule_id == "A1"
 
-    def test_run_l3b_no_test_directory(self, tmp_path: Path) -> None:
+    def test_run_l2_no_test_directory(self, tmp_path: Path) -> None:
         """No tests/ directory and no Test.php files → empty findings."""
         # tmp_path is empty, no files
         with patch.object(
@@ -325,7 +325,7 @@ class TestRunL3bWithRealFiles:
             return_value=_mock_ok(stdout="[]", stderr="no PHP test files found"),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.passed is True
         assert len(result.findings) == 0
@@ -389,9 +389,9 @@ class TestInvokeBreakVsContinue:
 
 
 class TestRunL3bEdgeCases:
-    """Edge cases and error paths in run_l3b."""
+    """Edge cases and error paths in run_l2."""
 
-    def test_run_l3b_finding_rule_id_missing(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_rule_id_missing(self, tmp_path: Path) -> None:
         """Finding without rule_id → empty string rule_id."""
         findings_data = [
             {"file": "tests/X.php", "line": 1, "message": "no rule"},
@@ -402,11 +402,11 @@ class TestRunL3bEdgeCases:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].rule_id == ""
 
-    def test_run_l3b_finding_rule_id_set_by_invoke(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_rule_id_set_by_invoke(self, tmp_path: Path) -> None:
         """rule_id is set by invoke (from _VISITOR_RULE_MAP) → parse receives it."""
         findings_data = [
             {"file": "tests/X.php", "line": 1, "rule_id": "A2-PHP", "message": "mocks"},
@@ -417,11 +417,11 @@ class TestRunL3bEdgeCases:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].rule_id == "A2-PHP"
 
-    def test_run_l3b_finding_cwe_empty(self, tmp_path: Path) -> None:
+    def test_run_l2_finding_cwe_empty(self, tmp_path: Path) -> None:
         """Finding without cwe → default empty string."""
         findings_data = [
             {"file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "test"},
@@ -432,11 +432,11 @@ class TestRunL3bEdgeCases:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         assert result.findings[0].cwe == ""
 
-    def test_run_l3b_all_weak_test_rule_ids(self, tmp_path: Path) -> None:
+    def test_run_l2_all_weak_test_rule_ids(self, tmp_path: Path) -> None:
         """All rule_ids A1, A2-PHP, A3, A4, A5, A6, A7, A8 can appear."""
         import harness_quality_gate.adapters.php.weak_test_php as wtm
 
@@ -453,27 +453,27 @@ class TestRunL3bEdgeCases:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         found_ids = {f.rule_id for f in result.findings}
         for rid in all_rule_ids:
             assert rid in found_ids, f"Missing rule_id: {rid}"
 
-    def test_run_l3b_invocation_timeout_used(self, tmp_path: Path) -> None:
-        """run_l3b passes timeout=300.0 to invoke."""
+    def test_run_l2_invocation_timeout_used(self, tmp_path: Path) -> None:
+        """run_l2 passes timeout=300.0 to invoke."""
         with patch.object(
             PhpWeakTestAdapter,
             "invoke",
             return_value=_mock_ok(),
         ) as mock_invoke:
             adapter = PhpWeakTestLayerAdapter()
-            adapter.run_l3b(tmp_path, {})
+            adapter.run_l2(tmp_path, {})
 
         call_kwargs = mock_invoke.call_args
         assert call_kwargs[1]["timeout"] == 300.0
 
-    def test_run_l3b_layer_and_language_consistency(self, tmp_path: Path) -> None:
-        """All findings have consistent layer/language from run_l3b."""
+    def test_run_l2_layer_and_language_consistency(self, tmp_path: Path) -> None:
+        """All findings have consistent layer/language from run_l2."""
         findings_data = [
             {"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "x"},
             {"file": "tests/B.php", "line": 2, "rule_id": "A8", "message": "y"},
@@ -484,10 +484,10 @@ class TestRunL3bEdgeCases:
             return_value=_mock_ok(stdout=json.dumps(findings_data)),
         ):
             adapter = PhpWeakTestLayerAdapter()
-            result = adapter.run_l3b(tmp_path, {})
+            result = adapter.run_l2(tmp_path, {})
 
         for f in result.findings:
-            assert f.layer == "L3B"
+            assert f.layer == "L2"
             assert f.language == "php"
 
 
@@ -499,7 +499,7 @@ class TestInvokeDirect:
     """Tests that directly exercise PhpWeakTestAdapter.invoke method.
 
     These tests are specifically designed to kill mutated code paths
-    in the invoke method that are not reachable through run_l3b mocks.
+    in the invoke method that are not reachable through run_l2 mocks.
     """
 
     def test_invoke_no_test_files_returns_exactly_empty_json(self, tmp_path: Path, caplog) -> None:
@@ -1197,7 +1197,7 @@ class TestParseReturnTypes:
         assert f.message == "assert missing"
         assert f.fix_hint == "Add assert"
         assert f.tool == "weak-test-php"
-        assert f.layer == "L3B"
+        assert f.layer == "L2"
         assert f.language == "php"
 
     def test_parse_non_detections_list_not_none(self):
@@ -1300,23 +1300,23 @@ class TestParseSingleOutputReturnTypes:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# run_l3b survivors: type and structure assertions
+# run_l2 survivors: type and structure assertions
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestRunL3bReturnStructure:
-    """Verify run_l3b always returns LayerResult with correct structure.
+    """Verify run_l2 always returns LayerResult with correct structure.
 
     Target mutants: mutmut_4, 8, 14-17, 20-25, 26-30, 45, 51.
     These mutations on invoke call, parse call, duration, logger.
     """
 
-    def test_run_l3b_return_type_is_layer_result(self, tmp_path: Path):
-        """run_l3b must return LayerResult, not None or other type.
+    def test_run_l2_return_type_is_layer_result(self, tmp_path: Path):
+        """run_l2 must return LayerResult, not None or other type.
 
         Kills mutations that return None instead of LayerResult.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert type(result).__name__ == "LayerResult"
         assert hasattr(result, "layer")
         assert hasattr(result, "passed")
@@ -1324,8 +1324,8 @@ class TestRunL3bReturnStructure:
         assert hasattr(result, "duration_sec")
         assert hasattr(result, "language")
 
-    def test_run_l3b_layer_and_language_values(self, tmp_path: Path):
-        """run_l3b must set layer='L3B' and language='php' exactly.
+    def test_run_l2_layer_and_language_values(self, tmp_path: Path):
+        """run_l2 must set layer='L2' and language='php' exactly.
 
         Kills mutations that change these values.
         """
@@ -1334,38 +1334,38 @@ class TestRunL3bReturnStructure:
                 "file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "m"
             }])
         )):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
-        assert result.layer == "L3B"
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
+        assert result.layer == "L2"
         assert result.language == "php"
         assert result.passed is False
         assert result.duration_sec >= 0
 
-    def test_run_l3b_passed_true_when_no_findings(self, tmp_path: Path):
-        """run_l3b with no findings → passed=True.
+    def test_run_l2_passed_true_when_no_findings(self, tmp_path: Path):
+        """run_l2 with no findings → passed=True.
 
         Kills mutations on the `len(findings) == 0` check or `not findings`.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
             stdout="[]"
         )):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is True
         assert len(result.findings) == 0
 
-    def test_run_l3b_passed_false_when_findings(self, tmp_path: Path):
-        """run_l3b with findings → passed=False.
+    def test_run_l2_passed_false_when_findings(self, tmp_path: Path):
+        """run_l2 with findings → passed=False.
 
         Kills mutations on the `len(findings) == 0` check or `not findings`.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
             stdout=json.dumps([{"file": "t.php", "line": 1}])
         )):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is False
         assert len(result.findings) == 1
 
-    def test_run_l3b_findings_are_proper_finding_objects(self, tmp_path: Path):
-        """run_l3b findings must be Finding objects with correct attributes.
+    def test_run_l2_findings_are_proper_finding_objects(self, tmp_path: Path):
+        """run_l2 findings must be Finding objects with correct attributes.
 
         Kills mutations that change Finding instantiation, attribute values,
         or the parse() call to return wrong types.
@@ -1382,31 +1382,31 @@ class TestRunL3bReturnStructure:
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
             stdout=json.dumps(data)
         )):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         for f in result.findings:
             assert isinstance(f, Finding)
         assert len(result.findings) == 1
         f = result.findings[0]
         assert f.rule_id == "A1"
-        assert f.layer == "L3B"
+        assert f.layer == "L2"
         assert f.language == "php"
         assert f.tool == "weak-test-php"
 
-    def test_run_l3b_duration_is_non_negative_float(self, tmp_path: Path):
-        """run_l3b duration_sec must be a non-negative float.
+    def test_run_l2_duration_is_non_negative_float(self, tmp_path: Path):
+        """run_l2 duration_sec must be a non-negative float.
 
         Kills mutations on `duration = time.monotonic() - t0`
         and `round(duration, 3)`.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert isinstance(result.duration_sec, float)
         assert result.duration_sec >= 0
         # Duration should be rounded to 3 decimal places
         assert round(result.duration_sec, 3) == result.duration_sec
 
-    def test_run_l3b_logger_info_not_crashed(self, tmp_path: Path, caplog):
-        """run_l3b calling logger.info must not crash.
+    def test_run_l2_logger_info_not_crashed(self, tmp_path: Path, caplog):
+        """run_l2 calling logger.info must not crash.
 
         Kills mutations that remove or change the logger.info call.
         """
@@ -1414,11 +1414,11 @@ class TestRunL3bReturnStructure:
         logger.setLevel(logging.INFO)
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok()):
             with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[]):
-                result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+                result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
                 assert result is not None
 
-    def test_run_l3b_logger_info_called_not_debug(self, tmp_path: Path, caplog):
-        """run_l3b must call logger.info (NOT logger.debug).
+    def test_run_l2_logger_info_called_not_debug(self, tmp_path: Path, caplog):
+        """run_l2 must call logger.info (NOT logger.debug).
         
         Kills mutations that change logger.info → logger.debug at line 307-312.
         This is the strongest assertion for logger level mutations.
@@ -1434,15 +1434,15 @@ class TestRunL3bReturnStructure:
             with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tmp_path / "tests/X.php"]):
                 with patch("logging.Logger.debug") as mock_debug:
                     with patch("logging.Logger.info") as mock_info:
-                        result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+                        result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
                         assert result is not None
                 # logger.info should have been called for the actual findings
                 # logger.debug should NOT have been called
                 mock_info.assert_called_once()
                 assert result is not None
 
-    def test_run_l3b_invoke_timeout_300_passed(self, tmp_path: Path):
-        """run_l3b passes timeout=300.0 to invoke.
+    def test_run_l2_invoke_timeout_300_passed(self, tmp_path: Path):
+        """run_l2 passes timeout=300.0 to invoke.
         
         Kills mutations on the timeout argument (300.0).
         """
@@ -1452,7 +1452,7 @@ class TestRunL3bReturnStructure:
                 adapter._adapter = PhpWeakTestAdapter()
                 # Patch the invoke we want to verify
                 adapter._adapter.invoke = mock_invoke
-                adapter.run_l3b(tmp_path, {})
+                adapter.run_l2(tmp_path, {})
         mock_invoke.assert_called_once()
         assert mock_invoke.call_args.kwargs["timeout"] == 300.0
 
@@ -1518,7 +1518,7 @@ def test_parse_findings_have_all_attributes(tmp_path: Path) -> None:
     assert f.message == "m"
     assert f.fix_hint == "h"
     assert f.tool == "weak-test-php"
-    assert f.layer == "L3B"
+    assert f.layer == "L2"
     assert f.language == "php"
 
 # ===========================================================================
@@ -1596,7 +1596,7 @@ def test_parse_finding_all_layer_attributes() -> None:
     findings = PhpWeakTestAdapter().parse(json.dumps(data), "", 0)
     assert len(findings) == 1
     assert findings[0].tool == "weak-test-php"
-    assert findings[0].layer == "L3B"
+    assert findings[0].layer == "L2"
     assert findings[0].language == "php"
 
 
@@ -2318,18 +2318,18 @@ class TestInvokeSurvivorKilling:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# KILL remaining survivors — run_l3b & parse gaps (mutmut_39, 45, 48-51)
+# KILL remaining survivors — run_l2 & parse gaps (mutmut_39, 45, 48-51)
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestRunL3bExactLogMessage:
-    """Directly targets run_l3b logger.info mutations (mutmut_39, 51).
+    """Directly targets run_l2 logger.info mutations (mutmut_39, 51).
 
     §4.3 + H3: Caplog with exact message format catches XX-prefix mutations.
     """
 
-    def test_run_l3b_logger_info_exact_message_format(self, tmp_path: Path, caplog) -> None:
-        """Verify run_l3b logger.info outputs exact expected format.
+    def test_run_l2_logger_info_exact_message_format(self, tmp_path: Path, caplog) -> None:
+        """Verify run_l2 logger.info outputs exact expected format.
 
         Kills mutmut_39: logger.info("XXweak-test-php: ...XX") → XX prefix/suffix.
         Kills mutmut_51: log message string mutations.
@@ -2349,12 +2349,12 @@ class TestRunL3bExactLogMessage:
                 PhpWeakTestAdapter, "_collect_test_files",
                 return_value=[tmp_path / "tests/A.php", tmp_path / "tests/B.php"],
             ):
-                result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+                result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
 
         # Verify that an INFO log was produced with the correct format
         info_records = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(info_records) >= 1, (
-            f"Expected INFO log from run_l3b logger.info. Records: {[r.message for r in caplog.records]}"
+            f"Expected INFO log from run_l2 logger.info. Records: {[r.message for r in caplog.records]}"
         )
 
         # H3 §4.3 exact format: message should start with "weak-test-php:" NOT "XXweak-test-php:XX"
@@ -2379,7 +2379,7 @@ class TestRunL3bExactLogMessage:
             f"INFO log should end with duration like '0.Xs)', got: {info_msg}"
         )
 
-    def test_run_l3b_exitcode_0_when_no_failures(self, tmp_path: Path) -> None:
+    def test_run_l2_exitcode_0_when_no_failures(self, tmp_path: Path) -> None:
         """invoke returns exitcode=0 when no subprocess failures occur.
 
         Kills mutmut_51: `0 if not stderr_parts else 1` → `1 if not stderr_parts else 0`.
@@ -2414,14 +2414,14 @@ class TestRunL3bExactLogMessage:
             f"mutmut_51: exitcode must be 0 with no failures. Got {result.exitcode}. stderr: {result.stderr}"
         )
 
-    def test_run_l3b_duration_sec_is_rounded_float(self, tmp_path: Path) -> None:
+    def test_run_l2_duration_sec_is_rounded_float(self, tmp_path: Path) -> None:
         """verify duration_sec is a float rounded to exactly 3 decimal places.
 
         Kills mutmut_45/50: round(duration, 3) → None or round(duration, None).
         Kills mutmut_48: exitcode changes.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(stdout="[]")):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
 
         # Must be float, not None (kills round→None mutation)
         assert result.duration_sec is not None, (
@@ -2439,7 +2439,7 @@ class TestRunL3bExactLogMessage:
             f"duration_sec must be non-negative. Got: {result.duration_sec}"
         )
 
-    def test_run_l3b_passed_boundary_exactly_zero_findings(self, tmp_path: Path) -> None:
+    def test_run_l2_passed_boundary_exactly_zero_findings(self, tmp_path: Path) -> None:
         """passed=True exactly when findings count is 0, not 1.
 
         Kills mutmut_45: len(findings) == 0 → len(findings) == 1.
@@ -2450,7 +2450,7 @@ class TestRunL3bExactLogMessage:
             PhpWeakTestAdapter, "invoke",
             return_value=_mock_ok(stdout="[]"),
         ):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is True, (
             f"mutmut_45: passed must be True with 0 findings. Got: {result.passed}"
         )
@@ -2460,7 +2460,7 @@ class TestRunL3bExactLogMessage:
             PhpWeakTestAdapter, "invoke",
             return_value=_mock_ok(stdout=json.dumps([{"file": "t.php", "line": 1}])),
         ):
-            result = PhpWeakTestLayerAdapter().run_l3b(tmp_path, {})
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is False, (
             f"mutmut_45: passed must be False with 1 finding. Got: {result.passed}"
         )
@@ -2510,7 +2510,7 @@ class TestParseDenseAssertions:
         assert f.message == "markTestSkipped"     # kills message mutations
         assert f.fix_hint == "Remove markTestSkipped"  # kills fix_hint mutations
         assert f.tool == "weak-test-php"          # kills tool mutations
-        assert f.layer == "L3B"                   # kills layer mutations
+        assert f.layer == "L2"                   # kills layer mutations
         assert f.language == "php"               # kills language mutations
 
     def test_parse_field_with_non_numeric_line(self) -> None:

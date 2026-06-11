@@ -39,8 +39,16 @@ Do NOT activate this skill when:
 
 The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L4) with **language-aware tool dispatch**:
 
-- **Python**: ruff, pyright, pytest, mutmut, bandit, gitleaks, semgrep
-- **PHP**: PHP-CS-Fixer, phpstan, phpunit, infection, phpmd, gitleaks, semgrep
+- **Python**: ruff, pyright, pytest, mutmut, bandit, vulture, deptry, gitleaks, semgrep
+- **PHP**: PHP-CS-Fixer, phpstan, phpunit, infection (MSI 100/100 gate), phpmd,
+  deptrac (architecture, L3B), psalm --taint-analysis (L4), composer audit (L4),
+  local-php-security-checker, shipmonk/dead-code-detector,
+  shipmonk/composer-dependency-analyser, gitleaks, semgrep
+
+> **Detection policy:** a repo containing `composer.json` is treated as
+> **PHP-only**; anything else is treated as Python. Hybrid Python+PHP repos
+> are deliberately not supported (decision 69b05df, ratified): no 3-tier
+> detection, no detection cache, no hybrid dispatch.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -157,19 +165,21 @@ E2E tests are **OPTIONAL** in Layer 1. If `make e2e` is not available or fails, 
 
 ## On Activation
 
-### First Time Setup (Recommended)
+### First Time Setup
 
-Before running the quality gate for the first time, run the configurator to auto-discover your project structure and confirm settings:
+No configurator step is needed (the standalone configurator was deliberately
+removed — decision 69b05df). Language detection is automatic and the gate
+runs with sane defaults:
 
 ```bash
-python3 -m harness_quality_gate.configurator {project-root}
+python3 -m harness_quality_gate all {project-root} --json
 ```
 
-This will:
-1. Auto-detect source/tests directories
-2. Detect Docker, E2E setup
-3. Ask confirmation for each setting with default inferred values
-4. Generate `{project-root}/_quality-gate/quality-gate.yaml`
+Optional: a v2 config file (`.quality-gate.yaml`, `config/quality-gate.yaml`
+or `quality-gate.yaml` with `schema_version: 2`) can tune thresholds. v1
+config files are a **hard error** (exit 4). Missing critical PHP tools
+(php, phpunit, phpstan, infection) produce exit 3 (INFRA_INCOMPLETE) with
+the missing list in the JSON payload.
 
 ### Normal Workflow
 
@@ -233,7 +243,7 @@ trivy config --format json .
 | File | When to read |
 |------|-------------|
 | `references/security-tools-guide.md` | When a tool reports findings and you need remediation guidance, or when installing tools |
-| `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant integrations (12 rules, opt-in via configurator) |
+| `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant integrations (12 rules, opt-in: pass them to semgrep manually) |
 | `references/semgrep-js-rules.yaml` | Custom semgrep rules for JavaScript/TypeScript (13 rules, provenance metadata included) |
 | `references/pentest-remediation-index.md` | **Primary index** mapping finding types to pentest verification commands and checklists |
 
@@ -255,8 +265,8 @@ trivy config --format json .
 | `harness_quality_gate.adapters.python.solid_metrics` | Fast AST-based SOLID check (Tier A) |
 | `harness_quality_gate/bmad/` | SOLID context generator for BMAD agents (Tier B) — deferred |
 | `harness_quality_gate.adapters.python.weak_test` | Weak test detection (A1-A8 rules) |
-| `harness_quality_gate.adapters.python.antipattern_tier_a` | 22 deterministic Tier A antipatterns (AST) |
-| `harness_quality_gate/bmad/` | Tier B antipattern context (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.antipattern_tier_a` | 25 deterministic Tier A antipatterns (AST) |
+| `harness_quality_gate.bmad.antipattern_judge` | 25 Tier B antipatterns — defined with context generator for BMAD review |
 | `harness_quality_gate.adapters.python.principles` | DRY, KISS, YAGNI, LoD, CoI |
 | `harness_quality_gate.bmad.mutation_analyzer` | Mutation kill-map analysis + per-module gate (OK/NOK) |
 | N/A | Test diversity scoring — deferred to future iteration |

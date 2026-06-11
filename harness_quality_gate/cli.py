@@ -10,6 +10,8 @@ Exit-code contract (NFR-15):
   0 = PASS
   1 = FAIL
   2 = UNSUPPORTED
+  3 = INFRA_INCOMPLETE
+  4 = CONFIG_INVALID
   5 = INTERNAL_ERROR
 """
 
@@ -19,6 +21,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,7 +31,10 @@ from .adapters.python.python_adapter import PythonAdapter
 from .allow_list_auditor import AllowListAuditor, AuditReport
 from .checkpoint import build as build_checkpoint
 from .checkpoint import write as write_checkpoint
-from .exit_codes import FAIL, INTERNAL_ERROR, PASS, UNSUPPORTED
+from .config import ConfigInvalid
+from .config import load as config_load
+from .exit_codes import CONFIG_INVALID, FAIL, INFRA_INCOMPLETE, INTERNAL_ERROR, PASS, UNSUPPORTED
+from .messages_es import t
 from .models import LayerResult
 
 logger = logging.getLogger("harness_quality_gate.cli")
@@ -43,6 +49,34 @@ def _detect_language(repo: Path) -> str:
     if (repo / "composer.json").exists():
         return "php"
     return "python"
+
+
+# ---------------------------------------------------------------------------
+# Infra-check (FR-26/27) — inline, no doctor module (deliberate: 69b05df)
+# ---------------------------------------------------------------------------
+
+#: Critical PHP tools resolved on PATH or in the target repo's vendor/bin.
+_PHP_CRITICAL_TOOLS = ("phpunit", "phpstan", "infection")
+
+
+def _missing_php_tools(repo: Path) -> list[str]:
+    """Return the critical PHP tools that cannot be resolved for *repo*.
+
+    Checks the ``php`` runtime on PATH, then each critical tool on PATH or
+    in the repo's composer bin dirs (``vendor/bin`` default, ``bin`` for
+    projects with ``config.bin-dir: bin``). Empty list = infra complete.
+    """
+    missing: list[str] = []
+    if shutil.which("php") is None:
+        missing.append("php")
+    for tool in _PHP_CRITICAL_TOOLS:
+        on_path = shutil.which(tool) is not None
+        in_repo = any(
+            (repo / bin_dir / tool).exists() for bin_dir in ("vendor/bin", "bin")
+        )
+        if not on_path and not in_repo:
+            missing.append(tool)
+    return missing
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +125,35 @@ def _cmd_all(args: argparse.Namespace) -> int:
         )
 
     language = _detect_language(repo)
+
+    # Config v1 rejection (FR-34): a config file with a deprecated schema is
+    # a hard error; a missing config file simply means defaults.
+    try:
+        config_load(repo)
+    except ConfigInvalid as exc:
+        return _exit_with(
+            CONFIG_INVALID,
+            {"error": str(exc), "exit_code": CONFIG_INVALID},
+            quiet=args.quiet,
+        )
+    except FileNotFoundError:
+        pass
+
+    # Infra-check (FR-26/27): PHP repos need the critical toolchain up front.
+    # Python keeps its original graceful-degradation behaviour (skip + warn).
+    if language == "php":
+        missing_tools = _missing_php_tools(repo)
+        if missing_tools:
+            return _exit_with(
+                INFRA_INCOMPLETE,
+                {
+                    "error": t("err.infra.missing", tools=", ".join(missing_tools)),
+                    "missing_tools": missing_tools,
+                    "exit_code": INFRA_INCOMPLETE,
+                },
+                quiet=args.quiet,
+            )
+
     # reason: "_quality-gate" dir name is a filesystem convention — test asserts the
     # directory is in the path via PurePath.parts (fixed 2026-06-04). audited: 2026-06-04
     work_dir = repo / "_quality-gate" / "work"
@@ -129,7 +192,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
             "duration_sec": lr.duration_sec,
         }
         if lr.tool_specific is not None:
-            ld["tool_specific"] = lr.tool_specific
+            ld["tool_specific"] = _asdict(lr.tool_specific)
         layer_dicts.append(ld)
     import platform
     runtime: dict[str, Any] = {

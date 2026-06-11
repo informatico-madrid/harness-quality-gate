@@ -45,6 +45,10 @@ def build(
             # optional fields (fix_hint, cve, cwe, rule_id) don't fail
             # validation with "null is not of type 'string'".
             return {k: v for k, v in dataclasses.asdict(obj).items() if v is not None}
+        if isinstance(obj, dict):
+            # Findings arrive pre-converted to dicts from cli._asdict, which
+            # keeps None values — strip them here for the same schema reason.
+            return {k: v for k, v in obj.items() if v is not None}
         return obj
 
     layers = []

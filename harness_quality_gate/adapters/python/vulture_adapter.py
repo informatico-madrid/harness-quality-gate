@@ -87,7 +87,7 @@ class VultureAdapter(ToolAdapter):
                     message=detail,
                     fix_hint=f"Remove unused {item_type.lower()} '{name}' at {filepath}:{line_no}",
                     tool="vulture",
-                    layer="L2",
+                    layer="L4",
                     language="python",
                     rule_id="unused",
                 )

@@ -57,7 +57,7 @@ class TestDeptracKillers:
         findings = DeptracAdapter().parse(stdout, "", 0)
         assert findings == [Finding(
             node="a.php", severity="error", message="Layer breach",
-            fix_hint="move it", tool="deptrac", layer="L4", language="php",
+            fix_hint="move it", tool="deptrac", layer="L3B", language="php",
         )]
 
     def test_parse_violation_count_full_finding_equality(self) -> None:
@@ -67,7 +67,7 @@ class TestDeptracKillers:
             node="deptrac", severity="error",
             message="3 architecture violation(s) detected",
             fix_hint="Review deptrac.yaml configuration; 2 uncovered class(es)",
-            tool="deptrac", layer="L4", language="php",
+            tool="deptrac", layer="L3B", language="php",
         )]
 
 
@@ -680,7 +680,7 @@ class TestWeakTestKillers:
         assert findings == [Finding(
             node="tests/ATest.php:7", severity="error", message="no asserts",
             fix_hint="add asserts", rule_id="A1", tool="weak-test-php",
-            layer="L3B", language="php",
+            layer="L2", language="php",
         )]
 
     def test_parse_missing_optional_fields_exact_defaults(self) -> None:
@@ -723,7 +723,7 @@ class TestWeakTestKillers:
         assert set(_WEAK_TEST_VISITORS) == set(_VISITOR_RULE_MAP)
         assert _VISITOR_RULE_MAP["weak_test_a2"] == "A2-PHP"
 
-    def test_run_l3b_passthrough_and_duration(self, tmp_path: Path) -> None:
+    def test_run_l2_passthrough_and_duration(self, tmp_path: Path) -> None:
         from harness_quality_gate.adapters.php.weak_test_php import (
             PhpWeakTestLayerAdapter,
         )
@@ -735,7 +735,7 @@ class TestWeakTestKillers:
         with patch(
             f"{self.MOD}.time.monotonic", side_effect=[10.0, 11.23456],
         ):
-            result = layer.run_l3b(tmp_path, {})
+            result = layer.run_l2(tmp_path, {})
         layer._adapter.parse.assert_called_once_with("S", "E", 4)
         assert result.duration_sec == 1.235
 

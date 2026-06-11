@@ -80,7 +80,7 @@
 #
 # ═══════════════════════════════════════════════════════════
 
-.PHONY: mutation mutation-path check-tests coverage clean-mutmut help
+.PHONY: mutation mutation-path check-tests coverage clean-mutmut test-e2e help
 
 # Load .env file if it exists
 ifneq (,$(wildcard ./.env))
@@ -99,6 +99,7 @@ help:
 	@echo "  make clean-mutmut                          - Clear mutmut cache (step 3)"
 	@echo "  make mutation                              - Full mutation on all files (step 4)"
 	@echo "  make mutation-path FILE_PATH=<file.py>     - Partial mutation on single file"
+	@echo "  make test-e2e                              - Run e2e suite (PHP tests skip without php/composer)"
 	@echo "  make help                                  - Show this help"
 	@echo ""
 
@@ -109,6 +110,14 @@ check-tests:
 	@echo "Running all unit tests (pre-flight check for mutation testing)..."
 	$(VENV)/bin/python -m pytest tests/unit/ -q --tb=no --ignore=tests/e2e
 	@echo "All tests pass — ready for mutation testing"
+	@echo "(e2e suite is separate: run 'make test-e2e' — needs PHP/composer for the PHP smoke)"
+
+# ─────────────────────────────────────────────────────────
+# 1b. E2E: Full-pipeline smoke tests (python + php fixtures)
+# ─────────────────────────────────────────────────────────
+test-e2e:
+	@echo "Running e2e suite (PHP tests skip cleanly when php/composer are unavailable)..."
+	$(VENV)/bin/python -m pytest tests/e2e/ -q -m e2e --tb=short
 
 # ─────────────────────────────────────────────────────────
 # 2. COVERAGE: Verify 100% test coverage (MANDATORY — fails if < 100%)

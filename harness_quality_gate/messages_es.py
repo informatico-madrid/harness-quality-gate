@@ -63,6 +63,7 @@ MSG: dict[str, str] = {
     "err.schema.invalid": "Schemas inválido: {error}",
     "err.schema.missing": "Campo obligatorio faltante en schema: {field}",
     "err.config.v1": "Configuración v1 obsoleta: {path}. Actualice a v2.",
+    "err.infra.missing": "Infraestructura PHP incompleta — herramientas críticas faltantes: {tools}. Instálelas (composer install / gestor de paquetes) y reintente.",
     "err.config.ramp": "min_msi={val} < 100 — permitido solo con --allow-ramp y override",
     "err.mutation.timeout": "Mutation timeout: {killed}/{total} en {sec}s",
     "err.mutation.msi": "MSI={msi:.1%} < mínimo={min:.1%}",

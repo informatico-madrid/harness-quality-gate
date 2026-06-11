@@ -110,7 +110,19 @@ timeout_multiplier = 30.0
 # mutmut runs the suite from the mutants/ sandbox, so these MUST be copied in or
 # the baseline fails with FileNotFoundError (verdict-schema.json) before any
 # mutant is graded.
-also_copy = ["references", "config"]
+# The python_adapter (mutated) imports the coverage-omitted analysis modules
+# (weak_test, solid_metrics, antipattern_tier_a, bmad.diversity_metric); they
+# are NOT mutated (not in paths_to_mutate) but must exist inside mutants/ or
+# the baseline collection fails with ModuleNotFoundError.
+also_copy = [
+    "references",
+    "config",
+    "harness_quality_gate/bmad",
+    "harness_quality_gate/adapters/python/antipattern_tier_a.py",
+    "harness_quality_gate/adapters/python/principles.py",
+    "harness_quality_gate/adapters/python/solid_metrics.py",
+    "harness_quality_gate/adapters/python/weak_test.py",
+]
 # Type synonyms for libcst compatibility
 dict_synonyms = ["Dict", "Optional"]
 

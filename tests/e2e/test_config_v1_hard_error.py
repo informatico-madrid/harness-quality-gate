@@ -1,8 +1,7 @@
-"""E2E tests for v1 config handling.
+"""E2E: v1 config files are a hard error (exit 4 CONFIG_INVALID).
 
-Note: v1 config detection (FR-34) is wired in Phase 2+ tasks.
-These tests verify current behavior (valid checkpoint produced)
-and include skip markers for hard-error assertions.
+FR-34 is wired inside ``_cmd_all()``: a config file with a deprecated v1
+schema aborts the gate before any layer runs.
 
 Design: Test Coverage Table / e2e config-v1
 Requirements: FR-34, NFR-15
@@ -17,53 +16,47 @@ from pathlib import Path
 
 import pytest
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 @pytest.fixture()
 def legacy_config_fixture() -> Path:
     """Return path to the legacy v1 config fixture."""
-    return (
-        Path(__file__).resolve().parent.parent
-        / "fixtures"
-        / "legacy-config-v1"
+    return _REPO_ROOT / "tests" / "fixtures" / "legacy-config-v1"
+
+
+def _run_all(repo: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "harness_quality_gate", "all", str(repo), *extra],
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO_ROOT),
+        timeout=120,
     )
 
 
 @pytest.mark.e2e
-def test_all_runs_with_v1_config(legacy_config_fixture: Path) -> None:
-    """Running 'all' on a repo with v1 config → produces valid checkpoint.
-
-    Note: v1 config hard-error (exit 4) is implemented in Phase 2+ tasks.
-    This test verifies current behaviour until FR-34 is wired up.
-    """
-    result = subprocess.run(
-        [
-            sys.executable, "-m", "harness_quality_gate",
-            "all", str(legacy_config_fixture),
-        ],
-        capture_output=True,
-        text=True,
+def test_v1_config_hard_errors_with_exit_4(legacy_config_fixture: Path) -> None:
+    """Running 'all' on a repo with a v1 config → exit 4, no layers run."""
+    result = _run_all(legacy_config_fixture)
+    assert result.returncode == 4, (
+        f"Expected exit 4 (CONFIG_INVALID), got {result.returncode}. "
+        f"stderr: {result.stderr[:500]}"
     )
-    # 0 = PASS, 1 = FAIL (gate ran with real PHP layers and found issues),
-    # 4 = CONFIG_INVALID (v1 hard-error, wired in Phase 2+)
-    assert result.returncode in (0, 1, 4)
 
 
 @pytest.mark.e2e
-def test_v1_config_with_json_flag(legacy_config_fixture: Path) -> None:
-    """v1 config with --json → parseable JSON checkpoint."""
-    result = subprocess.run(
-        [
-            sys.executable, "-m", "harness_quality_gate",
-            "all", str(legacy_config_fixture), "--json",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    try:
-        data = json.loads(result.stdout)
-        # Currently produces a full checkpoint; future v1 hard-error may
-        # output {"error": "...", "exit_code": 4} instead
-        assert "language" in data or "error" in data
-    except json.JSONDecodeError:
-        # Some implementations print Spanish text directly
-        assert result.returncode in (0, 4)
+def test_v1_config_json_payload(legacy_config_fixture: Path) -> None:
+    """The error payload is machine-readable JSON with exit_code 4."""
+    result = _run_all(legacy_config_fixture, "--json")
+    assert result.returncode == 4
+    data = json.loads(result.stdout)
+    assert data["exit_code"] == 4
+    assert "v1" in data["error"]
+
+
+@pytest.mark.e2e
+def test_v1_config_quiet_suppresses_output(legacy_config_fixture: Path) -> None:
+    result = _run_all(legacy_config_fixture, "--quiet")
+    assert result.returncode == 4
+    assert result.stdout == ""

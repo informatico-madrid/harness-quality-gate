@@ -5,6 +5,12 @@ phase: design
 schema_version: 2
 updated: 2026-05-25
 ---
+> ⚠️ **Documento histórico del diseño original.** Tras el refactor de la
+> campaña MSI (69b05df y posteriores) varias piezas aquí descritas fueron
+> eliminadas deliberadamente (12 subcomandos, detector/dispatcher/doctor/
+> installer/configurator, detección híbrida). El estado vigente está en
+> [decisions.md](decisions.md) — donde contradigan, manda decisions.md.
+
 
 # Design: php-support
 

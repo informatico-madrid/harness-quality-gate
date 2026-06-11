@@ -1,7 +1,7 @@
 """Test that __main__.py entry point executes correctly.
 
 This test exercises the entry point to reach 100% coverage on __main__.py
-without using # pragma: no cover. The pragma on line 9 (# pragma: no mutate)
+without using a no-cover pragma. The no-mutate pragma on line 9
 is for mutmut only — it tells mutmut not to mutate sys.exit() because
 mutating its return value doesn't change behavior.
 """

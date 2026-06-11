@@ -283,8 +283,8 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 | `adapters/python/solid_metrics` | Fast AST-based SOLID check (Tier A) |
 | `BMAD Tier B (deferred)` | SOLID context generator for BMAD agents (Tier B) |
 | `adapters/python/weak_test` | Weak test detection (A1-A8 rules) |
-| `adapters/python/antipattern_tier_a` | 50 antipatterns: 25 Tier A (AST) + 25 Tier B (BMAD) |
-| `BMAD Tier B (deferred)` | Tier B antipattern context generator for BMAD agents |
+| `adapters/python/antipattern_tier_a` | 25 Tier A antipatterns (AST) |
+| `bmad/antipattern_judge` | 25 Tier B antipatterns — defined with context generator for BMAD review |
 | `adapters/python/principles` | DRY, KISS, YAGNI, LoD, CoI |
 | `bmad/mutation_analyzer` | Mutation kill-map analysis |
 | `Deferred` | Test diversity scoring |

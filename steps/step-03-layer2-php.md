@@ -14,7 +14,7 @@ weak-test detector (Tier A AST visitors A1–A8).
 Run the PHP weak-test visitor against the test directory:
 
 ```bash
-python3 -m harness_quality_gate all --repo {project-root} --json 2>&1 | \
+python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
   python3 -c "import json,sys; d=json.load(sys.stdin); \
   [print(json.dumps(l)) for l in d.get('layers',[]) if l.get('layer')=='L2']"
 ```

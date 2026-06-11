@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -222,3 +223,55 @@ def _find_infection_log(repo: Path) -> Optional[Path]:
         if INFECTION_LOG.search(str(candidate)):
             return candidate
     return None
+
+
+def main(argv: list[str]) -> int:
+    """CLI: print the mutation kill-map; with ``--gate`` also gate on 100%.
+
+    Usage::
+
+        python3 -m harness_quality_gate.bmad.mutation_analyzer <repo> [--gate] [--tool mutmut|infection]
+
+    Default output is the kill-map JSON consumed by step-03-layer2.
+    With ``--gate`` (step-02-layer1) the exit code is 0 only when every
+    module killed all its mutants (no survivors, no timeouts) — the
+    100/100 hard-gate policy; per-module threshold ramps are not supported.
+    """
+    args = list(argv)
+    gate = "--gate" in args
+    if gate:
+        args.remove("--gate")
+    tool = "mutmut"
+    if "--tool" in args:
+        idx = args.index("--tool")
+        tool = args[idx + 1]
+        del args[idx:idx + 2]
+    if len(args) != 1:
+        print(
+            "Usage: mutation_analyzer <repo> [--gate] [--tool mutmut|infection]",
+            file=sys.stderr,
+        )
+        return 2
+
+    stats = analyze(Path(args[0]), tool=tool)
+    payload: dict[str, object] = {
+        "tool": stats.tool,
+        "mutation_kill_map": {
+            name: {"killed": m.killed, "total": m.total, "rate": round(m.kill_rate, 3)}
+            for name, m in stats.modules.items()
+        },
+        "overall_kill_rate": round(stats.kill_rate, 3),
+    }
+    if gate:
+        ok = all(
+            m.survived == 0 and m.timeout == 0 for m in stats.modules.values()
+        )
+        payload["gate"] = "OK" if ok else "NOK"
+        print(json.dumps(payload, indent=2))
+        return 0 if ok else 1
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main(sys.argv[1:]))

@@ -36,13 +36,15 @@
 
 ## Overview
 
-This skill implements a **multi-layer quality gate harness** for autonomous coding agents. It validates Python code produced by AI agents through:
+This skill implements a **multi-layer quality gate harness** for autonomous coding agents. It validates **Python or PHP** code produced by AI agents through:
 
-- **Static linting** (ruff, pyright)
-- **Unit testing and coverage** (pytest)
-- **Mutation testing** (mutmut)
-- **Code quality analysis** (SOLID principles, design principles, antipatterns)
-- **Security scanning** (bandit, safety, gitleaks, semgrep, checkov, deptry, vulture, trivy)
+- **Static linting** (Python: ruff, pyright · PHP: phpstan, phpmd, php-cs-fixer)
+- **Unit testing, coverage and mutation gate** (Python: pytest + mutmut · PHP: phpunit/pest + PCOV + Infection with the **MSI 100/100 hard gate**)
+- **Test quality** (weak-test detection A1-A9 + diversity metrics, both languages)
+- **Code quality analysis** (SOLID principles, design principles, antipatterns; PHP adds deptrac architecture validation in L3B)
+- **Security scanning** (Python: bandit, vulture, deptry, gitleaks, semgrep, checkov, trivy · PHP: psalm --taint-analysis, composer audit, local-php-security-checker, shipmonk/dead-code-detector, shipmonk/composer-dependency-analyser)
+
+Language detection is automatic and deliberately simple: a repo with `composer.json` is treated as **PHP-only**, anything else as Python. Hybrid repos are not supported.
 
 The output is a **checkpoint JSON** that agents can parse to verify their own output before committing.
 
@@ -253,8 +255,8 @@ This skill implements a **two-tier system** for code quality analysis:
 |--------|---------|
 | `harness_quality_gate.adapters.python.solid_metrics` | SOLID Tier A (AST) |
 | N/A | SOLID Tier B context (BMAD) — deferred |
-| `harness_quality_gate.adapters.python.antipattern_tier_a` | 22 deterministic Tier A antipatterns (AST) |
-| N/A | Antipatterns Tier B (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.antipattern_tier_a` | 25 deterministic Tier A antipatterns (AST) |
+| `harness_quality_gate.bmad.antipattern_judge` | 25 Tier B antipatterns — defined with context generator for BMAD review |
 | `harness_quality_gate.adapters.python.principles` | DRY, KISS, YAGNI, LoD, CoI |
 | `harness_quality_gate.adapters.python.weak_test` | Weak test detection (A1-A8) |
 | `harness_quality_gate.bmad.mutation_analyzer` | Mutation kill-map analysis |
@@ -321,29 +323,30 @@ layer4:
     # ...
 ```
 
-### Per-Module Mutation Thresholds
+### Mutation Policy: 100/100 Hard Gate
 
-The skill supports per-module mutation thresholds via `pyproject.toml`:
+Both languages enforce the same hard gate — no per-module threshold ramps:
 
-```toml
-[tool.quality-gate.mutation]
-# Per-module thresholds override global
-[tool.quality-gate.mutation."src/core"]
-kill_threshold = 0.80
-
-[tool.quality-gate.mutation."src/utils"]
-kill_threshold = 0.65
-```
+- **Python**: `mutmut` must report 0 survivors and 0 timeouts
+  (`python3 -m harness_quality_gate.bmad.mutation_analyzer <repo> --gate`).
+- **PHP**: Infection runs with `--min-msi=100 --min-covered-msi=100`;
+  a config attempting to lower the thresholds is rejected with exit 4.
 
 ### Initial Configuration
 
-For new projects, run the interactive configurator:
+No setup step is required — detection is automatic and defaults are sane:
 
 ```bash
-python3 -m harness_quality_gate.configurator
+python3 -m harness_quality_gate all {project-root} --json
 ```
 
-This auto-detects project structure and asks for confirmation on each setting.
+Exit codes: `0` PASS · `1` FAIL · `2` UNSUPPORTED · `3` INFRA_INCOMPLETE
+(PHP repo missing php/phpunit/phpstan/infection — payload lists
+`missing_tools`) · `4` CONFIG_INVALID (v1 config schema is a hard error) ·
+`5` INTERNAL_ERROR.
+
+Optional tuning via a v2 config file (`.quality-gate.yaml`,
+`config/quality-gate.yaml` or `quality-gate.yaml` with `schema_version: 2`).
 
 ---
 
@@ -423,6 +426,24 @@ The output is a JSON file in `_quality-gate/quality-gate-{timestamp}.json` desig
 | `deptry` | RECOMMENDED | Import consistency |
 | `vulture` | RECOMMENDED | Dead code detection |
 | `trivy` | OPTIONAL | Docker image scanning |
+
+### PHP Tools
+
+| Tool | Layer | Priority | Purpose |
+|------|-------|----------|---------|
+| `php` (≥8.2) | — | CRITICAL (exit 3 if missing) | Runtime |
+| `phpunit` / `pest` | L1 | CRITICAL (exit 3 if missing) | Test execution |
+| `infection` | L1 | CRITICAL (exit 3 if missing) | Mutation gate MSI 100/100 |
+| `phpstan` | L3A | CRITICAL (exit 3 if missing) | Static analysis |
+| PCOV extension | L1 | RECOMMENDED | Fast coverage for Infection |
+| `phpmd` + nikic/php-parser visitors | L3A | RECOMMENDED | Antipatterns Tier A |
+| `php-cs-fixer` | L3A | RECOMMENDED | Code style |
+| `deptrac` | L3B | RECOMMENDED | Architecture validation |
+| `psalm --taint-analysis` | L4 | RECOMMENDED | Taint flow analysis |
+| `composer audit` | L4 | REQUIRED | Dependency CVE scanning |
+| `local-php-security-checker` | L4 | RECOMMENDED | Security advisories |
+| `shipmonk/dead-code-detector` | L4 | RECOMMENDED | Dead code (vulture equivalent) |
+| `shipmonk/composer-dependency-analyser` | L4 | RECOMMENDED | Dependency analysis (deptry equivalent) |
 
 ---
 

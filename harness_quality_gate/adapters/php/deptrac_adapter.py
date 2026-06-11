@@ -114,7 +114,8 @@ class DeptracAdapter(ToolAdapter):
             }
 
         Each violation entry in ``Report.Violations`` becomes a ``Finding``
-        with ``tool="deptrac"`` and ``layer="L4"``.
+        with ``tool="deptrac"`` and ``layer="L3B"`` (architecture validation
+        belongs to the deep-quality layer per the spec glossary).
 
         Args:
             stdout: deptrac JSON output string.
@@ -160,7 +161,7 @@ class DeptracAdapter(ToolAdapter):
                             message=v.get("message", "Architecture violation"),
                             fix_hint=v.get("fix"),
                             tool=self._name,
-                            layer="L4",
+                            layer="L3B",
                             language="php",
                         )
                     )
@@ -172,7 +173,7 @@ class DeptracAdapter(ToolAdapter):
                     message=f"{violations_count} architecture violation(s) detected",
                     fix_hint=f"Review deptrac.yaml configuration; {uncovered} uncovered class(es)",
                     tool=self._name,
-                    layer="L4",
+                    layer="L3B",
                     language="php",
                 )
             )

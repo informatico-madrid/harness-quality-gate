@@ -180,7 +180,7 @@ class PhpWeakTestAdapter(ToolAdapter):
               "message": "...", "severity": "error", "fix_hint": "..."}]
 
         Returns a list of :class:`Finding` objects, each tagged with
-        ``layer="L3B"`` and ``language="php"``.
+        ``layer="L2"`` and ``language="php"``.
         """
         findings: list[Finding] = []
         if not stdout.strip():
@@ -209,7 +209,7 @@ class PhpWeakTestAdapter(ToolAdapter):
                     fix_hint=fix_hint,
                     rule_id=rule_id,
                     tool=self._name,
-                    layer="L3B",
+                    layer="L2",
                     language="php",
                 )
             )
@@ -275,17 +275,20 @@ class PhpWeakTestAdapter(ToolAdapter):
 # ---------------------------------------------------------------------------
 
 class PhpWeakTestLayerAdapter:
-    """Thin wrapper providing run_l3b for use by PhpAdapter.
+    """Thin wrapper providing run_l2 for use by PhpAdapter.
 
     PhpAdapter composes ToolAdapters and calls their run_l3a/run_l1/etc.
-    This wrapper provides a ``run_l3b(repo, env) -> LayerResult`` interface
+    This wrapper provides a ``run_l2(repo, env) -> LayerResult`` interface
     that delegates to ``PhpWeakTestAdapter``.
+
+    L2 is the test-quality layer per the spec glossary: weak-test
+    detection (A1-A8) + diversity + mutation kill-map.
     """
 
     def __init__(self) -> None:
         self._adapter = PhpWeakTestAdapter()
 
-    def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
+    def run_l2(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Run all weak-test visitors (A1–A8) and return findings.
 
         Args:
@@ -293,7 +296,7 @@ class PhpWeakTestLayerAdapter:
             env: Environment variables.
 
         Returns:
-            A :class:`LayerResult` with ``layer="L3B"`` and merged findings.
+            A :class:`LayerResult` with ``layer="L2"`` and merged findings.
         """
         t0 = time.monotonic()
         invocation = self._adapter.invoke(
@@ -312,7 +315,7 @@ class PhpWeakTestLayerAdapter:
         )
 
         return LayerResult(
-            layer="L3B",
+            layer="L2",
             language="php",
             passed=len(findings) == 0,
             findings=findings,

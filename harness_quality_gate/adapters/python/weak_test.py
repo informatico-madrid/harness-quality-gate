@@ -32,9 +32,6 @@ class WeakTestVisitor(ast.NodeVisitor):
         self.tests: list[dict[str, Any]] = []
         self.current_test: dict[str, Any] | None = None
         self._in_test_function = False
-        self._assertion_count = 0
-        self._mock_count = 0
-        self._call_count = 0
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         is_test = node.name.startswith("test_") or any(
@@ -60,21 +57,9 @@ class WeakTestVisitor(ast.NodeVisitor):
                 "parametrize_count": 0,
                 "lines": 0,
             }
-            self._assertion_count = 0
-            self._mock_count = 0
-            self._call_count = 0
-
             self._check_decorators(node)
             self.generic_visit(node)
 
-            if self.current_test:
-                self.current_test["assertions"] = self._assertion_count
-                self.current_test["mocks"] = self._mock_count
-                self.current_test["calls"] = self._call_count
-
-            self._assertion_count = 0
-            self._mock_count = 0
-            self._call_count = 0
             self._in_test_function = False
 
             if self.current_test:

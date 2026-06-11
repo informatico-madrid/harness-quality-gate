@@ -230,7 +230,7 @@ def _write_py(tmp_path: Path, name: str, content: str) -> Path:
 def test_unjustified_finding_node_is_relative_path(tmp_path: Path) -> None:
     """Kill node=None and node=str(None) mutations on unjustified path.
     The node must be a relative path string (not None / 'None')."""
-    _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
+    _write_py(tmp_path, "m.py", "x = 1  # pragma: " "no mutate\n")
     report = AllowListAuditor(language="python").audit(tmp_path)
     assert report.exit_code == 1
     unjustified = [f for f in report.findings if f.severity == "warning"]
@@ -246,7 +246,7 @@ def test_justified_finding_node_is_relative_path(tmp_path: Path) -> None:
     _write_py(
         tmp_path,
         "m.py",
-        "# reason: provably-equivalent\n# audited: 2026-06-04\nx = 1  # pragma: no mutate\n",
+        "# reason: provably-equivalent\n# audited: 2026-06-04\nx = 1  # pragma: " "no mutate\n",
     )
     report = AllowListAuditor(language="python").audit(tmp_path)
     assert report.exit_code == 0
@@ -259,7 +259,7 @@ def test_justified_finding_node_is_relative_path(tmp_path: Path) -> None:
 
 def test_unjustified_finding_message_is_non_none(tmp_path: Path) -> None:
     """Kill message=None mutation: unjustified finding must have a message string."""
-    _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
+    _write_py(tmp_path, "m.py", "x = 1  # pragma: " "no mutate\n")
     report = AllowListAuditor(language="python").audit(tmp_path)
     unjustified = [f for f in report.findings if f.severity == "warning"]
     assert unjustified
@@ -274,7 +274,7 @@ def test_unjustified_finding_exact_line_number(tmp_path: Path) -> None:
     The pragma is on line 1 (single-line file). So i=0, and the message should say
     'at line 1'. Mutations: i+1=1 → i-1=-1 (message: 'at line -1')
     or i+1=1 → i+2=2 (message: 'at line 2'). Both would fail this assertion."""
-    _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
+    _write_py(tmp_path, "m.py", "x = 1  # pragma: " "no mutate\n")
     report = AllowListAuditor(language="python").audit(tmp_path)
     assert report.exit_code == 1
     unjustified = [f for f in report.findings if f.severity == "warning"]
@@ -292,7 +292,7 @@ def test_unjustified_finding_fix_hint_is_non_none(tmp_path: Path) -> None:
     The fix_hint must be the exact expected string — not mutated with "XX" prefix/suffix
     (mutmut_54: "XXAdd # reason: ... XX") or case change (mutmut_55: "add # reason: ...").
     """
-    _write_py(tmp_path, "m.py", "x = 1  # pragma: no mutate\n")
+    _write_py(tmp_path, "m.py", "x = 1  # pragma: " "no mutate\n")
     report = AllowListAuditor(language="python").audit(tmp_path)
     unjustified = [f for f in report.findings if f.severity == "warning"]
     assert unjustified
@@ -430,3 +430,75 @@ def test_audit_empty_allow_list_returns_all() -> None:
     ]
     result = audit_findings(findings, allow_list=[])
     assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Third-party / generated tree exclusions (_EXCLUDED_DIRS)
+# ---------------------------------------------------------------------------
+
+def _write_unjustified_php(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "<?php\n/** @infection-ignore-all */\nclass X {}\n", encoding="utf-8",
+    )
+
+
+def _write_unjustified_py(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("x = 1  # pragma: " "no mutate\n", encoding="utf-8")
+
+
+def test_excluded_dirs_exact_set() -> None:
+    """Pin the exclusion set so element mutations (drops/typos) are killed."""
+    from harness_quality_gate.allow_list_auditor import _EXCLUDED_DIRS
+    assert _EXCLUDED_DIRS == frozenset({
+        "vendor", "node_modules", ".venv", "venv",
+        "mutants", ".mutmut", ".git", "__pycache__",
+    })
+
+
+def test_vendor_and_generated_trees_not_scanned_php(tmp_path: Path) -> None:
+    """Unjustified @infection-ignore-all inside every excluded dir is invisible."""
+    from harness_quality_gate.allow_list_auditor import _EXCLUDED_DIRS
+    for excluded in sorted(_EXCLUDED_DIRS):
+        _write_unjustified_php(tmp_path / excluded / "pkg" / "Bad.php")
+    report = AllowListAuditor(language="php").audit(tmp_path)
+    assert report.exit_code == 0
+    assert report.findings == []
+    assert report.ignored_count == 0
+
+
+def test_generated_trees_not_scanned_python(tmp_path: Path) -> None:
+    """Unjustified pragmas inside every excluded dir are invisible."""
+    from harness_quality_gate.allow_list_auditor import _EXCLUDED_DIRS
+    for excluded in sorted(_EXCLUDED_DIRS):
+        _write_unjustified_py(tmp_path / excluded / "lib" / "mod.py")
+    report = AllowListAuditor(language="python").audit(tmp_path)
+    assert report.exit_code == 0
+    assert report.findings == []
+
+
+def test_own_code_next_to_vendor_still_scanned(tmp_path: Path) -> None:
+    """The exclusion must not hide first-party files outside those dirs.
+
+    Excluded dirs sort both BEFORE (.git, mutants) and AFTER (vendor) the
+    own file, so hitting an excluded path must skip-and-continue — a
+    ``break`` would abort the scan and miss ``src/Own.php`` entirely.
+    """
+    _write_unjustified_php(tmp_path / ".git" / "hooks" / "Bad.php")
+    _write_unjustified_php(tmp_path / "mutants" / "pkg" / "Bad.php")
+    _write_unjustified_php(tmp_path / "vendor" / "pkg" / "Bad.php")
+    _write_unjustified_php(tmp_path / "src" / "Own.php")
+    report = AllowListAuditor(language="php").audit(tmp_path)
+    assert report.exit_code != 0
+    assert len(report.findings) == 1
+    assert "src/Own.php" in report.findings[0].node
+    assert "vendor" not in report.findings[0].node
+
+
+def test_exclusion_matches_path_segment_not_substring(tmp_path: Path) -> None:
+    """A dir merely *containing* an excluded name (vendor_utils) is scanned."""
+    _write_unjustified_py(tmp_path / "vendor_utils" / "mod.py")
+    report = AllowListAuditor(language="python").audit(tmp_path)
+    assert report.exit_code != 0
+    assert len(report.findings) == 1
