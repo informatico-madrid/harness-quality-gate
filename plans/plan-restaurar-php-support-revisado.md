@@ -199,73 +199,72 @@ Mencionar en `check-tests` que los e2e existen y deben correrse manualmente
 
 ## Fase 7 — Bug signature mismatch en parse() de ToolAdapters
 
-**Bug masivo confirmado**: 10 ToolAdapters tienen `parse(self, stdout)` (1 arg)
-pero son llamados con `parse(stdout, stderr, exitcode)` (3 args) desde los orquestadores.
-La base class `ToolAdapter` define `parse(self, stdout, stderr, exitcode)`.
-Esto causa `TypeError` en runtime al usar la skill contra un repo real.
+### 7.1 — Audit completo
 
-**Causa raíz**: Los unit tests mockean el adapter (nunca llaman parse() con 3 args reales),
-y los e2e tests que ejercían el pipeline completo fueron eliminados en commit 69b05df.
+**SOLO 1 CRASH EN PYTHON (PyrightAdapter)**: El resto usa `*_compat: object` para aceptar extra args.
 
-### Audit completo de firmas parse()
+| Adapter | Firma | ¿Crash? | Patrón |
+|---------|-------|---------|--------|
+| `PyrightAdapter` | `(self, stdout)` | **SÍ** — TypeError | Sin `*_compat` |
+| RuffAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| VultureAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| DeptryAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| MutmutAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| BanditAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| PhpUnitAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| InfectionAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| SecurityCheckerAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
+| DeadCodeAdapter | `(self, stdout, *_compat)` | NO | Tiene `*_compat` |
 
-**BROKEN — TypeError en runtime (llamados con 3 args, acepta solo 1):**
+**Solución Fase 7.1**: Corregir SOLO PyrightAdapter.parse() para usar
+`(self, stdout, *_compat: object)` igual que los demás. Quitar `# type: ignore`.
 
-| Adapter | Archivo | Firma parse() | Llamado desde |
-|---------|---------|---------------|---------------|
-| `RuffAdapter` | `python/ruff_adapter.py` | `(self, stdout)` | `python_adapter.py:233` |
-| `PyrightAdapter` | `python/pyright_adapter.py` | `(self, stdout)` | `python_adapter.py:245` |
-| `VultureAdapter` | `python/vulture_adapter.py` | `(self, stdout)` | `python_adapter.py:269` |
-| `DeptryAdapter` | `python/deptry_adapter.py` | `(self, stdout)` | `python_adapter.py:281` |
-| `MutmutAdapter` | `python/mutmut_adapter.py` | `(self, stdout)` | `python_adapter.py:296` |
-| `BanditAdapter` | `python/bandit_adapter.py` | `(self, stdout)` | `python_adapter.py:311` |
-| `PhpUnitAdapter` | `php/phpunit_adapter.py` | `(self, stdout)` | `php_adapter.py:642` |
-| `InfectionAdapter` | `php/infection_adapter.py` | `(self, stdout)` | `php_adapter.py:742` |
-| `SecurityCheckerAdapter` | `php/security_checker_adapter.py` | `(self, stdout)` | `php_adapter.py:869` |
-| `DeadCodeAdapter` | `php/dead_code_adapter.py` | `(self, stdout)` | `php_adapter.py:887` |
+**Solución Fase 7.2**: Todos los demás adapters tienen `# type: ignore[override]` innecesario.
+Quitarlo y cambiar a firma explícita `(self, stdout: str, stderr: str, exitcode: int)`.
 
-**Viola contrato base class pero sin crash en runtime (llamados con 1 arg):**
+### 7.2 — Dogfooding: bugs descubiertos ejecutando la skill contra sí misma
 
-| Adapter | Archivo | Firma parse() | Llamado desde |
-|---------|---------|---------------|---------------|
-| `PhpAntipatternTierAAdapter` | `php/antipattern_tier_a_php.py` | `(self, stdout)` | `php_adapter.py:179,770` con 1 arg |
-| `PhpWeakTestAdapter` | `php/weak_test_php.py` | `(self, stdout)` | Nunca llamado externamente (usa `run_l3b()`) |
+Estos bugs fueron descubiertos ejecutando `python3 -m harness_quality_gate all <fixture>` (Fase 8 del plan).
 
-**CORRECTOS — firma (self, stdout, stderr, exitcode):**
+**BUG P7 — MutationStats no serializable a JSON**:
+- **Archivo**: `cli.py:_cmd_all()` línea 131
+- **Código**: `ld["tool_specific"] = lr.tool_specific` — NO pasa por `_asdict()`
+- **Síntoma**: `json.dumps(data)` crash en `cli.py:169` con
+  `TypeError: Object of type MutationStats is not JSON serializable`
+- **Causa**: `lr.tool_specific` contiene `MutationStats` dataclass directo.
+  `_asdict()` se llama sobre `lr.findings` pero NO sobre `lr.tool_specific`.
+- **Excepción**: No afecta cuando `tool_specific` solo tiene valores primitivos
+  (dict con str/int/float ya serializable).
+- **Reproductible**: `python3 -m harness_quality_gate all tests/fixtures/python-pure-pass --json`
+  (después de corregir PyrightAdapter.parse(), ya no crash pero write() sí crash ea).
 
-| Adapter | Archivo |
-|---------|---------|
-| `PytestAdapter` | `python/pytest_adapter.py` |
-| `PhpStanAdapter` | `php/phpstan_adapter.py` |
-| `PhpMdAdapter` | `php/phpmd_adapter.py` |
-| `PhpCsFixerAdapter` | `php/php_cs_fixer_adapter.py` |
-| `PestAdapter` | `php/pest_adapter.py` |
-| `PcovAdapter` | `php/pcov_adapter.py` |
-| `ComposerAuditAdapter` | `php/composer_audit_adapter.py` |
-| `PsalmTaintAdapter` | `php/psalm_taint_adapter.py` |
-| `DepAnalyserAdapter` | `php/dep_analyser_adapter.py` |
-| `DeptracAdapter` | `php/deptrac_adapter.py` |
-| `VisitorRunnerAdapter` | `php/visitor_runner_adapter.py` |
-| `CheckovAdapter` | `shared/checkov_adapter.py` |
-| `GitleaksAdapter` | `shared/gitleaks_adapter.py` |
-| `SemgrepAdapter` | `shared/semgrep_adapter.py` |
-| `TrivyAdapter` | `shared/trivy_adapter.py` |
+**BUG P8 — rule_id:null produce jsonschema.ValidationError en write()**:
+- **Archivos**: `cli.py:_asdict()` + `checkpoint.py:build()` + `checkpoint.py:validate()`
+- **Código**: `_asdict(Finding)` → `dataclasses.asdict()` → conserva `rule_id: None`
+  → `build()` solo strippea Nones de dataclass objects, no de dicts
+  → `validate()` → ValidationError: "None is not of type 'string'"
+- **Síntoma**: Python fixture produce JSON inválido en `write()` con
+  `jsonschema.exceptions.ValidationError: None is not of type 'string'
+   on rule_id: None`
+- **Código corregible**: `cli.py:_asdict()` debería strippear Nones OR
+  `checkpoint.py:build()` debería strippear Nones de dict-based findings
 
-**Solución**:
-- Corregir los **10 adapters rotos** para aceptar `(self, stdout: str, stderr: str, exitcode: int)`,
-  respetando el contrato de `ToolAdapter`. Los adapters que solo usan `stdout` reciben
-  los otros 2 args pero los ignoran.
-- Corregir los **2 adapters con violación de contrato** (`PhpAntipatternTierAAdapter`,
-  `PhpWeakTestAdapter`) también para mantener consistencia, aunque no crashean en runtime.
-- Quitar `# type: ignore[override]` de todos los adapters corregidos.
-- Añadir test unitario que llame `parse(stdout, stderr, exitcode)` en cada adapter (regresión).
-- Añadir test e2e que ejecute `all` contra fixtures Python y PHP (Fase 8).
+**BUG P9 — write_checkpoint() crashea silenciosamente**:
+- **Archivo**: `checkpoint.py:write()`
+- **Problema**: `validate()` y `json.dumps()` pueden crashear
+  (BUG P7/P8) pero no hay try/except. El crash se captura en `cli.py:_cmd_all()`
+  line 160 con `logger.warning(...)` pero el checkpoint NO se escribe en disco.
+- **Impacto**: Se pierde el checkpoint por completo si tiene cualquier dato invalido.
+  El usuario ve JSON inválido en stdout pero no hay checkpoint en disco.
+- **Fix**: envolver `validate()` y `write_text()` en try/except en `cli.py:_cmd_all()`.
 
-**Impacto**: **Cualquier invocación real de la skill contra un repo Python o PHP crashea**
-con TypeError en la primera herramienta que intente parsear. Los 6 adapters Python fallan
-todos (ruff, pyright, vulture, deptry, mutmut, bandit). Los 4 PHP adapters fallan
-(phpunit, infection, security_checker, dead_code). Solo phpstan, phpmd, cs-fixer,
-composer_audit, psalm_taint, deptrac y dep_analyser funcionan en PHP.
+**BUG P10 — `_run_phpunit_tests` no captura OSError**:
+- **Archivo**: `php_adapter.py:645`
+- **Código**: `except RuntimeError:` — captura solo RuntimeError
+- **Problema**: `subprocess.run()` raises `FileNotFoundError` (OSError, no RuntimeError)
+  cuando el binario no existe
+- **Síntoma**: `INTERNAL_ERROR: [Errno 2] No such file or directory: 'vendor/bin/phpunit'`
+- **Solución**: `except (OSError, RuntimeError):` igual que PythonAdapter
 
 ## Fase 8 — E2E smoke tests para detección de bugs en runtime
 
@@ -424,6 +423,12 @@ Su funcionalidad se reemplaza con `test_infra_incomplete.py` (Fase 8c).
 9. `python3 -m pytest tests/e2e/test_smoke_python.py tests/e2e/test_smoke_php.py -q` — verde
    (o skip si las herramientas no están instaladas, pero no fail por TypeError).
 10. `python3 -m pytest tests/e2e/test_infra_incomplete.py -q` — verde (exit 3 cuando falta PHP).
+11. **P7**: `python3 -m harness_quality_gate all tests/fixtures/python-pure-pass --json` →
+    JSON válido con MutationStats serializado (no crash en write_checkpoint).
+12. **P8**: Checkpoint generado no contiene `rule_id: null` — todos los campos opcionales
+    son strings vacíos o están ausentes.
+13. **P9**: `json.dumps()` nunca se ejecuta dentro de `write()` sin manejo de errores.
+14. **P10**: `php_adapter.py:645/674/745` → `except (OSError, RuntimeError):` para herramientas PHP faltantes.
 
 ## Restricciones operativas
 
