@@ -444,7 +444,7 @@ class TestRuffVersion:
         with patch(
             "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
             return_value="/usr/bin/ruff",
-        ):
+        ) as which_mock:
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff 0.8.0\n")
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
@@ -453,6 +453,9 @@ class TestRuffVersion:
         assert mock_run.call_args.args[0] == ["/usr/bin/ruff", "--version"]
         assert mock_run.call_args.kwargs["cwd"] == Path("/tmp/repo")
         assert mock_run.call_args.kwargs["env"] == {"RUFF_ENV": "1"}
+        # §4.4 spy: which must be called with literal "ruff" — kills
+        # mutmut_2 (shutil.which("ruff") → shutil.which(None)).
+        which_mock.assert_called_once_with("ruff")
 
     def test_version_env_none_passed(self):
         """When env is None, it's passed as None to _run.

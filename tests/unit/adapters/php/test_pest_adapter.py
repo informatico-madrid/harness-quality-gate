@@ -99,9 +99,15 @@ class TestPestBinary:
         vendor_bin = tmp_path / "vendor" / "bin" / "pest"
         vendor_bin.parent.mkdir(parents=True)
         adapter = PestAdapter()
-        with patch("shutil.which", return_value="/usr/bin/pest"):
+        with patch(
+            "harness_quality_gate.adapters.php.pest_adapter.shutil.which",
+            return_value="/usr/bin/pest",
+        ) as which_mock:
             result = adapter._pest_binary(tmp_path)
         assert result == ["/usr/bin/pest"]
+        # Kill mutmut_18: shutil.which("pest") → shutil.which(None).
+        # assert_called_once_with("pest") fails when called with None.
+        which_mock.assert_called_once_with("pest")
 
     def test_pest_binary_neither_found(self, tmp_path: Path) -> None:
         """No pest in vendor/bin or PATH → None."""

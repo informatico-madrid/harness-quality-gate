@@ -374,6 +374,22 @@ class TestVersion:
                 adapter.version(Path("/tmp"))
         assert mock_run.call_args.kwargs["env"] is None
 
+    def test_version_asserts_shutil_which_arg_is_literal_pyright(self):
+        """Spy on shutil.which and assert the literal argument "pyright".
+
+        Kills mutmut_2: shutil.which("pyright") → shutil.which(None).
+        The mutant passes None, which breaks the assert_called_once_with("pyright").
+        """
+        adapter = PyrightAdapter()
+        mock_result = MagicMock(stdout="pyright 1.1.265")
+        with patch(
+            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
+            return_value="/usr/bin/pyright",
+        ) as which_mock:
+            with patch.object(PyrightAdapter, "_run", return_value=mock_result):
+                adapter.version(Path("/repo/X"))
+        which_mock.assert_called_once_with("pyright")
+
 
 class TestInvokeNormalPath:
     """Tests for normal invoke path with mocked _run.

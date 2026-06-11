@@ -249,6 +249,44 @@ def test_validate_threshold_defaults_exact() -> None:
     assert config.infection.allow_ramp_flag_required is True
 
 
+def test_validate_max_timeouts_absent_defaults_to_zero() -> None:
+    """Kill `or 0` mutation on max_timeouts.
+
+    When 'max_timeouts' key is absent from the dict, `get()` returns None.
+    Original: int(None or 0) → int(0) → 0.  Mutant: int(None) → TypeError.
+    """
+    cfg = _make_v2_config({
+        "infection": {
+            "thresholds": {
+                "min_msi": 100.0,
+                "min_covered_msi": 100.0,
+                # No "max_timeouts" key at all
+            },
+        },
+    })
+    result = validate(cfg)
+    assert result.infection.max_timeouts == 0
+
+
+def test_validate_max_timeouts_null_defaults_to_zero() -> None:
+    """Kill `or 0` when the key is present but explicitly null.
+
+    YAML with 'max_timeouts: null' → get() returns None, `or 0` catches it.
+    Mutant without `or 0` would raise TypeError on int(None).
+    """
+    cfg = _make_v2_config({
+        "infection": {
+            "thresholds": {
+                "min_msi": 100.0,
+                "min_covered_msi": 100.0,
+                "max_timeouts": None,
+            },
+        },
+    })
+    result = validate(cfg)
+    assert result.infection.max_timeouts == 0
+
+
 def test_validate_concurrency_defaults_exact() -> None:
     """Kill max_workers_local=4, max_workers_ci=1 default mutations.
     When concurrency section exists, ci_env_vars comes from config; when absent, default is [].
@@ -262,6 +300,25 @@ def test_validate_concurrency_defaults_exact() -> None:
     config2 = validate(cfg)
     assert "CI" in config2.concurrency.ci_env_vars
     assert "GITHUB_ACTIONS" in config2.concurrency.ci_env_vars
+
+
+def test_validate_min_msi_int_input_coerced_to_float() -> None:
+    """YAML integers in min_msi must end up as Python float (kills mutmut_51
+    which removes the float() cast on min_msi).
+
+    Uses min_msi=200 (not the dataclass default 100.0) so the mutant —
+    which OMITS min_msi from the _Thresholds() call and falls back to the
+    default 100.0 — is forced to a different value.
+    """
+    cfg = _make_v2_config({
+        "infection": {"thresholds": {"min_msi": 200, "min_covered_msi": 200}},
+    })
+    result = validate(cfg)
+    # Mutant omits min_msi from the call → default 100.0 instead of 200.0
+    assert result.infection.min_msi == 200.0
+    assert isinstance(result.infection.min_msi, float)
+    assert result.infection.min_covered_msi == 200.0
+    assert isinstance(result.infection.min_covered_msi, float)
 
     # Pass explicit non-default values — kills 'max_workers_local' key mutation
     # (if key becomes 'XXmax_workers_localXX', the value 8 won't be found → default 4 used)

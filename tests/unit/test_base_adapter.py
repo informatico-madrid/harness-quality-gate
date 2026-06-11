@@ -116,3 +116,52 @@ def test_run_duration_rounded_to_3_decimals() -> None:
     assert isinstance(result, ToolInvocation)
     # duration_seconds should be a float (round to 3 decimals)
     assert isinstance(result.duration_seconds, float)
+
+
+def test_run_exact_invocation_with_fixed_clock() -> None:
+    """Pin the full ToolInvocation with a controlled clock: kills the round
+    variants (None / round(3) / kwarg removal) and the stderr passthrough."""
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import MagicMock, patch
+
+    from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t1 = t0 + timedelta(seconds=1.23456)
+    completed = MagicMock(stdout="OUT", stderr="ERR", returncode=7)
+    fake_dt = MagicMock()
+    fake_dt.now.side_effect = [t0, t1]
+    with (
+        patch("harness_quality_gate.adapters.base.subprocess.run", return_value=completed) as run,
+        patch("harness_quality_gate.adapters.base.datetime", fake_dt),
+    ):
+        result = ToolAdapter._run(["tool", "--x"], timeout=12.5)
+    assert result == ToolInvocation(
+        stdout="OUT", stderr="ERR", exitcode=7, duration_seconds=1.235,
+    )
+    kwargs = run.call_args.kwargs
+    assert kwargs["timeout"] == 12.5
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+
+
+def test_run_passes_check_false_explicit() -> None:
+    """Kill the check=False → check=None mutmut.
+
+    subprocess.run(..., check=False) and subprocess.run(..., check=None)
+    behave identically at runtime (the default IS False).  The mutation is
+    "equivalent" in behaviour but the call-site *opts in* to `False`
+    explicitly so callers can decide (see the comment on line 194).
+
+    ``is False`` distinguishes the two:  ``None is False`` → False;
+    ``False is False`` → True.
+    """
+    fake_result = _ok()
+    with patch(
+        "harness_quality_gate.adapters.base.subprocess.run",
+        return_value=fake_result,
+    ) as mock_run:
+        ToolAdapter._run(["echo", "x"], cwd=Path("/tmp"))
+    # Pin the exact kwarg — kills the None mutation
+    assert mock_run.call_args.kwargs.get("check") is False
+
