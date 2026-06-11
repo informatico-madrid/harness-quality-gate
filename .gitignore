@@ -74,3 +74,8 @@ results.txt
 uv.lock
 localDocs/*
 .env
+.agents/*
+.claude/*
+.github/agents
+.opencode/
+_bmad/*
