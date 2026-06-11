@@ -10,7 +10,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+from harness_quality_gate.models import MutationStats
 from harness_quality_gate.adapters.php.infection_adapter import InfectionAdapter
 
 
@@ -146,16 +149,28 @@ def test_parse_stats_json_total_calculation() -> None:
 
 
 def test_parse_stats_json_covered_msi() -> None:
-    """Kill covered_msi=None mutation in JSON path constructor."""
+    """covered_msi is read from the JSON payload and rounded to 4 decimals."""
     json_str = json.dumps({
         "killed": 8, "survived": 2, "timed_out": 0,
-        "escaped": 0, "untested": 0, "msi": 80.0, "covered_msi": 88.88,
+        "escaped": 0, "untested": 0, "msi": 80.0, "covered_msi": 88.88004,
     })
     stats = _adapter().parse_stats(json_str)
     assert stats.msi == 80.0
-    # covered_msi is computed from the None fallback: round(None, 4) would crash
-    # instead check it's a reasonable float
-    assert isinstance(stats.covered_msi, float)
+    assert stats.covered_msi == 88.88
+
+
+def test_parse_stats_json_covered_msi_absent_defaults_to_zero() -> None:
+    """A JSON payload without covered_msi yields exactly 0.0."""
+    stats = _adapter().parse_stats(json.dumps({"killed": 8, "msi": 80.0}))
+    assert stats.covered_msi == 0.0
+
+
+def test_parse_stats_json_string_with_killed_word_uses_text_parser() -> None:
+    """A bare JSON string containing 'killed' must NOT enter the JSON branch
+    (kills the isinstance-AND-key condition mutations)."""
+    stats = _adapter().parse_stats('"7 mutants were killed"')
+    assert stats.killed == 7
+    assert stats.total == 7
 
 
 # ---------------------------------------------------------------------------
@@ -741,3 +756,208 @@ Metrics:
     assert stats.escaped == 2
     assert stats.total == 10
     assert stats.msi == 62.0
+
+
+# ---------------------------------------------------------------------------
+# v10 survivor killers — exact-equality tests
+# ---------------------------------------------------------------------------
+
+def test_version_raises_exact_message(tmp_path: Path) -> None:
+    with pytest.raises(
+        NotImplementedError,
+        match=r"^infection version detection not implemented \(POC\)$",
+    ):
+        _adapter().version(tmp_path)
+
+
+def test_invoke_default_timeout_and_lookup_key(tmp_path: Path) -> None:
+    """invoke() without kwargs must look up 'infection' and pass timeout=600.0."""
+    adapter = _adapter()
+    with (
+        patch(
+            "harness_quality_gate.adapters.php.infection_adapter.shutil.which",
+            return_value="/usr/bin/infection",
+        ) as which,
+        patch.object(adapter, "_run", return_value=MagicMock()) as run,
+    ):
+        adapter.invoke(tmp_path, [])
+    which.assert_called_once_with("infection")
+    run.assert_called_once_with(
+        ["/usr/bin/infection", "--no-progress"], cwd=tmp_path, env=None, timeout=600.0,
+    )
+
+
+def test_invoke_vendor_bin_exact_path(tmp_path: Path) -> None:
+    """Fallback must use exactly <repo>/vendor/bin/infection."""
+    adapter = _adapter()
+    vendor_bin = tmp_path / "vendor" / "bin"
+    vendor_bin.mkdir(parents=True)
+    (vendor_bin / "infection").write_text("#!/bin/sh\n")
+    with (
+        patch(
+            "harness_quality_gate.adapters.php.infection_adapter.shutil.which",
+            return_value=None,
+        ),
+        patch.object(adapter, "_run", return_value=MagicMock()) as run,
+    ):
+        adapter.invoke(tmp_path, ["--extra"])
+    assert run.call_args.args[0] == [
+        str(tmp_path / "vendor" / "bin" / "infection"), "--no-progress", "--extra",
+    ]
+
+
+def test_invoke_composer_bin_dir_exact_path(tmp_path: Path) -> None:
+    """Second fallback must use exactly <repo>/<bin-dir>/infection from composer.json."""
+    adapter = _adapter()
+    (tmp_path / "composer.json").write_text(
+        json.dumps({"config": {"bin-dir": "tools/bin"}}), encoding="utf-8",
+    )
+    custom = tmp_path / "tools" / "bin"
+    custom.mkdir(parents=True)
+    (custom / "infection").write_text("#!/bin/sh\n")
+    with (
+        patch(
+            "harness_quality_gate.adapters.php.infection_adapter.shutil.which",
+            return_value=None,
+        ),
+        patch.object(adapter, "_run", return_value=MagicMock()) as run,
+    ):
+        adapter.invoke(tmp_path, [])
+    assert run.call_args.args[0] == [
+        str(tmp_path / "tools" / "bin" / "infection"), "--no-progress",
+    ]
+
+
+def test_invoke_not_found_exact_invocation_object(tmp_path: Path) -> None:
+    """Binary nowhere → exact ToolInvocation (all four fields pinned)."""
+    from harness_quality_gate.adapters.base import ToolInvocation
+    adapter = _adapter()
+    with patch(
+        "harness_quality_gate.adapters.php.infection_adapter.shutil.which",
+        return_value=None,
+    ):
+        result = adapter.invoke(tmp_path, [])
+    assert result == ToolInvocation(
+        stdout="",
+        stderr="infection not found on PATH or in vendor/bin",
+        exitcode=3,
+        duration_seconds=0.0,
+    )
+
+
+def test_composer_bin_dir_defaults_exact(tmp_path: Path) -> None:
+    from harness_quality_gate.adapters.php.infection_adapter import _composer_bin_dir
+    # No composer.json at all → OSError path
+    assert _composer_bin_dir(tmp_path) == "vendor/bin"
+    # composer.json without "config" key
+    (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
+    assert _composer_bin_dir(tmp_path) == "vendor/bin"
+    # "config" present without "bin-dir"
+    (tmp_path / "composer.json").write_text(
+        json.dumps({"config": {"other": 1}}), encoding="utf-8",
+    )
+    assert _composer_bin_dir(tmp_path) == "vendor/bin"
+    # explicit bin-dir wins
+    (tmp_path / "composer.json").write_text(
+        json.dumps({"config": {"bin-dir": "tools"}}), encoding="utf-8",
+    )
+    assert _composer_bin_dir(tmp_path) == "tools"
+    # invalid JSON → JSONDecodeError path
+    (tmp_path / "composer.json").write_text("{not json", encoding="utf-8")
+    assert _composer_bin_dir(tmp_path) == "vendor/bin"
+
+
+def test_composer_bin_dir_reads_utf8(tmp_path: Path) -> None:
+    from pathlib import Path as _P
+    from harness_quality_gate.adapters.php.infection_adapter import _composer_bin_dir
+    (tmp_path / "composer.json").write_text(
+        json.dumps({"config": {"bin-dir": "tools"}}), encoding="utf-8",
+    )
+    original = _P.read_text
+    with patch.object(_P, "read_text", autospec=True, side_effect=original) as spy:
+        assert _composer_bin_dir(tmp_path) == "tools"
+    assert spy.call_args.kwargs == {"encoding": "utf-8"}
+
+
+def test_parse_stats_json_minimal_killed_only_exact() -> None:
+    """{"killed": 3} → every other field defaults to exactly zero."""
+    stats = _adapter().parse_stats(json.dumps({"killed": 3}))
+    assert stats == MutationStats(
+        total=3, killed=3, survived=0, timed_out=0,
+        escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+    )
+
+
+def test_text_fallback_killed_boundary_one() -> None:
+    """killed=1 without metrics lines computes MSI (kills killed>0 → >1)."""
+    stats = _adapter().parse_stats("1 mutants were killed")
+    assert stats.msi == 100.0
+    assert stats.covered_msi == 100.0
+
+
+def test_text_no_fallback_when_killed_zero_keeps_regex_covered_msi() -> None:
+    """killed=0 must NOT trigger the fallback (kills killed>0 → >=0)."""
+    stats = _adapter().parse_stats(
+        "0 mutants were killed\nCovered Code MSI: 50%",
+    )
+    assert stats.msi == 0.0
+    assert stats.covered_msi == 50.0
+
+
+def test_text_fallback_msi_rounded_to_4() -> None:
+    """1/(1+2) → 33.3333 exactly (kills round(...,4) → 5 in fallback)."""
+    stats = _adapter().parse_stats(
+        "1 mutants were killed\n2 covered mutants were not detected",
+    )
+    assert stats.msi == 33.3333
+    assert stats.covered_msi == 33.3333
+
+
+def test_text_regex_percentages_rounded_to_4() -> None:
+    stats = _adapter().parse_stats(
+        "5 mutants were killed\n"
+        "Mutation Score Indicator (MSI): 12.34567%\n"
+        "Covered Code MSI: 87.65432%",
+    )
+    assert stats.msi == 12.3457
+    assert stats.covered_msi == 87.6543
+
+
+def test_text_total_fallback_sum_exact() -> None:
+    """total absent → killed+survived+timed_out+untested with distinct values
+    (kills every +→- sign flip in the sum; errors/escaped excluded on purpose)."""
+    stats = _adapter().parse_stats(
+        "1 mutants were killed\n"
+        "2 covered mutants were not detected\n"
+        "4 time outs were encountered\n"
+        "8 mutants were not covered\n"
+        "16 errors were encountered\n"
+        "Mutation Score Indicator (MSI): 10%\n",
+    )
+    assert stats.total == 15
+    assert stats.killed == 1
+    assert stats.survived == 2
+    assert stats.timed_out == 4
+    assert stats.untested == 8
+    assert stats.escaped == 16
+
+
+def test_invoke_vendor_bin_takes_precedence_over_custom_bin_dir(tmp_path: Path) -> None:
+    """With BOTH candidates present and distinct, vendor/bin wins (pins order
+    and each path component — a custom bin-dir cannot mask vendor/bin mutations)."""
+    adapter = _adapter()
+    (tmp_path / "composer.json").write_text(
+        json.dumps({"config": {"bin-dir": "tools"}}), encoding="utf-8",
+    )
+    for d in (tmp_path / "vendor" / "bin", tmp_path / "tools"):
+        d.mkdir(parents=True)
+        (d / "infection").write_text("#!/bin/sh\n")
+    with (
+        patch(
+            "harness_quality_gate.adapters.php.infection_adapter.shutil.which",
+            return_value=None,
+        ),
+        patch.object(adapter, "_run", return_value=MagicMock()) as run,
+    ):
+        adapter.invoke(tmp_path, [])
+    assert run.call_args.args[0][0] == str(tmp_path / "vendor" / "bin" / "infection")

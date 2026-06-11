@@ -892,14 +892,15 @@ class TestInfectionAdapterExtras:
 # ===========================================================================
 
 class TestConfig:
-    def test_validate_allow_ramp_still_raises(self):
+    def test_validate_lowered_threshold_always_raises(self):
+        """Lowered Infection thresholds are rejected unconditionally (TD-10)."""
         from harness_quality_gate.config import validate, ConfigInvalid
         raw = {
             "schema_version": 2,
             "infection": {"thresholds": {"min_msi": 80.0}},
         }
-        with pytest.raises(ConfigInvalid):
-            validate(raw, allow_ramp=True)
+        with pytest.raises(ConfigInvalid, match=r"min_msi=80\.0 < 100"):
+            validate(raw)
 
     def test_validate_schema_v1_raises(self):
         from harness_quality_gate.config import validate, ConfigInvalid

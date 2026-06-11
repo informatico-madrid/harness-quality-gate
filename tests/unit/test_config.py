@@ -304,11 +304,10 @@ def test_load_from_config_subdir(tmp_path: Path) -> None:
     assert loaded.schema_version == 2
 
 
-def test_load_allow_ramp_with_lowered_threshold_still_rejects(tmp_path: Path) -> None:
-    """Kill 'if not allow_ramp' → 'if allow_ramp' inversion.
-    Even with allow_ramp=True, lowered thresholds must raise ConfigInvalid.
-    """
+def test_load_lowered_threshold_always_rejects(tmp_path: Path) -> None:
+    """Lowered thresholds raise ConfigInvalid unconditionally, with the exact
+    Spanish message (kills t()-key and val-kwarg mutations)."""
     cfg = _make_v2_config({"infection": {"thresholds": {"min_msi": 80.0}}})
     _write_yaml(tmp_path, ".quality-gate.yaml", cfg)
-    with pytest.raises(ConfigInvalid):
-        load(tmp_path, allow_ramp=True)
+    with pytest.raises(ConfigInvalid, match=r"min_msi=80\.0 < 100 — permitido solo con --allow-ramp y override"):
+        load(tmp_path)

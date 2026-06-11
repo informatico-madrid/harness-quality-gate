@@ -680,6 +680,75 @@ repo las causas reales han sido, por frecuencia:
 
 ---
 
+## H13. `monkeypatch.chdir` rompe la recolección de stats de mutmut
+
+Síntoma real (2026-06-11): `failed to collect stats. runner returned 1` con
+`FileNotFoundError: .../tmp_path/harness_quality_gate` — mutmut resuelve las
+rutas de los módulos mutados RELATIVAS al cwd, y un test que hace
+`monkeypatch.chdir(tmp_path)` se lo cambia a mitad de recolección.
+- **Prohibido `chdir` en tests unitarios** de este repo. Para matar un
+  `default="."` de argparse: spy sobre el comando despachado y assert
+  `args.repo == "."` (sin tocar el cwd).
+
+## H14. La trampa del XX-wrap: el substring ingenuo NO mata strings
+
+mutmut envuelve strings como `XXfooXX` — y `"foo" in out` SIGUE PASANDO
+porque el original está contenido en el mutante. Tres niveles de solución:
+1. **Igualdad exacta** del valor (`==`) — siempre que el valor completo sea
+   estable (p. ej. snapshot del catálogo `MSG` en messages_es).
+2. **Literal anclado con delimitadores** que el wrap rompe:
+   `"Run all quality-gate layers\n" in out` falla con `"XX...XX\n"` (el XX se
+   interpone ante el `\n`). Mata wrap + case sin acoplarse a mutmut.
+3. `assert "XX" not in out` — red de seguridad acoplada al esquema de mutmut;
+   solo como complemento, nunca como assert principal (preferencia del
+   proyecto: literales anclados).
+
+## H15. Gemelos falsy en inicializadores (`None`→`""`, `False`→`None`, `[]`→`None`)
+
+mutmut muta el valor inicial de una variable a otro valor FALSY
+(`x = None` → `x = ""`). Si todos los consumidores usan truthiness
+(`if x:`), el gemelo es estructuralmente equivalente y NINGÚN test lo mata.
+- **Solución**: cambia los consumidores a identidad: `if x is not None:`.
+  Con eso el gemelo `""` entra en la rama y se vuelve observable (una clave
+  extra en el dict de salida, un crash de atributo…) → test lo mata.
+- **Flags booleanos** (`ok = False` → `None`): no hay check que distinga
+  `False` de `None` por truthiness. Elimina el flag: deriva la condición del
+  dato real (p. ej. guarda el resultado en `remediation: dict | None = None`
+  y comprueba `is not None`), como se hizo en `php_adapter.run_l1`.
+- Caso real: `php_adapter.run_l1` tenía 3 gemelos supervivientes
+  (`mutation_stats`, `mutation_skipped`, `mutation_gate_failed`); los tres
+  cayeron con este patrón sin cambiar el comportamiento.
+
+## H16. Exit -24 (SIGXCPU) en runs paralelos: casi siempre es flake, no timeout
+
+Con `--max-children` alto, algunos mutantes terminan con exit `-24` (límite
+de CPU del worker) aunque sus tests los matan en <2s. Antes de tratarlos como
+⏰ reales:
+```bash
+cd mutants && MUTANT_UNDER_TEST=<id-completo> python -m pytest tests/unit/<archivo> -x -q
+```
+Si falla rápido → flake del paralelismo; se resolverá en el run final (o
+re-ejecutando el módulo). Si de verdad cuelga → Tipo I (§5).
+
+## Protocolo de medición fiable (aprendido a base de números absurdos)
+
+1. **Si cambiaste CÓDIGO FUENTE**: `make clean-mutmut` SIEMPRE antes de medir.
+   `mutation-path` no borra `mutants/` y la regeneración incremental deja
+   metas parciales (31 mutantes donde había 294).
+2. **Regenera `.coverage`** tras cambiar fuente
+   (`pytest tests/unit/ --cov=harness_quality_gate --cov-report=`): el
+   preflight de los targets NO lo hace, y con `mutate_only_covered_lines`
+   un coverage rancio descarta mutantes en silencio.
+3. **Si solo cambiaste TESTS**: run incremental directo
+   (`mutmut run "modulo*"`) — mutmut detecta los tests nuevos y re-evalúa.
+4. **Números absurdos pese a todo** (menos mutantes de los esperados, 0
+   mutantes, funciones enteras ausentes del meta): reinstala mutmut
+   (`pip uninstall -y mutmut && pip install "mutmut>=3.5"`) — regla del
+   proyecto, confirmada de nuevo el 2026-06-11.
+5. La verdad por archivo está en `mutants/<ruta>.py.meta`
+   (`exit_code_by_key`: 0=survived, 1=killed, -24=ver H16);
+   `scripts/extract_survivors.py` la resume por método.
+
 ## Fuentes
 
 - [mutmut — documentación oficial](https://mutmut.readthedocs.io/en/latest/index.html) (operadores, pragmas, `browse`/`apply`)

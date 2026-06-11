@@ -109,3 +109,61 @@ def test_t_err_config_ramp() -> None:
     """err.config.ramp with min_msi value."""
     result = t("err.config.ramp", val=90.0)
     assert "90" in result
+
+
+# ---------------------------------------------------------------------------
+# Catalog snapshot — the messages are USER CONTRACT (guide §5 Tipo H):
+# any wording change must be deliberate and updated here in the same commit.
+# Kills every key/value string mutation in the catalog.
+# ---------------------------------------------------------------------------
+
+EXPECTED_MSG = {
+    'TOOL_MISSING': 'Herramienta requerida no encontrada: {tool}',
+    'INFRA_OK': 'Todas las herramientas están instaladas',
+    'DETECT_SUCCESS': 'Lenguaje detectado: {language} (confianza: {confidence:.1%})',
+    'DETECT_HYBRID': 'Repositorio híbrido detectado: {languages}',
+    'LAYER_COMPLETE': 'Capa {layer} completada: {result}',
+    'LAYER_FAILED': 'La capa {layer} no pasó: {count} hallazgos',
+    'DOCTOR_WARN_XDEBUG_PCOV': '¡ADVERTENCIA! PCOV y Xdebug están ambos habilitados. Solo uno debe estar activo.',
+    'E1': 'No se detectó Python ni PHP — añada `.quality-gate-lang`',
+    'E2': 'PHP 8.2+ requerido — instale via gestor de paquetes',
+    'E3': 'Composer no encontrado y descarga de PHAR falló: {tool}',
+    'E4': 'Herramienta crítica faltante: {tool} — ejecute `install-tools`',
+    'E5': 'Paquete opcional ausente: {tool} (continuando)',
+    'E6': 'MSI = {msi} (< 100) — {escaped} mutantes escapados',
+    'E7': 'Covered MSI = {covered_msi} (< 100)',
+    'E8': 'Ignore sin justificación añadida en {file}:{line}',
+    'E9': 'Esquema v1 ya no soportado. v2.0.0 es la primera versión pública',
+    'E10': 'Umbral de MSI no puede bajar de 100 — revise política',
+    'E11': 'PCOV ausente — usando Xdebug (2.8× más lento)',
+    'E12': 'PCOV y Xdebug ambos activos — desactive Xdebug para Infection',
+    'E13': 'Pest sin plugin de mutación — saltando Infection',
+    'E14': 'PHAR corrupto: {tool} — checksum no coincide',
+    'E15': '',
+    'E16': '',
+    'E17': 'Herramienta {tool} excedió timeout {seconds}s',
+    'E18': 'Checkpoint v2 no valida — error interno',
+    'E19': 'Error interno: {exc}',
+    'err.lang.unsupported': 'No se detectó un lenguaje soportado en {repo}',
+    'err.tool.missing': 'Herramienta requerida no encontrada: {tool}',
+    'err.tool.timeout': 'Tiempo de espera agotado para {tool} (>{timeout}s)',
+    'err.tool.exit_nonzero': '{tool} exitó con código {code}: {stderr}',
+    'err.parser.bad_json': 'JSON inválido de {tool}: {error}',
+    'err.parser.missing_file': 'Archivo inexistente en output de {tool}: {path}',
+    'err.schema.invalid': 'Schemas inválido: {error}',
+    'err.schema.missing': 'Campo obligatorio faltante en schema: {field}',
+    'err.config.v1': 'Configuración v1 obsoleta: {path}. Actualice a v2.',
+    'err.config.ramp': 'min_msi={val} < 100 — permitido solo con --allow-ramp y override',
+    'err.mutation.timeout': 'Mutation timeout: {killed}/{total} en {sec}s',
+    'err.mutation.msi': 'MSI={msi:.1%} < mínimo={min:.1%}',
+    'err.mutation.covered': 'Covered MSI={msi:.1%} < mínimo={min:.1%}',
+    'err.checkpoint.write': 'Error escribiendo checkpoint: {path}',
+    'err.checkpoint.schema': 'Validación schema fallida: {error}',
+    'err.discovery.tool': 'No se encontró herramienta {tool} en {paths}',
+    'err.cache.corrupt': 'Cache corrupto: {path}',
+    'err.concurrent.pool': 'Error creando ThreadPoolExecutor: {error}',
+    'err.framework.unknown': 'Framework desconocido: {framework}',
+}
+
+def test_msg_catalog_snapshot_exact() -> None:
+    assert MSG == EXPECTED_MSG

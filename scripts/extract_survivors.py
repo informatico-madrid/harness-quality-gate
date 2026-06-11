@@ -40,7 +40,11 @@ def main(meta_rel_path: str, with_code: bool = False) -> None:
     by_method: dict[str, list[tuple[int, str]]] = defaultdict(list)
     for k, v in exit_codes.items():
         if v == 0:  # survived
+            # Class methods: ...xǁClassǁmethod__mutmut_N
             m = re.search(r"ǁ\w+ǁ(\w+)__mutmut_(\d+)", k)
+            if m is None:
+                # Module-level functions: ...x_name__mutmut_N
+                m = re.search(r"\.x_(\w+?)__mutmut_(\d+)$", k)
             if m:
                 method, num = m.group(1), int(m.group(2))
                 by_method[method].append((num, k))

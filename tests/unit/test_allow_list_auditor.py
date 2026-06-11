@@ -318,10 +318,12 @@ def test_default_language_is_php(tmp_path: Path) -> None:
 
 
 def test_unknown_language_returns_zero_ignored_count(tmp_path: Path) -> None:
-    """Kill ignored_count=0→1 in unknown-language early return."""
+    """Pin the full unknown-language early-return report (all four fields)."""
     report = AllowListAuditor(language="cobol").audit(tmp_path)
     assert report.exit_code == 0
     assert report.ignored_count == 0
+    assert report.summary == "Unknown language: cobol"
+    assert report.findings == []
 
 
 # ---------------------------------------------------------------------------

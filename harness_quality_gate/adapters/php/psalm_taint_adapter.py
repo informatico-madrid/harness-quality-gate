@@ -213,7 +213,7 @@ class PsalmTaintAdapter(ToolAdapter):
                         file_name=item.get("file_name", ""),
                         line=item.get("line_from"),
                         taint_type=raw_type,
-                        message=item.get("message", ""),
+                        message=item.get("message"),
                         severity=item.get("severity", "error"),
                     )
                 )
@@ -225,7 +225,7 @@ class PsalmTaintAdapter(ToolAdapter):
             for filepath, file_data in files.items():
                 if not isinstance(file_data, dict):
                     continue
-                errors = file_data.get("psalmErrors", [])
+                errors = file_data.get("psalmErrors")
                 if not isinstance(errors, list):
                     continue
                 for err in errors:
@@ -242,7 +242,7 @@ class PsalmTaintAdapter(ToolAdapter):
                             file_name=filepath,
                             line=err.get("line_from"),
                             taint_type=raw_type,
-                            message=err.get("message", ""),
+                            message=err.get("message"),
                             severity=err.get("severity", "error"),
                         )
                     )
@@ -255,7 +255,7 @@ class PsalmTaintAdapter(ToolAdapter):
         file_name: str,
         line: int | None,
         taint_type: str,
-        message: str,
+        message: str | None,
         severity: str,
     ) -> Finding:
         """Build a :class:`Finding` from a single Psalm taint issue."""

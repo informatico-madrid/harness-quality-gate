@@ -99,22 +99,18 @@ def _find_config_path(repo: Path) -> Path | None:
     return None
 
 
-# reason: allow_ramp=False default — all callers pass this kwarg explicitly.
-# Mutating the default (False→True) has no observable effect on any caller path.
-# audited: 2026-06-04
-def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mutate
+def validate(raw: dict) -> Config:
     """Validate raw config dict and return a ``Config`` instance.
 
     Args:
         raw: Parsed YAML dict.
-        allow_ramp: Whether ``--allow-ramp`` CLI flag was provided.
 
     Returns:
         A validated ``Config`` dataclass.
 
     Raises:
         ConfigInvalid: If schema_version is not 2, or thresholds
-        are lowered without proper override.
+        are lowered (never allowed — see TD-10).
     """
     # --- schema_version check ---
     schema_version = raw.get("schema_version")
@@ -131,18 +127,11 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
     min_covered_msi = thresholds_raw.get("min_covered_msi", 100.0)
 
     if min_msi < 100.0 or min_covered_msi < 100.0:
-        # Structurally equivalent: message-string mutations produce ConfigInvalid either way.
-        # audited: 2026-06-04
-        # pragma: no mutate block
-        if not allow_ramp:
-            raise ConfigInvalid(t("err.config.ramp", val=min_msi))
+        # Policy: lowered Infection thresholds are ALWAYS rejected — --allow-ramp
+        # does not bypass this gate (pinned by
+        # test_load_allow_ramp_with_lowered_threshold_still_rejects).
         raise ConfigInvalid(t("err.config.ramp", val=min_msi))
 
-    # Build thresholds — key mutations are equivalent: when key absent, raw.get() returns {}
-    # regardless of key string. Presence-with-value is tested by passthrough_fields test.
-    # Float conversions for min_msi/min_covered are equivalent: min_msi is already float.
-    # audited: 2026-06-04
-    # pragma: no mutate block
     thresholds = _Thresholds(
         min_msi=float(min_msi),
         min_covered_msi=float(min_covered_msi),
@@ -180,12 +169,11 @@ def validate(raw: dict, *, allow_ramp: bool = False) -> Config:  # pragma: no mu
     )
 
 
-def load(repo: Path, *, allow_ramp: bool = False) -> Config:
+def load(repo: Path) -> Config:
     """Load and validate a v2 quality-gate config from ``repo``.
 
     Args:
         repo: Path to the repository root.
-        allow_ramp: Whether ``--allow-ramp`` CLI flag was provided.
 
     Returns:
         A validated ``Config`` dataclass.
@@ -208,6 +196,4 @@ def load(repo: Path, *, allow_ramp: bool = False) -> Config:
     ) or {}
     raw = cast(dict, _expand_env_vars(raw))
 
-    # Expand skill_dir and composer_home from resolved env values
-    config = validate(raw, allow_ramp=allow_ramp)
-    return config
+    return validate(raw)

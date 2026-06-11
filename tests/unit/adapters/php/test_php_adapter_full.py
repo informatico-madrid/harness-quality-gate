@@ -5018,3 +5018,430 @@ class TestRunL1MutantKilling:
         result = adapter.run_l1(tmp_path, {})
         # round(0.0001, 3) = 0.0  (kills round(_,4) → 0.0001)
         assert result.duration_sec == 0.0
+
+# ===========================================================================
+# v10 survivor killers — exact-equality tests (guide §4.1/§4.3/§4.4, H2/H3)
+# ===========================================================================
+
+_LOGGER = "harness_quality_gate.adapters.php.php_adapter"
+
+
+def _messages(caplog):
+    return [r.getMessage() for r in caplog.records]
+
+
+class TestRunL4SurvivorKillers:
+    def test_l4_exact_tool_invocations_and_parse_passthrough(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        env = {"K": "V"}
+        for i, attr in enumerate((
+            "_psalm_taint", "_composer_audit", "_security_checker",
+            "_dead_code", "_dep_analyser", "_deptrac",
+        )):
+            tool = getattr(adapter, attr)
+            tool.invoke.return_value = MagicMock(
+                stdout=f"out-{i}", stderr=f"err-{i}", exitcode=i,
+            )
+            tool.parse.return_value = []
+        with caplog.at_level(logging.INFO, logger=_LOGGER), patch(
+            "harness_quality_gate.adapters.php.php_adapter.time.monotonic",
+            side_effect=[10.0, 11.23456],
+        ):
+            result = adapter.run_l4(tmp_path, env)
+
+        adapter._psalm_taint.invoke.assert_called_once_with(
+            tmp_path, ["--taint-analysis", "--no-progress"], env=env, timeout=600.0,
+        )
+        adapter._composer_audit.invoke.assert_called_once_with(
+            tmp_path, ["--format=json", "--no-dev"], env=env, timeout=300.0,
+        )
+        adapter._security_checker.invoke.assert_called_once_with(
+            tmp_path, ["--format=json"], env=env, timeout=300.0,
+        )
+        adapter._dead_code.invoke.assert_called_once_with(
+            tmp_path, ["--format=json"], env=env, timeout=300.0,
+        )
+        adapter._dep_analyser.invoke.assert_called_once_with(
+            tmp_path, ["--format=json"], env=env, timeout=300.0,
+        )
+        adapter._deptrac.invoke.assert_called_once_with(
+            tmp_path, ["--formatter=json"], env=env, timeout=300.0,
+        )
+        for i, attr in enumerate((
+            "_psalm_taint", "_composer_audit", "_security_checker",
+            "_dead_code", "_dep_analyser", "_deptrac",
+        )):
+            getattr(adapter, attr).parse.assert_called_once_with(
+                f"out-{i}", f"err-{i}", i,
+            )
+        assert _messages(caplog) == [
+            "L4 Psalm taint: 0 findings",
+            "L4 composer-audit: 0 findings",
+            "L4 security-checker: 0 findings",
+            "L4 dead-code: 0 findings",
+            "L4 dep-analyser: 0 findings",
+            "L4 deptrac: 0 findings",
+        ]
+        assert result.duration_sec == 1.235
+
+    def test_l4_skip_paths_exact_warnings(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        for attr, tag in (
+            ("_psalm_taint", "psalm"), ("_composer_audit", "audit"),
+            ("_security_checker", "checker"), ("_dead_code", "dead"),
+            ("_dep_analyser", "dep"), ("_deptrac", "deptrac"),
+        ):
+            getattr(adapter, attr).invoke.side_effect = RuntimeError(f"boom-{tag}")
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            result = adapter.run_l4(tmp_path, {})
+        assert _messages(caplog) == [
+            "L4 Psalm taint skipped: boom-psalm",
+            "L4 composer-audit skipped: boom-audit",
+            "L4 security-checker skipped: boom-checker",
+            "L4 dead-code skipped: boom-dead",
+            "L4 dep-analyser skipped: boom-dep",
+            "L4 deptrac skipped: boom-deptrac",
+        ]
+        assert result.passed is True
+        assert result.findings == []
+
+
+class TestRunL2SurvivorKillers:
+    def test_l2_exact_invocation_parse_log_and_duration(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        env = {"E": "1"}
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout="AP-OUT", stderr="", exitcode=0,
+        )
+        f = Finding(node="a.php", severity="error", message="m")
+        adapter._antipattern.parse.return_value = [f, f]
+        with caplog.at_level(logging.INFO, logger=_LOGGER), patch(
+            "harness_quality_gate.adapters.php.php_adapter.time.monotonic",
+            side_effect=[10.0, 11.23456],
+        ):
+            result = adapter.run_l2(tmp_path, env)
+        adapter._antipattern.invoke.assert_called_once_with(
+            tmp_path, [], env=env, timeout=300.0,
+        )
+        adapter._antipattern.parse.assert_called_once_with("AP-OUT")
+        assert _messages(caplog) == ["L2 antipattern-tier-A: 2 findings"]
+        assert result.duration_sec == 1.235
+        assert result.passed is False
+        assert result.findings == [f, f]
+
+    def test_l2_skip_path_exact_warning(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        adapter._antipattern.invoke.side_effect = RuntimeError("ap-boom")
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            result = adapter.run_l2(tmp_path, {})
+        assert _messages(caplog) == ["L2 antipattern-tier-A skipped: ap-boom"]
+        assert result.passed is True
+
+
+class TestRunL1SurvivorKillers:
+    def test_msi_rounded_to_4_decimals_in_tool_specific(self, tmp_path):
+        stats = MutationStats(
+            total=10, killed=9, survived=1, timed_out=0, escaped=0,
+            untested=0, msi=99.123456, covered_msi=88.987654,
+        )
+        adapter = _make_mock_adapter(
+            infection_stats=stats, infection_exitcode=1,
+            infection_stdout="Mutation Score Indicator (MSI): 99.123456%",
+        )
+        result = adapter.run_l1(tmp_path, {})
+        mut = result.tool_specific["mutation"]
+        assert mut["msi"] == 99.1235
+        assert mut["covered_msi"] == 88.9877
+        # remediation keeps the raw (unrounded) values
+        rem = result.tool_specific["remediation"]
+        assert rem["msi"] == 99.123456
+        assert rem["covered_msi"] == 88.987654
+
+    def test_infection_required_but_unavailable_finding_and_log(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        adapter._run_infection = MagicMock(return_value=None)
+        with caplog.at_level(logging.ERROR, logger=_LOGGER):
+            result = adapter.run_l1(tmp_path, {"HARNESS_INFECTION_REQUIRED": "1"})
+        nodes = [f.node for f in result.findings]
+        assert "infection" in nodes
+        assert (
+            "L1 Infection required but unavailable (HARNESS_INFECTION_REQUIRED=1)"
+            in _messages(caplog)
+        )
+        assert "mutation" not in (result.tool_specific or {})
+
+    def test_mutation_exception_exact_warning(self, tmp_path, caplog):
+        adapter = _make_mock_adapter()
+        adapter._run_infection = MagicMock(side_effect=RuntimeError("mut-boom"))
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            result = adapter.run_l1(tmp_path, {})
+        assert "L1 mutation testing skipped: mut-boom" in _messages(caplog)
+        assert result.layer == "L1"
+
+    def test_l1_duration_exact(self, tmp_path):
+        adapter = _make_mock_adapter(
+            infection_stats=MutationStats(
+                total=1, killed=1, survived=0, timed_out=0, escaped=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        with patch(
+            "harness_quality_gate.adapters.php.php_adapter.time.monotonic",
+            side_effect=[10.0, 11.23456],
+        ):
+            result = adapter.run_l1(tmp_path, {})
+        assert result.duration_sec == 1.235
+        # A clean run must not leak skip/remediation keys (kills the
+        # None→"" / flag-twin mutations on the initialisers).
+        assert "mutation_skipped" not in result.tool_specific
+        assert "remediation" not in result.tool_specific
+        assert "mutation" in result.tool_specific
+
+
+class TestRunInfectionSurvivorKillers:
+    def _adapter(self, **kw):
+        adapter = _make_mock_adapter(**kw)
+        adapter._pcov_initial_tests_option = MagicMock(return_value="")
+        return adapter
+
+    def test_exact_base_args(self, tmp_path):
+        adapter = self._adapter(
+            infection_stdout="6 mutants were killed", infection_exitcode=0,
+            infection_stats=MutationStats(
+                total=6, killed=6, survived=0, timed_out=0, escaped=0,
+                untested=0, msi=100.0, covered_msi=100.0,
+            ),
+        )
+        env = {"X": "1"}
+        stats = adapter._run_infection(tmp_path, env, False)
+        adapter._infection.invoke.assert_called_once_with(
+            tmp_path,
+            ["--no-progress", "--threads=max", "--min-msi=100", "--min-covered-msi=100"],
+            env=env, timeout=600.0,
+        )
+        adapter._infection.parse.assert_called_once_with(
+            "6 mutants were killed", "", 0,
+        )
+        assert stats is adapter._infection.parse.return_value
+
+    def test_pcov_flag_appended(self, tmp_path):
+        adapter = self._adapter(infection_stdout="6 mutants were killed")
+        adapter._pcov_initial_tests_option = MagicMock(return_value="-dextension=/x/pcov.so")
+        adapter._run_infection(tmp_path, {}, False)
+        args = adapter._infection.invoke.call_args.args[1]
+        assert args[-1] == "--initial-tests-php-options=-dextension=/x/pcov.so"
+
+    def test_pest_framework_flag_appended(self, tmp_path):
+        adapter = self._adapter(infection_stdout="6 mutants were killed")
+        adapter._run_infection(tmp_path, {}, True)
+        args = adapter._infection.invoke.call_args.args[1]
+        assert args[-1] == "--test-framework=pest"
+
+    def test_binary_missing_exitcode3_returns_none(self, tmp_path, caplog):
+        adapter = self._adapter(infection_stdout="   ", infection_exitcode=3)
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            assert adapter._run_infection(tmp_path, {}, False) is None
+        assert "Infection unavailable (exitcode=3, no output)" in _messages(caplog)
+
+    @pytest.mark.parametrize("marker", [
+        "Mutation Score Indicator",
+        "mutations were generated",
+        "mutants were killed",
+    ])
+    def test_each_stats_marker_recognised(self, tmp_path, marker):
+        adapter = self._adapter(
+            infection_stdout=f"... {marker} ...", infection_exitcode=1,
+        )
+        stats = adapter._run_infection(tmp_path, {}, False)
+        assert stats is adapter._infection.parse.return_value
+        adapter._infection.parse.assert_called_once()
+
+    def test_infra_error_exact_log_with_stderr(self, tmp_path, caplog):
+        adapter = self._adapter(
+            infection_stdout="no stats here", infection_exitcode=1,
+            infection_stderr="err-text",
+        )
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            assert adapter._run_infection(tmp_path, {}, False) is None
+        assert _messages(caplog) == [
+            "Infection infra error (exitcode=1, no stats): err-text",
+        ]
+
+    def test_infra_error_falls_back_to_stdout_when_no_stderr(self, tmp_path, caplog):
+        adapter = self._adapter(
+            infection_stdout="boom-out", infection_exitcode=2, infection_stderr="",
+        )
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            assert adapter._run_infection(tmp_path, {}, False) is None
+        assert _messages(caplog) == [
+            "Infection infra error (exitcode=2, no stats): boom-out",
+        ]
+
+    def test_infra_error_truncates_to_200_chars(self, tmp_path, caplog):
+        adapter = self._adapter(
+            infection_stdout="x", infection_exitcode=1, infection_stderr="e" * 250,
+        )
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            adapter._run_infection(tmp_path, {}, False)
+        assert _messages(caplog) == [
+            "Infection infra error (exitcode=1, no stats): " + "e" * 200,
+        ]
+
+    def test_exitcode_zero_without_stats_still_parses(self, tmp_path):
+        adapter = self._adapter(infection_stdout="clean", infection_exitcode=0)
+        stats = adapter._run_infection(tmp_path, {}, False)
+        adapter._infection.parse.assert_called_once_with("clean", "", 0)
+        assert stats is adapter._infection.parse.return_value
+
+
+class TestToolDiscoverySurvivorKillers:
+    def _named_tools(self, adapter, *, failing=()):
+        for attr, name in (("_phpstan", "phpstan"), ("_phpmd", "phpmd"), ("_cs_fixer", "php-cs-fixer")):
+            tool = MagicMock()
+            tool.name = name
+            if name in failing:
+                tool.version.side_effect = RuntimeError("missing")
+            else:
+                tool.version.return_value = "1.0"
+            setattr(adapter, attr, tool)
+
+    def test_tool_versions_passes_cwd_and_env(self):
+        adapter = _make_mock_adapter()
+        self._named_tools(adapter)
+        versions = adapter.tool_versions()
+        assert versions == {"phpstan": "1.0", "phpmd": "1.0", "php-cs-fixer": "1.0"}
+        for attr in ("_phpstan", "_phpmd", "_cs_fixer"):
+            getattr(adapter, attr).version.assert_called_once_with(Path.cwd(), env={})
+
+    def test_tool_versions_missing_marker(self):
+        adapter = _make_mock_adapter()
+        self._named_tools(adapter, failing=("phpmd",))
+        assert adapter.tool_versions() == {
+            "phpstan": "1.0", "phpmd": "MISSING", "php-cs-fixer": "1.0",
+        }
+
+    def test_check_tools_passes_cwd_and_env(self):
+        adapter = _make_mock_adapter()
+        self._named_tools(adapter)
+        assert adapter.check_tools() == ["phpstan", "phpmd", "php-cs-fixer"]
+        for attr in ("_phpstan", "_phpmd", "_cs_fixer"):
+            getattr(adapter, attr).version.assert_called_once_with(Path.cwd(), env={})
+
+    def test_check_tools_exact_missing_message(self):
+        adapter = _make_mock_adapter()
+        self._named_tools(adapter, failing=("phpstan", "phpmd"))
+        with pytest.raises(RuntimeError, match=r"^Missing PHP tool\(s\): phpstan, phpmd$"):
+            adapter.check_tools()
+
+
+class TestMutationRemediationSurvivorKillers:
+    def test_full_dict_exact_with_all_issues(self):
+        stats = MutationStats(
+            total=10, killed=5, survived=1, timed_out=2, escaped=1,
+            untested=1, msi=97.5, covered_msi=98.25,
+        )
+        result = PhpAdapter._mutation_remediation(stats)
+        assert result == {
+            "skill": "mutation-testing-guide",
+            "guide": "MUTANT_KILLING_GUIDE_PHP.md",
+            "instructions": "SUBAGENT_MUTATION_INSTRUCTIONS.md",
+            "summary": (
+                "L1 Infection gate FAILED — 1 mutant(s) escaped, "
+                "2 mutant(s) timed out, MSI 97.5% < 100%, covered MSI 98.2% < 100%. "
+                "Read skill 'mutation-testing-guide' or MUTANT_KILLING_GUIDE_PHP.md. "
+                "Priority: assertSame not assertEquals (T1), strict mock "
+                "expects()->with(identicalTo()) (T2), full coverage before killing (T3). "
+                "Iterate with: vendor/bin/infection --filter=<file> --show-mutations."
+            ),
+            "msi": 97.5,
+            "covered_msi": 98.25,
+            "escaped": 1,
+            "timed_out": 2,
+        }
+
+    def test_boundaries_at_100_produce_no_issues(self):
+        stats = MutationStats(
+            total=10, killed=10, survived=0, timed_out=0, escaped=0,
+            untested=0, msi=100.0, covered_msi=100.0,
+        )
+        result = PhpAdapter._mutation_remediation(stats)
+        assert result["summary"].startswith("L1 Infection gate FAILED — . ")
+
+
+class TestPcovOptionSurvivorKillers:
+    def test_pcov_loaded_short_circuits_before_glob(self):
+        completed = MagicMock(stdout="PCov enabled\n", returncode=0)
+        with (
+            patch("subprocess.run", return_value=completed),
+            patch("glob.glob") as glob_mock,
+        ):
+            assert PhpAdapter()._pcov_initial_tests_option() == ""
+        glob_mock.assert_not_called()
+
+    def test_glob_patterns_exact_order_and_result(self):
+        completed = MagicMock(stdout="no coverage modules", returncode=0)
+        with (
+            patch("subprocess.run", return_value=completed),
+            patch("glob.glob", side_effect=[[], ["/usr/lib/php/8.3/pcov.so"]]) as glob_mock,
+        ):
+            opt = PhpAdapter()._pcov_initial_tests_option()
+        assert opt == "-dextension=/usr/lib/php/8.3/pcov.so"
+        assert [c.args[0] for c in glob_mock.call_args_list] == [
+            "/tmp/pcov-extract/usr/lib/php/*/pcov.so",
+            "/usr/lib/php/*/pcov.so",
+        ]
+
+    def test_first_glob_hit_wins(self):
+        completed = MagicMock(stdout="none", returncode=0)
+        with (
+            patch("subprocess.run", return_value=completed),
+            patch("glob.glob", side_effect=[["/tmp/pcov-extract/usr/lib/php/8.3/pcov.so"]]),
+        ):
+            opt = PhpAdapter()._pcov_initial_tests_option()
+        assert opt == "-dextension=/tmp/pcov-extract/usr/lib/php/8.3/pcov.so"
+
+
+class TestDetectFrameworksSurvivorKillers:
+    def test_read_text_called_with_utf8(self, tmp_path):
+        (tmp_path / "composer.json").write_text(
+            json.dumps({"require": {"laravel/framework": "^11"}}), encoding="utf-8",
+        )
+        original = Path.read_text
+        with patch.object(Path, "read_text", autospec=True, side_effect=original) as spy:
+            detected = PhpAdapter.detect_frameworks(tmp_path)
+        assert detected == {"laravel": ["larastan"]}
+        assert spy.call_args.kwargs == {"encoding": "utf-8"}
+
+    def test_require_and_require_dev_merged(self, tmp_path):
+        (tmp_path / "composer.json").write_text(json.dumps({
+            "require": {"symfony/framework-bundle": "^7"},
+            "require-dev": {"laravel/framework": "^11"},
+        }), encoding="utf-8")
+        assert PhpAdapter.detect_frameworks(tmp_path) == {
+            "symfony": ["phpstan-symfony"],
+            "laravel": ["larastan"],
+        }
+
+
+class TestCollectTestFilesSurvivorKillers:
+    def test_vendor_entry_mid_iteration_does_not_stop_collection(self, tmp_path):
+        valid1 = tmp_path / "a" / "one.php"
+        vendored = tmp_path / "vendor" / "skip.php"
+        valid2 = tmp_path / "z" / "two.php"
+        with patch.object(Path, "rglob", return_value=iter([valid1, vendored, valid2])):
+            files = PhpAdapter._collect_test_files(tmp_path)
+        assert files == sorted([valid1, valid2])
+
+
+class TestAntipatternHelperSurvivorKillers:
+    def test_parse_receives_invocation_stdout(self, tmp_path):
+        adapter = _make_mock_adapter()
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout="AP-STDOUT", stderr="", exitcode=0,
+        )
+        env = {"A": "B"}
+        adapter._antipattern_invoke_and_parse(tmp_path, env)
+        adapter._antipattern.invoke.assert_called_once_with(
+            tmp_path, args=["analyse"], env=env,
+        )
+        adapter._antipattern.parse.assert_called_once_with("AP-STDOUT")

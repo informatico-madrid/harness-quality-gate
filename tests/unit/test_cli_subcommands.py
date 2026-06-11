@@ -113,39 +113,26 @@ class TestAsdict:
 # ---------------------------------------------------------------------------
 
 class TestExitWith:
-    def test_json_mode_dict(self, capsys):
-        _exit_with(PASS, {"key": "val"}, json_mode=True)
-        assert json.loads(capsys.readouterr().out) == {"key": "val"}
+    def test_dict_payload_prints_exact_json(self, capsys):
+        """Pin the exact serialised output: kills indent=2 and quiet-inversion mutations."""
+        _exit_with(PASS, {"key": "val"}, quiet=False)
+        assert capsys.readouterr().out == '{\n  "key": "val"\n}\n'
 
-    def test_json_output_uses_indent_2(self, capsys):
-        """Kill indent=2→None mutation: output must be pretty-printed (has newlines)."""
-        _exit_with(PASS, {"key": "val"}, json_mode=True)
-        out = capsys.readouterr().out
-        assert "\n" in out  # indent=None produces a single line; indent=2 adds newlines
-
-    def test_non_json_dict_prints_json(self, capsys):
-        _exit_with(PASS, {"x": 1}, json_mode=False)
-        assert '"x": 1' in capsys.readouterr().out
-
-    def test_non_json_str_prints_string_not_none(self, capsys):
-        """Kill print(payload)→print(None) mutation: str payload printed as-is."""
-        _exit_with(PASS, "hello-world", json_mode=False)
-        out = capsys.readouterr().out
-        assert "hello-world" in out
-        assert "None" not in out
-
-    def test_default_quiet_is_false_output_produced(self, capsys):
-        """Kill quiet default False→True mutation: output must appear by default."""
-        _exit_with(PASS, {"k": "v"})
-        assert capsys.readouterr().out != ""
+    def test_dataclass_payload_serialised_as_dict(self, capsys):
+        from harness_quality_gate.allow_list_auditor import AuditReport
+        report = AuditReport(findings=[], summary="s", exit_code=0, ignored_count=3)
+        _exit_with(PASS, report, quiet=False)
+        assert json.loads(capsys.readouterr().out) == {
+            "findings": [], "summary": "s", "exit_code": 0, "ignored_count": 3,
+        }
 
     def test_quiet_suppresses_output(self, capsys):
-        _exit_with(PASS, {"key": "val"}, json_mode=True, quiet=True)
+        _exit_with(PASS, {"key": "val"}, quiet=True)
         assert capsys.readouterr().out == ""
 
     def test_returns_code(self):
-        assert _exit_with(FAIL, "") == FAIL
-        assert _exit_with(INTERNAL_ERROR, "") == INTERNAL_ERROR
+        assert _exit_with(FAIL, {}, quiet=True) == FAIL
+        assert _exit_with(INTERNAL_ERROR, {}, quiet=True) == INTERNAL_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -394,11 +381,10 @@ class TestCmdAll:
         assert out["language"] == "python"
         assert out["repository"] == str(tmp_path.resolve())
 
-    def test_exit_with_non_serialisable_uses_default_str(self, capsys):
-        """Kill default=str → default=None: non-JSON-serialisable objects must appear as strings."""
+    def test_exit_with_non_serialisable_coerced_by_asdict(self, capsys):
+        """Non-JSON-serialisable values are stringified by _asdict before dumping."""
         from pathlib import Path
-        # Path is not JSON-serialisable without default=str
-        _exit_with(PASS, {"path": Path("/some/path")}, json_mode=True)
+        _exit_with(PASS, {"path": Path("/some/path")}, quiet=False)
         out = json.loads(capsys.readouterr().out)
         assert out["path"] == "/some/path"
 
@@ -482,17 +468,93 @@ class TestCmdAll:
         # Kill "exit_code"→"XXexit_codeXX" / "EXIT_CODE" key mutations
         assert out["exit_code"] == INTERNAL_ERROR
 
-    def test_cmd_all_json_mode_arg_forwarded(self, tmp_path, capsys):
-        """Kill json_mode=args.json→json_mode=None: json flag must reach _exit_with."""
+    def test_cmd_all_output_is_always_json(self, tmp_path, capsys):
+        """Checkpoint payloads are dicts → output must always be valid JSON."""
         adapter = self._make_mock_adapter(passed=True)
         with (
             patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
             patch("harness_quality_gate.cli.write_checkpoint"),
         ):
             _cmd_all(_make_args(repo=str(tmp_path), json=True))
-        # When json=True, output must be valid JSON (not plain text)
         out_str = capsys.readouterr().out.strip()
         assert out_str.startswith("{") or out_str.startswith("[")
+
+    def test_nonexistent_repo_exact_error_payload(self, tmp_path, capsys):
+        """Pin exact payload of the repo-not-found branch (keys, message, exit code)."""
+        missing = tmp_path / "nowhere"
+        code = _cmd_all(_make_args(repo=str(missing)))
+        assert code == UNSUPPORTED
+        out = json.loads(capsys.readouterr().out)
+        assert out == {
+            "error": f"repository not found: {missing.resolve()}",
+            "exit_code": UNSUPPORTED,
+        }
+
+    def test_runtime_and_detection_exact_dicts(self, tmp_path, monkeypatch):
+        """Pin the EXACT runtime and detection dicts passed to build_checkpoint.
+        Kills key/value mutations: python_version→None, 'sequential', ci, repo_path,
+        framework, confidence=1.0, languages_detected, file_counts."""
+        import platform
+        monkeypatch.delenv("CI", raising=False)
+        adapter = self._make_mock_adapter(passed=True)
+        captured: dict = {}
+
+        def fake_build(*, layer_results, runtime, detection):
+            captured["runtime"] = runtime
+            captured["detection"] = detection
+            from harness_quality_gate.checkpoint import build
+            return build(layer_results=layer_results, runtime=runtime, detection=detection)
+
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+            patch("harness_quality_gate.cli.build_checkpoint", side_effect=fake_build),
+        ):
+            _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+
+        assert captured["runtime"] == {
+            "python_version": platform.python_version(),
+            "concurrency": "sequential",
+            "ci": False,
+        }
+        assert captured["detection"] == {
+            "repo_path": str(tmp_path.resolve()),
+            "language": "python",
+            "framework": None,
+            "confidence": 1.0,
+            "languages_detected": ["python"],
+            "file_counts": {},
+        }
+
+    def test_layer_dict_exact_with_and_without_tool_specific(self, tmp_path, capsys):
+        """Pin the exact layer dict shape, including the tool_specific branch."""
+        adapter = MagicMock()
+        lr_plain = LayerResult(
+            layer="L3A", language="python", passed=True, findings=[], duration_sec=0.5,
+        )
+        lr_tool = LayerResult(
+            layer="L1", language="python", passed=True, findings=[],
+            duration_sec=1.25, tool_specific={"k": 1},
+        )
+        adapter.run_l3a.return_value = lr_plain
+        adapter.run_l1.return_value = lr_tool
+        for method in ("run_l2", "run_l3b", "run_l4"):
+            getattr(adapter, method).return_value = lr_plain
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+        assert code == PASS
+        out = json.loads(capsys.readouterr().out)
+        assert out["layers"][0] == {
+            "layer": "L3A", "language": "python", "passed": True,
+            "findings": [], "duration_sec": 0.5,
+        }
+        assert out["layers"][1] == {
+            "layer": "L1", "language": "python", "passed": True,
+            "findings": [], "duration_sec": 1.25, "tool_specific": {"k": 1},
+        }
 
     def test_cmd_all_quiet_mode_suppresses_output(self, tmp_path, capsys):
         """Kill quiet=args.quiet→quiet=None: quiet flag must suppress output."""
@@ -734,6 +796,32 @@ class TestCmdAuditIgnores:
         # exit_code in merged AuditReport must be FAIL (1), not the default 0
         assert out["exit_code"] == FAIL
 
+    def test_merged_summary_exact_join(self, tmp_path, capsys):
+        """Pin the exact ' | ' separator: kills ' | '→'XX | XX' (substring asserts miss it)."""
+        from harness_quality_gate.allow_list_auditor import AuditReport
+        php_r = AuditReport(findings=[], summary="php-part", exit_code=0, ignored_count=2)
+        py_r = AuditReport(findings=[], summary="py-part", exit_code=0, ignored_count=3)
+
+        def fake_auditor(language):
+            report = php_r if language == "php" else py_r
+            return MagicMock(audit=MagicMock(return_value=report))
+
+        with patch("harness_quality_gate.cli.AllowListAuditor", side_effect=fake_auditor):
+            code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), json=True))
+        assert code == PASS
+        out = json.loads(capsys.readouterr().out)
+        assert out["summary"] == "php-part | py-part"
+        assert out["ignored_count"] == 5
+        assert out["exit_code"] == PASS
+        assert out["findings"] == []
+
+    def test_happy_path_quiet_suppresses_output(self, tmp_path, capsys):
+        """Kill quiet=args.quiet→None on the final (non-exception) return."""
+        (tmp_path / "m.py").write_text("x = 1\n", encoding="utf-8")
+        code = _cmd_audit_ignores(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == PASS
+        assert capsys.readouterr().out == ""
+
     def test_diff_from_passed_to_both_auditors(self, tmp_path):
         report = self._make_audit_report(exit_code=0)
         args = _make_args(repo=str(tmp_path))
@@ -793,3 +881,64 @@ class TestMain:
         # Pass explicit empty list — should NOT dispatch 'all' from sys.argv
         code = main([])
         assert code == UNSUPPORTED
+
+    def test_main_none_argv_dispatches_from_sys_argv(self, tmp_path, monkeypatch, capsys):
+        """Kill sys.argv[1:] index mutations: bare main() must parse real argv."""
+        (tmp_path / "m.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "sys.argv", ["prog", "audit-ignores", str(tmp_path), "--quiet"],
+        )
+        assert main(None) == PASS
+        assert capsys.readouterr().out == ""
+
+    def test_repo_arg_defaults_to_dot(self):
+        """Kill default='.' mutation: omitted repo must reach the command as '.'.
+
+        NOTE: do NOT use monkeypatch.chdir here — mutmut's stats collection
+        resolves mutated source paths relative to the cwd and crashes.
+        """
+        with patch("harness_quality_gate.cli._cmd_audit_ignores", return_value=PASS) as cmd:
+            assert main(["audit-ignores", "--quiet"]) == PASS
+        args = cmd.call_args.args[0]
+        assert args.repo == "."
+        assert args.quiet is True
+        assert args.json is False
+
+    def test_top_level_help_exact_strings(self, capsys):
+        """Kill prog/description/subcommand-help string mutations via --help output.
+
+        Plain substring asserts cannot kill XXfooXX-style wrapping (the original
+        is still contained), so each literal is anchored with a delimiter the
+        wrap breaks: 'usage: ' on the left, '\\n' on the right.
+        """
+        code = main(["--help"])
+        assert code == UNSUPPORTED
+        out = capsys.readouterr().out
+        assert "usage: harness_quality_gate " in out
+        assert "\nPolyglot quality gate for Python and PHP repositories.\n" in out
+        assert "Run all quality-gate layers\n" in out
+        assert "Audit suppression annotations\n" in out
+
+    def test_subcommand_help_exact_strings(self, capsys):
+        """Kill _add_common_flags help-string mutations via 'all --help' output."""
+        code = main(["all", "--help"])
+        assert code == UNSUPPORTED
+        out = capsys.readouterr().out
+        assert "Path to repository root\n" in out
+        assert "Emit JSON output\n" in out
+        assert "Suppress output\n" in out
+
+    def test_audit_ignores_help_exact_strings(self, capsys):
+        """Kill --diff-from help-string mutation via 'audit-ignores --help' output."""
+        code = main(["audit-ignores", "--help"])
+        assert code == UNSUPPORTED
+        out = capsys.readouterr().out
+        assert "Git ref to diff against\n" in out
+
+    def test_diff_from_flag_parsed_through_main(self):
+        """Kill '--diff-from'→'--DIFF-FROM' flag-name mutation via real parsing."""
+        with patch("harness_quality_gate.cli._cmd_audit_ignores", return_value=PASS) as cmd:
+            code = main(["audit-ignores", ".", "--diff-from", "origin/main", "--quiet"])
+        assert code == PASS
+        args = cmd.call_args.args[0]
+        assert args.diff_from == "origin/main"

@@ -133,7 +133,8 @@ class PhpCsFixerAdapter(ToolAdapter):
         for entry in data.get("files", []):
             if not isinstance(entry, dict):
                 continue
-            name = entry.get("name", "")  # pragma: no mutate (mutmut_15,17: default "" vs None/missing are both falsy, equivalent behavior)
+            # No default: a missing "name" yields None, which is as falsy as "".
+            name = entry.get("name")
             if not name:
                 continue
 

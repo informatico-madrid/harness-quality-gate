@@ -57,7 +57,7 @@ class PythonAdapter(BaseAdapter):
         for adapter in (self.ruff, self.pyright, self.pytest, self.mutmut,
                         self.bandit, self.vulture, self.deptry):
             try:
-                versions[adapter.name] = adapter.version(self.repo_placeholder(Path(".")), {})
+                versions[adapter.name] = adapter.version(Path("."), {})
             except (RuntimeError, OSError):
                 versions[adapter.name] = "MISSING"
         return versions
@@ -73,11 +73,6 @@ class PythonAdapter(BaseAdapter):
                 f"Missing Python tool(s): {', '.join(missing)}"
             )
         return ["ruff", "pyright"]
-
-    @staticmethod
-    def repo_placeholder(repo: Path) -> Path:
-        """Identity helper to satisfy version() calls."""
-        return repo
 
     # -- L3A (static analysis + type checking) ----------------------------
 
@@ -230,8 +225,6 @@ class PythonAdapter(BaseAdapter):
 
     def _run_ruff(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke ruff and parse findings."""
-        assert isinstance(repo, Path)
-        assert env is not None
         if shutil.which("ruff") is None:
             logger.warning("ruff not found on PATH, skipping")
             return []
@@ -248,7 +241,7 @@ class PythonAdapter(BaseAdapter):
             logger.warning("pyright not found on PATH, skipping")
             return []
         try:
-            inv = self.pyright.invoke(repo, [])
+            inv = self.pyright.invoke(repo, [], env=dict(env) if env else {})
             return self.pyright.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("pyright invocation failed: %s", exc)
@@ -256,12 +249,11 @@ class PythonAdapter(BaseAdapter):
 
     def _run_pytest(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke pytest and parse JUnit XML findings."""
-        python = shutil.which("python3") or "python3"
-        if shutil.which(python) is None:
+        if shutil.which("python3") is None:
             logger.warning("python3 not found on PATH, skipping")
             return []
         try:
-            inv = self.pytest.invoke(repo, [])
+            inv = self.pytest.invoke(repo, [], env=dict(env) if env else {})
             return self.pytest.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("pytest invocation failed: %s", exc)
@@ -273,7 +265,7 @@ class PythonAdapter(BaseAdapter):
             logger.warning("vulture not found on PATH, skipping")
             return []
         try:
-            inv = self.vulture.invoke(repo, [])
+            inv = self.vulture.invoke(repo, [], env=dict(env) if env else {})
             return self.vulture.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("vulture invocation failed: %s", exc)
@@ -285,7 +277,7 @@ class PythonAdapter(BaseAdapter):
             logger.warning("deptry not found on PATH, skipping")
             return []
         try:
-            inv = self.deptry.invoke(repo, [])
+            inv = self.deptry.invoke(repo, [], env=dict(env) if env else {})
             return self.deptry.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("deptry invocation failed: %s", exc)
@@ -300,7 +292,7 @@ class PythonAdapter(BaseAdapter):
                 escaped=0, untested=0, msi=0.0, covered_msi=0.0,
             )
         try:
-            inv = self.mutmut.invoke(repo, [])
+            inv = self.mutmut.invoke(repo, [], env=dict(env) if env else {})
             return self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("mutmut invocation failed: %s", exc)
@@ -315,7 +307,7 @@ class PythonAdapter(BaseAdapter):
             logger.warning("bandit not found on PATH, skipping")
             return []
         try:
-            inv = self.bandit.invoke(repo, [])
+            inv = self.bandit.invoke(repo, [], env=dict(env) if env else {})
             return self.bandit.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("bandit invocation failed: %s", exc)

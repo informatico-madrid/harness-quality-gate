@@ -40,21 +40,15 @@ class Finding:
     node: str
     severity: str
     message: str
-    # reason: dataclass default None; tests assert f.fix_hint is None (test_mutant_killers). # audited: 2026-06-04
-    fix_hint: str | None = None  # pragma: no mutate
+    fix_hint: str | None = None
     # Optional security-specific fields (populated by vulnerability scanners)
-    # reason: dataclass default None; tested is None in test_mutant_killers. # audited: 2026-06-04
-    cve: str | None = None  # pragma: no mutate
+    cve: str | None = None
     cwe: str = ""
     # Tool/layer context for checkpoint v2 contract (US-3, US-4, FR-31)
-    # reason: dataclass default None; Finding() with no args expects None. # audited: 2026-06-04
-    tool: str | None = None  # pragma: no mutate
-    # reason: same. # audited: 2026-06-04
-    layer: str | None = None  # pragma: no mutate
-    # reason: same. # audited: 2026-06-04
-    language: str | None = None  # pragma: no mutate
-    # reason: same. # audited: 2026-06-04
-    rule_id: str | None = None  # pragma: no mutate
+    tool: str | None = None
+    layer: str | None = None
+    language: str | None = None
+    rule_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,8 +95,7 @@ class LayerResult:
     passed: bool
     findings: list[Finding]
     duration_sec: float
-    # reason: dataclass default None; LayerResult() with no tool_specific expects None. # audited: 2026-06-04
-    tool_specific: dict[str, object] | None = None  # pragma: no mutate
+    tool_specific: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

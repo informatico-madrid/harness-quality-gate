@@ -11,7 +11,6 @@ FR-28  tool_versions() / check_tools() / layer runners
 FR-29  ToolAdapter name / version / invoke / parse
 FR-30  Shared subprocess helper with timeout/capture
 """
-# reason: module docstring — string mutations have no behavioral effect. # audited: 2026-06-04
 
 from __future__ import annotations
 
@@ -26,8 +25,7 @@ from typing import Mapping
 
 from ..models import Finding, LayerResult
 
-# reason: logger name mutation does not change observability; only the __name__ label differs. # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -61,15 +59,13 @@ class BaseAdapter(ABC):
 
     # -- abstract interface -----------------------------------------------
 
-    # reason: @abstractmethod is a Python protocol decorator — name mutation/removal breaks concrete subclasses (test_base_abstract_enforced). # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def tool_versions(self) -> dict[str, str]:
         """Return a dict mapping tool name → version string for every
         tool this adapter owns."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def check_tools(self) -> list[str]:
         """Return the names of critical tools that must be present on PATH
         or in ``vendor/bin/`` for this adapter to function.
@@ -78,32 +74,27 @@ class BaseAdapter(ABC):
         """
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def run_l3a(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L3A (static-analysis + antipattern) layer."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def run_l1(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L1 (unit-test + coverage) layer."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def run_l2(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L2 (code-quality gates) layer."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L3B (weak-test detection) layer."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def run_l4(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Execute the L4 (security + architecture) layer."""
         ...  # pragma: no cover
@@ -127,15 +118,13 @@ class ToolAdapter(ABC):
 
     # -- abstract interface -----------------------------------------------
 
-    # reason: @property/@abstractmethod are Python protocol decorators — name mutations/removal break concrete subclasses. # audited: 2026-06-04
-    @property  # pragma: no mutate
-    @abstractmethod  # pragma: no mutate
+    @property
+    @abstractmethod
     def name(self) -> str:
         """Human-readable tool name (e.g. ``"phpstan"``)."""
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def version(self, repo: Path, env: Mapping[str, str]) -> str:
         """Detect the installed version of this tool.
 
@@ -143,16 +132,14 @@ class ToolAdapter(ABC):
         """
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def invoke(
         self,
         repo: Path,
         args: list[str],
         *,
         env: Mapping[str, str] | None = None,
-        # reason: default timeout=300.0 is a public API contract — mutations (301.0) are equivalent for any non-timing-sensitive caller. # audited: 2026-06-04
-        timeout: float = 300.0,  # pragma: no mutate
+        timeout: float = 300.0,
     ) -> ToolInvocation:
         """Run the tool against *repo* with the given *args*.
 
@@ -161,8 +148,7 @@ class ToolAdapter(ABC):
         """
         ...  # pragma: no cover
 
-    # reason: @abstractmethod protocol. # audited: 2026-06-04
-    @abstractmethod  # pragma: no mutate
+    @abstractmethod
     def parse(
         self,
         stdout: str,

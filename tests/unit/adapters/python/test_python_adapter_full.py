@@ -1744,27 +1744,13 @@ class TestRunRuffHelper:
         assert inv_kwargs["env"] is not None
         assert inv_kwargs["env"] == {}
 
-    def test_run_ruff_invalid_repo_type_triggers_assert(self, tmp_path: Path):
-        """Passing a non-Path repo must raise AssertionError.
-
-        Kills mutmut assertion mutations on line 205 that replace
-        assert isinstance(repo, Path) with assert False / pass.
-        """
+    def test_run_ruff_none_env_falls_back_to_empty_dict(self, tmp_path: Path):
+        """env=None must reach ruff.invoke as env={} (defensive asserts removed)."""
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
-        with pytest.raises(AssertionError):
-            a._run_ruff("not_a_path", {})
-
-    def test_run_ruff_none_env_triggers_assert(self, tmp_path: Path):
-        """Passing env=None must raise AssertionError.
-
-        Kills mutmut assertion mutations on line 206 that replace
-        assert env is not None with pass / assert False.
-        """
-        a = self._adapter()
-        a.ruff = _mock_subadapter(findings=[])
-        with pytest.raises(AssertionError):
+        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/usr/bin/ruff"):
             a._run_ruff(tmp_path, None)
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env={})
 
 
 # ---------------------------------------------------------------------------
@@ -2736,18 +2722,20 @@ class TestPythonAdapterBasics:
         assert isinstance(a.vulture, VultureAdapter)
         assert isinstance(a.deptry, DeptryAdapter)
 
-    def test_repo_placeholder_identity(self):
+    def test_tool_versions_queries_with_dot_path(self):
+        """tool_versions probes each tool with exactly Path('.') and {} env
+        (replaces the removed repo_placeholder identity helper)."""
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         a = PythonAdapter()
-        path = Path("/some/path")
-        assert a.repo_placeholder(path) == path
-
-    def test_repo_placeholder_preserves_type(self):
-        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
-        a = PythonAdapter()
-        path = Path("/some/path")
-        result = a.repo_placeholder(path)
-        assert isinstance(result, Path)
+        names = ("ruff", "pyright", "pytest", "mutmut", "bandit", "vulture", "deptry")
+        for attr in names:
+            tool = MagicMock()
+            tool.name = attr
+            tool.version.return_value = "9.9"
+            setattr(a, attr, tool)
+        assert a.tool_versions() == {n: "9.9" for n in names}
+        for attr in names:
+            getattr(a, attr).version.assert_called_once_with(Path("."), {})
 
 
 # ---------------------------------------------------------------------------
@@ -3013,3 +3001,243 @@ class TestRunMutmut:
         assert stats.killed == 0
         assert stats.survived == 0
         assert stats.timed_out == 0
+
+
+# ===========================================================================
+# v10 survivor killers — exact-equality tests (guide §4.1/§4.3/§4.4, H2/H3)
+# ===========================================================================
+
+import logging
+
+from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+
+_PA_LOGGER = "harness_quality_gate.adapters.python.python_adapter"
+_PA_MONOTONIC = "harness_quality_gate.adapters.python.python_adapter.time.monotonic"
+_PA_WHICH = "harness_quality_gate.adapters.python.python_adapter.shutil.which"
+
+
+def _pa_messages(caplog):
+    return [r.getMessage() for r in caplog.records]
+
+
+def _pa_full_mock_adapter() -> PythonAdapter:
+    a = PythonAdapter()
+    for i, attr in enumerate(("ruff", "pyright", "pytest", "mutmut", "bandit", "vulture", "deptry")):
+        tool = MagicMock()
+        tool.name = attr
+        tool.invoke.return_value = MagicMock(stdout=f"out-{i}", stderr=f"err-{i}", exitcode=i)
+        tool.parse.return_value = []
+        setattr(a, attr, tool)
+    return a
+
+
+def _zero_stats() -> MutationStats:
+    return MutationStats(
+        total=0, killed=0, survived=0, timed_out=0,
+        escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+    )
+
+
+class TestPyAdapterSurvivorKillers:
+    ENV = {"K": "V"}
+
+    def test_l3a_exact_calls_logs_duration(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        f = _make_finding()
+        a.ruff.parse.return_value = [f]
+        a.pyright.parse.return_value = [f, f]
+        with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
+            result = a.run_l3a(tmp_path, self.ENV)
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.pyright.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.ruff.parse.assert_called_once_with("out-0", "err-0", 0)
+        a.pyright.parse.assert_called_once_with("out-1", "err-1", 1)
+        assert _pa_messages(caplog) == ["ruff: 1 findings", "pyright: 2 findings"]
+        assert result.duration_sec == 1.235
+        assert result.layer == "L3A"
+        assert result.language == "python"
+        assert result.passed is False
+        assert result.findings == [f, f, f]
+
+    def test_l1_exact_calls_logs_duration(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
+            result = a.run_l1(tmp_path, self.ENV)
+        a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.pytest.parse.assert_called_once_with("out-2", "err-2", 2)
+        assert _pa_messages(caplog) == ["pytest: 0 findings"]
+        assert result.duration_sec == 1.235
+        assert result.layer == "L1"
+        assert result.language == "python"
+
+    def test_l2_exact_calls_logs_duration(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        f = _make_finding()
+        a.vulture.parse.return_value = [f]
+        with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
+            result = a.run_l2(tmp_path, self.ENV)
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.vulture.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.deptry.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.vulture.parse.assert_called_once_with("out-5", "err-5", 5)
+        a.deptry.parse.assert_called_once_with("out-6", "err-6", 6)
+        assert _pa_messages(caplog) == [
+            "ruff (L2): 0 findings", "vulture: 1 findings", "deptry: 0 findings",
+        ]
+        assert result.duration_sec == 1.235
+        assert result.layer == "L2"
+        assert result.language == "python"
+        assert result.passed is False
+
+    def test_l3b_exact_calls_duration_and_remediation_absent(self, tmp_path):
+        a = _pa_full_mock_adapter()
+        stats = MutationStats(
+            total=5, killed=5, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=100.0, covered_msi=100.0,
+        )
+        a.mutmut.parse.return_value = stats
+        with patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
+            result = a.run_l3b(tmp_path, self.ENV)
+        a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
+        assert result.duration_sec == 1.235
+        assert result.layer == "L3B"
+        assert result.language == "python"
+        assert result.passed is True
+        assert result.tool_specific == {"mutation_stats": stats}
+
+    def test_l4_exact_calls_logs_duration(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
+            result = a.run_l4(tmp_path, self.ENV)
+        a.bandit.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.bandit.parse.assert_called_once_with("out-4", "err-4", 4)
+        assert _pa_messages(caplog) == ["bandit: 0 findings"]
+        assert result.duration_sec == 1.235
+        assert result.layer == "L4"
+        assert result.language == "python"
+
+    @pytest.mark.parametrize("attr,tool,not_found_msg,fail_msg", [
+        ("ruff", "ruff", "ruff not found on PATH, skipping", "ruff invocation failed: io-boom"),
+        ("pyright", "pyright", "pyright not found on PATH, skipping", "pyright invocation failed: io-boom"),
+        ("vulture", "vulture", "vulture not found on PATH, skipping", "vulture invocation failed: io-boom"),
+        ("deptry", "deptry", "deptry not found on PATH, skipping", "deptry invocation failed: io-boom"),
+        ("bandit", "bandit", "bandit not found on PATH, skipping", "bandit invocation failed: io-boom"),
+    ])
+    def test_helper_not_found_and_failure_logs_exact(self, tmp_path, caplog, attr, tool, not_found_msg, fail_msg):
+        a = _pa_full_mock_adapter()
+        helper = getattr(a, f"_run_{attr}")
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value=None):
+            assert helper(tmp_path, self.ENV) == []
+        getattr(a, attr).invoke.assert_not_called()
+        assert _pa_messages(caplog) == [not_found_msg]
+
+        caplog.clear()
+        getattr(a, attr).invoke.side_effect = OSError("io-boom")
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/x"):
+            assert helper(tmp_path, self.ENV) == []
+        assert _pa_messages(caplog) == [fail_msg]
+
+    def test_run_pytest_not_found_and_failure_logs_exact(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value=None):
+            assert a._run_pytest(tmp_path, self.ENV) == []
+        a.pytest.invoke.assert_not_called()
+        assert _pa_messages(caplog) == ["python3 not found on PATH, skipping"]
+
+        caplog.clear()
+        a.pytest.invoke.side_effect = RuntimeError("py-boom")
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/python3"):
+            assert a._run_pytest(tmp_path, self.ENV) == []
+        assert _pa_messages(caplog) == ["pytest invocation failed: py-boom"]
+
+    def test_run_mutmut_not_found_returns_exact_zero_stats(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value=None):
+            stats = a._run_mutmut(tmp_path, self.ENV)
+        assert stats == _zero_stats()
+        a.mutmut.invoke.assert_not_called()
+        assert _pa_messages(caplog) == ["mutmut not found on PATH, returning empty stats"]
+
+    def test_run_mutmut_failure_returns_exact_zero_stats(self, tmp_path, caplog):
+        a = _pa_full_mock_adapter()
+        a.mutmut.invoke.side_effect = RuntimeError("mm-boom")
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value="/usr/bin/mutmut"):
+            stats = a._run_mutmut(tmp_path, self.ENV)
+        assert stats == _zero_stats()
+        assert _pa_messages(caplog) == ["mutmut invocation failed: mm-boom"]
+
+    def test_tool_versions_missing_marker_on_oserror(self):
+        a = _pa_full_mock_adapter()
+        for attr in ("ruff", "pyright", "pytest", "mutmut", "bandit", "vulture", "deptry"):
+            getattr(a, attr).version.return_value = "1.2.3"
+        a.pyright.version.side_effect = OSError("no")
+        a.deptry.version.side_effect = RuntimeError("no")
+        versions = a.tool_versions()
+        assert versions == {
+            "ruff": "1.2.3", "pyright": "MISSING", "pytest": "1.2.3",
+            "mutmut": "1.2.3", "bandit": "1.2.3", "vulture": "1.2.3",
+            "deptry": "MISSING",
+        }
+
+    def test_check_tools_exact_probe_and_message(self):
+        a = _pa_full_mock_adapter()
+        with patch(_PA_WHICH, return_value="/usr/bin/x") as which:
+            assert a.check_tools() == ["ruff", "pyright"]
+        assert [c.args[0] for c in which.call_args_list] == ["ruff", "pyright"]
+        with patch(_PA_WHICH, return_value=None), pytest.raises(
+            RuntimeError, match=r"^Missing Python tool\(s\): ruff, pyright$",
+        ):
+            a.check_tools()
+
+    def test_mutation_remediation_full_dict_exact(self):
+        # survived=1 / timed_out=1: exact boundary values so the >0 -> >1
+        # comparison mutations change the outcome (guide section 4.2).
+        stats = MutationStats(
+            total=10, killed=8, survived=1, timed_out=1,
+            escaped=0, untested=0, msi=87.5, covered_msi=90.0,
+        )
+        result = PythonAdapter._mutation_remediation(stats)
+        assert result == {
+            "skill": "mutation-testing-guide",
+            "guide": "MUTANT_KILLING_GUIDE.md",
+            "instructions": "SUBAGENT_MUTATION_INSTRUCTIONS.md",
+            "summary": (
+                "L3B FAILED — 1 mutant(s) survived, 1 mutant(s) timed out. "
+                "Read skill 'mutation-testing-guide' or MUTANT_KILLING_GUIDE.md Part II "
+                "(cases H1-H12). "
+                "Priority: assert_called_once_with complete (§4.4), dense assertions (§4.1), "
+                "boundary tests (§4.2). H1=passthrough to mocked deps is the dominant pattern."
+            ),
+            "msi": 87.5,
+            "survived": 1,
+            "timed_out": 1,
+        }
+
+    def test_l3b_remediation_present_when_survivors(self, tmp_path):
+        a = _pa_full_mock_adapter()
+        stats = MutationStats(
+            total=5, killed=4, survived=1, timed_out=0,
+            escaped=0, untested=0, msi=80.0, covered_msi=80.0,
+        )
+        a.mutmut.parse.return_value = stats
+        with patch(_PA_WHICH, return_value="/usr/bin/x"):
+            result = a.run_l3b(tmp_path, self.ENV)
+        assert result.passed is False
+        assert result.tool_specific["mutation_stats"] is stats
+        assert result.tool_specific["remediation"]["survived"] == 1

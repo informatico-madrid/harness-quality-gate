@@ -1006,3 +1006,19 @@ def test_parse_nested_with_extra_kills_return_mutations() -> None:
         assert f.language == "php"
         assert f.severity == "error"  # default severity when not specified
         assert f.fix_hint is not None
+
+
+def test_array_item_without_message_key_uses_bare_taint_type() -> None:
+    """A missing 'message' yields desc == taint type exactly (no defaults needed)."""
+    stdout = json.dumps([
+        {"type": "TaintedSql", "line_from": 3, "file_name": "a.php", "severity": "error"},
+    ])
+    findings = PsalmTaintAdapter().parse(stdout, "", 0)
+    assert len(findings) == 1
+    assert findings[0].message == "TaintedSql"
+
+
+def test_nested_files_without_psalm_errors_key_skipped() -> None:
+    """files entries without 'psalmErrors' are skipped (None fails isinstance)."""
+    stdout = json.dumps({"files": {"a.php": {"other": 1}, "b.php": "junk"}})
+    assert PsalmTaintAdapter().parse(stdout, "", 0) == []

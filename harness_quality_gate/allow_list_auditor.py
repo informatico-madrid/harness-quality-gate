@@ -168,8 +168,8 @@ class AllowListAuditor:
             return AuditReport(
                 findings=[],
                 summary=f"Unknown language: {self.language}",
-                exit_code=0,  # pragma: no mutate
-                ignored_count=0,  # pragma: no mutate
+                exit_code=0,
+                ignored_count=0,
             )
 
         result = _ScanResult()

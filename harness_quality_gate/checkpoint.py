@@ -68,15 +68,9 @@ def build(
 
     data: dict[str, Any] = {}
     data["version"] = "v2"
-    # reason: datetime.now(timezone.utc) vs datetime.now(None) produce same strftime output.
-    # audited: 2026-06-04
-    data["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # pragma: no mutate
-    # reason: detection.get() default "" equivalent (callers always provide keys).
-    # audited: 2026-06-04
-    data["repository"] = detection.get("repo_path") or ""  # pragma: no mutate
-    # reason: same.
-    # audited: 2026-06-04
-    data["language"] = detection.get("language") or ""  # pragma: no mutate
+    data["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    data["repository"] = detection.get("repo_path") or ""
+    data["language"] = detection.get("language") or ""
     data["layers"] = layers
     if mutation is not None:
         data["mutation"] = mutation
@@ -92,12 +86,8 @@ def validate(data: dict[str, Any]) -> None:
     jsonschema.ValidationError
         If the data does not conform to the schema.
     """
-    # reason: schema_path mutations produce FileNotFoundError (tested by validate() call passing).
-    # audited: 2026-06-04
-    schema_path = Path(__file__).resolve().parent.parent / "references" / "verdict-schema.json"  # pragma: no mutate
-    # reason: encoding="utf-8" equivalent for ASCII JSON schema content.
-    # audited: 2026-06-04
-    with schema_path.open("r", encoding="utf-8") as fh:  # pragma: no mutate
+    schema_path = Path(__file__).resolve().parent.parent / "references" / "verdict-schema.json"
+    with schema_path.open("r", encoding="utf-8") as fh:
         schema = json.load(fh)
     jsonschema.validate(instance=data, schema=schema)
 
@@ -126,20 +116,14 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # reason: indent=2/ensure_ascii=False/default=str are serialisation options —
     # mutations produce semantically identical JSON for ASCII content.
-    # audited: 2026-06-04
-    payload = json.dumps(data, indent=2, default=str, ensure_ascii=False)  # pragma: no mutate
+    payload = json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
     # Atomic write: write to temp file in same directory, then rename
-    # reason: prefix/suffix/dir are temp-file naming conventions — mutations affect
     # only the temp filename, not the final written content or file location.
-    # audited: 2026-06-04
-    fd, tmp_path = tempfile.mkstemp(dir=str(output_path.parent), prefix=".quality-gate-", suffix=".tmp")  # pragma: no mutate
+    fd, tmp_path = tempfile.mkstemp(dir=str(output_path.parent), prefix=".quality-gate-", suffix=".tmp")
     try:
-        # reason: encoding="utf-8" mutations are equivalent for ASCII JSON content.
-        # audited: 2026-06-04
-        with os.fdopen(fd, "w", encoding="utf-8") as f:  # pragma: no mutate
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)
         os.replace(tmp_path, str(output_path))
     except BaseException:
@@ -147,10 +131,6 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
         raise
 
     if output_path.name == "quality-gate-latest.json":
-        # reason: strftime format mutations produce valid (if different) filename; content is tested.
-        # audited: 2026-06-04
-        ts = data.get("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))  # pragma: no mutate
+        ts = data.get("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         timestamped = output_path.with_name(f"quality-gate-{ts}.json")
-        # reason: encoding="utf-8" equivalent for ASCII JSON.
-        # audited: 2026-06-04
-        timestamped.write_text(payload, encoding="utf-8")  # pragma: no mutate
+        timestamped.write_text(payload, encoding="utf-8")

@@ -35,15 +35,6 @@ from .weak_test_php import PhpWeakTestLayerAdapter
 
 logger = logging.getLogger(__name__)
 
-# -- Framework-conditional PHPStan extension map (FR-22) --------------------
-
-_FRAMEWORK_PACKS: dict[str, str] = {
-    "symfony": "phpstan-symfony",
-    "laravel": "larastan",
-    "drupal": "phpstan-drupal",
-    "wordpress": "phpstan-wordpress",
-}
-
 # -- Infection strict thresholds (FR-13, FR-14, FR-15) --------------------
 
 _INFECTION_MIN_MSI: float = 100
@@ -175,7 +166,7 @@ class PhpAdapter(BaseAdapter):
             List of PHPStan extension package names to inject.
         """
         packages: list[str] = []
-        for fw_name, pkgs in sorted(frameworks.items()):
+        for _fw_name, pkgs in sorted(frameworks.items()):
             if pkgs:
                 packages.extend(pkgs)
         return packages
@@ -500,7 +491,7 @@ class PhpAdapter(BaseAdapter):
         # --- 3. Mutation testing (FR-13, FR-14, TD-6) ---------------------
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
-        mutation_gate_failed = False
+        mutation_remediation: dict[str, object] | None = None
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -550,12 +541,12 @@ class PhpAdapter(BaseAdapter):
                         "L1 Infection required but unavailable (HARNESS_INFECTION_REQUIRED=1)"
                     )
 
-                if mutation_stats:
+                if mutation_stats is not None:
                     # Gate check (FR-14)
                     gate_findings = self._validate_infection_stats(mutation_stats)
                     all_findings.extend(gate_findings)
                     if gate_findings:
-                        mutation_gate_failed = True
+                        mutation_remediation = self._mutation_remediation(mutation_stats)
                     logger.info(
                         "L1 Infection MSI=%.1f coveredMsi=%.1f escaped=%d",
                         mutation_stats.msi,
@@ -570,9 +561,9 @@ class PhpAdapter(BaseAdapter):
 
         # Build mutation-specific metadata for checkpoint v2
         mutation_meta: dict = {}
-        if mutation_skipped:
+        if mutation_skipped is not None:
             mutation_meta["mutation_skipped"] = mutation_skipped
-        if mutation_stats:
+        if mutation_stats is not None:
             mutation_meta["mutation"] = {
                 "killed": mutation_stats.killed,
                 "survived": mutation_stats.survived,
@@ -582,8 +573,8 @@ class PhpAdapter(BaseAdapter):
                 "msi": round(mutation_stats.msi, 4),
                 "covered_msi": round(mutation_stats.covered_msi, 4),
             }
-            if mutation_gate_failed:
-                mutation_meta["remediation"] = self._mutation_remediation(mutation_stats)
+            if mutation_remediation is not None:
+                mutation_meta["remediation"] = mutation_remediation
 
         passed = len(all_findings) == 0
 
