@@ -1,5 +1,9 @@
 # Quality Gate Configuration
 # All thresholds are configurable per-project
+# schema_version 2 is required by config.load() — without it the CLI
+# rejects the file as legacy v1 (exit 4), including on this very repo
+# during self-application (self-eval F14).
+schema_version: 2
 
 # Layer 1: Test Execution
 layer1:

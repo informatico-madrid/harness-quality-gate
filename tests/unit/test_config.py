@@ -368,3 +368,17 @@ def test_load_lowered_threshold_always_rejects(tmp_path: Path) -> None:
     _write_yaml(tmp_path, ".quality-gate.yaml", cfg)
     with pytest.raises(ConfigInvalid, match=r"min_msi=80\.0 < 100 — permitido solo con --allow-ramp y override"):
         load(tmp_path)
+
+
+def test_shipped_skill_config_is_v2_valid() -> None:
+    """Self-application guard (self-eval F14).
+
+    The skill ships config/quality-gate.yaml; running ``all`` on the skill
+    repo itself picks it up via load() — without ``schema_version: 2`` the
+    skill rejects its own config as v1 and exits 4.
+    """
+    from harness_quality_gate.config import load
+
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg = load(repo_root)
+    assert cfg.schema_version == 2

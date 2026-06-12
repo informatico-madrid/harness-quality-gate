@@ -879,11 +879,18 @@ class TestMain:
         assert code == UNSUPPORTED
 
     def test_main_with_explicit_argv_ignores_sys_argv(self, monkeypatch):
-        """Kill argv is None inversion: explicit argv must NOT fall back to sys.argv."""
+        """Kill argv is None inversion: explicit argv must NOT fall back to sys.argv.
+
+        _cmd_all is mocked so the parse_args(argv)->parse_args(None) mutant
+        dies fast: unmocked, the mutant dispatched the FULL gate (mutation
+        campaign included) and only died as an expensive timeout (self-eval).
+        """
         monkeypatch.setattr("sys.argv", ["prog", "all"])
-        # Pass explicit empty list — should NOT dispatch 'all' from sys.argv
-        code = main([])
+        with patch("harness_quality_gate.cli._cmd_all", return_value=PASS) as cmd_all:
+            # Pass explicit empty list — should NOT dispatch 'all' from sys.argv
+            code = main([])
         assert code == UNSUPPORTED
+        cmd_all.assert_not_called()
 
     def test_main_none_argv_dispatches_from_sys_argv(self, tmp_path, monkeypatch, capsys):
         """Kill sys.argv[1:] index mutations: bare main() must parse real argv."""
