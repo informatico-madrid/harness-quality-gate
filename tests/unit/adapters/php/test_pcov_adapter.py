@@ -126,15 +126,28 @@ class TestProbe:
         # Exact subprocess.run args kills mutant 11 (first arg mutated to None)
         mock.assert_called_once_with(["/usr/bin/php", "-m"], capture_output=True, text=True, timeout=10)
 
-    def test_probe_uses_real_which_and_subprocess(self) -> None:
-        """Test without patching shutil.which or subprocess.run.
-        Relies on: php IS installed, but PCOV/Xdebug NOT installed.
-        This kills mutants 2,3,4 (shutil.which arg mutations) and
-        partially mutant 11 (subprocess.run with actual args).
+    def test_probe_which_arg_and_no_driver_deterministic(self) -> None:
+        """Deterministic replacement for the old env-dependent probe test
+        (it relied on php installed but PCOV/Xdebug absent — false red in
+        CI, where setup-php provides pcov).
+
+        Kills mutants 2,3,4 (shutil.which arg mutations): the name-checking
+        fake only answers for exactly "php"; a mutated name gets None and
+        probe fails with the php-not-found message instead.
         """
         adapter = PcovAdapter()
-        with pytest.raises(RuntimeError) as exc_ctx:
-            adapter.probe()
+
+        def _which(name):
+            return "/usr/bin/php" if name == "php" else None
+
+        result = MagicMock(stdout="[PHP Modules]\ncore\njson\n",
+                           stderr="", returncode=0)
+        with patch("harness_quality_gate.adapters.php.pcov_adapter.shutil.which",
+                   side_effect=_which):
+            with patch("subprocess.run", return_value=result):
+                with patch("glob.glob", return_value=[]):  # no on-disk pcov.so either
+                    with pytest.raises(RuntimeError) as exc_ctx:
+                        adapter.probe()
         assert str(exc_ctx.value) == "No coverage driver found — neither PCOV nor Xdebug is loaded"
 
     def test_probe_subprocess_oserror_raises(self) -> None:

@@ -83,6 +83,18 @@ def _all_tools_on_path(which_map: dict[str, str | None] | None = None):
 class TestRunL3A:
     """Test run_l3a branch coverage: ruff check + pyright type check."""
 
+    @pytest.fixture(autouse=True)
+    def _tools_on_path(self):
+        """Deterministic: the sub-adapters are mocked; the which() guards in
+        _run_ruff/_run_pyright must not depend on locally installed tools."""
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            side_effect=lambda name: (
+                f"/usr/bin/{name}" if name in ("ruff", "pyright") else None
+            ),
+        ):
+            yield
+
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
@@ -1779,7 +1791,11 @@ class TestRunPyrightHelper:
         """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[_make_finding(tool="pyright")])
-        findings = a._run_pyright(tmp_path, {})
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            return_value="/usr/bin/pyright",
+        ):
+            findings = a._run_pyright(tmp_path, {})
         assert len(findings) == 1
         # Type assertion: kills return []→None mutations (mutmut_15-19, 22-24)
         assert isinstance(findings, list), f"findings must be list, got {type(findings)}"
@@ -2911,6 +2927,18 @@ class TestRunMutmut:
       - mutmut_70,71,72,73 (0→1 fallback) → assert exact numeric values
     """
 
+    @pytest.fixture(autouse=True)
+    def _mutmut_on_path(self):
+        """Deterministic: the which("mutmut") guard in _run_mutmut must not
+        depend on mutmut being installed on the machine."""
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            side_effect=lambda name: (
+                "/usr/bin/mutmut" if name == "mutmut" else None
+            ),
+        ):
+            yield
+
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         return PythonAdapter()
@@ -2935,6 +2963,9 @@ class TestRunMutmut:
             exitcode = 0
 
         mock_mutmut = MutmutAdapter.__new__(MutmutAdapter)
+        # run() mocked too: the unit test must not spawn a real campaign
+        # (hidden integration dependency caught by the hermetic-PATH sweep)
+        mock_mutmut.run = MagicMock(return_value=ResultHolder())
         mock_mutmut.invoke = MagicMock(return_value=ResultHolder())
         # Use bound method from a real instance (like existing test does)
         call_tracker = MagicMock(wraps=real_mutmut.parse)
@@ -3508,6 +3539,16 @@ class TestL3ASeverityGate:
     The simulation fixed L1/L4 (Python) and all PHP layers; Python L3A kept
     the old ``len(findings) == 0`` gate — any ruff warning blocked the layer.
     """
+
+    @pytest.fixture(autouse=True)
+    def _tools_on_path(self):
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            side_effect=lambda name: (
+                f"/usr/bin/{name}" if name in ("ruff", "pyright") else None
+            ),
+        ):
+            yield
 
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter

@@ -485,6 +485,19 @@ class TestRuffInvokeNormalPath:
     (mutating args, removing repo path append, etc.).
     """
 
+    @pytest.fixture(autouse=True)
+    def _ruff_on_path(self):
+        """Deterministic: must not require ruff installed on the machine.
+
+        Name-checking fake — a mutated which("ruff") argument gets None,
+        so the which-arg mutants (invoke 4/5) still die.
+        """
+        with patch(
+            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+            side_effect=lambda name: "/usr/bin/ruff" if name == "ruff" else None,
+        ):
+            yield
+
     def test_invoke_passes_cmd_to_run(self):
         """Ensure _run is called with correct command structure.
 

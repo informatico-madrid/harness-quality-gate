@@ -397,6 +397,18 @@ class TestInvokeNormalPath:
     Kills mutmut survivors on invoke that change command construction.
     """
 
+    @pytest.fixture(autouse=True)
+    def _pyright_on_path(self):
+        """Deterministic: these tests must not require pyright installed
+        (CI runners don't have it — only mypy gates the repo there)."""
+        with patch(
+            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
+            side_effect=lambda name: (
+                "/usr/bin/pyright" if name == "pyright" else None
+            ),
+        ):
+            yield
+
     def test_invoke_construction_with_no_args(self, adapter):
         """invoke with empty args builds cmd with binary + flag + repo."""
         mock_result = MagicMock()
