@@ -88,7 +88,10 @@ include .env
 export
 endif
 
-MUTATION_MAX_CHILDREN ?= $(shell nproc)
+# ~half the cores, NOT nproc: saturating all cores starves mutant children of
+# CPU and produces spurious timeouts (verified 2026-06-12; on this 40-core box
+# the safe ceiling is ~20).
+MUTATION_MAX_CHILDREN ?= 20
 VENV = .venv
 
 help:

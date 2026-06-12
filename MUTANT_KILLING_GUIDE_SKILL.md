@@ -31,7 +31,9 @@ parece equivalente**.
    (los 1139 tests deben seguir en verde y coverage en 100%).
 5. **Regenerar `.coverage` antes de cada run** (con `mutate_only_covered_lines = true`,
    un coverage viejo manda mutantes a `no_tests`). El `make mutation` ya lo gestiona.
-6. Paralelismo: `--max-children 40` (servidor de 40+ cores; el Makefile usa `nproc`).
+6. Paralelismo: `--max-children 20` (≈ la mitad de los cores). Saturar todos los
+   cores deja sin CPU a los hijos y produce timeouts espurios (verificado
+   2026-06-12); el Makefile ya usa 20 por defecto.
 
 ---
 
