@@ -356,9 +356,26 @@ class TestInvokeBreakVsContinue:
         tests_dir.mkdir()
         (tests_dir / "FooTest.php").touch()
 
-        # Create a Path subclass that always returns False for is_file()
-        # This simulates missing visitor scripts, triggering the continue/break branch
-        class FakeVisitorsPath(Path):
+        # Plain fake (NOT a Path subclass: pathlib only supports clean
+        # subclassing from Python 3.12 — broke CI on 3.10/3.11). Covers the
+        # protocol invoke() uses: Path(__file__).resolve().parent / x.
+        class FakeVisitorsPath:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def resolve(self):
+                return self
+
+            @property
+            def parent(self):
+                return self
+
+            def __truediv__(self, other):
+                return self
+
+            def __str__(self):
+                return "/fake/visitors"
+
             def is_file(self):
                 return False
 
@@ -1086,16 +1103,29 @@ class TestInvokeDirect:
         tests_dir.mkdir()
         (tests_dir / "FooTest.php").touch()
 
-        # Custom Path class that always returns is_file=False
-        # to simulate missing visitor scripts, while delegating
-        # other Path operations to the real pathlib.Path
-        class FakeVisitorsPath(Path):
-            """Path that looks like a visitors directory with missing files."""
-            def is_file(self):
-                return False
+        # Plain fake (NOT a Path subclass: pathlib only supports clean
+        # subclassing from Python 3.12 — broke CI on 3.10/3.11).
+        class FakeVisitorsPath:
+            """Looks like a visitors directory with missing files."""
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def resolve(self):
+                return self
+
+            @property
+            def parent(self):
+                return self
 
             def __truediv__(self, other):
                 return self
+
+            def __str__(self):
+                return "/fake/visitors"
+
+            def is_file(self):
+                return False
 
         fake_visitors_path = FakeVisitorsPath("/fake/visitors")
 
