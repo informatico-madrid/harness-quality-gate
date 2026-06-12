@@ -150,7 +150,7 @@ class TestBanditAdapter:
         """Extra args are appended to the bandit command."""
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
-                assert cmd == ["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path), "--ignore-paths", "tests"]
+                assert cmd == ["/usr/bin/bandit", "-r", "-q", "--format", "json", str(tmp_path), "--ignore-paths", "tests"]
                 assert kwargs.get("cwd") is tmp_path
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
@@ -161,7 +161,7 @@ class TestBanditAdapter:
         """When no extra args given, command is just binary + -r --format json."""
         with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
             def capture_run(cmd, **kwargs):
-                assert cmd == ["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path)]
+                assert cmd == ["/usr/bin/bandit", "-r", "-q", "--format", "json", str(tmp_path)]
                 assert kwargs.get("cwd") is tmp_path
                 return _fake_invocation(stdout='{"results":[]}')
             with patch.object(self._adapter().__class__, "_run", side_effect=capture_run):
@@ -202,7 +202,7 @@ class TestBanditAdapter:
             with patch.object(self._adapter().__class__, "_run", side_effect=cap):
                 self._adapter().invoke(tmp_path, [])
         assert capture == [
-            (["/usr/bin/bandit", "-r", "--format", "json", str(tmp_path)], {
+            (["/usr/bin/bandit", "-r", "-q", "--format", "json", str(tmp_path)], {
                 "cwd": tmp_path, "env": None, "timeout": 300.0
             })
         ]
@@ -225,7 +225,11 @@ class TestBanditAdapter:
         assert self._adapter().parse("") == []
 
     def test_parse_invalid_json(self):
-        assert self._adapter().parse("not json") == []
+        """Unparseable non-empty stdout -> parse-error finding (F7)."""
+        findings = self._adapter().parse("not json")
+        assert len(findings) == 1
+        assert findings[0].rule_id == "parse-error"
+        assert findings[0].severity == "error"
 
     def test_parse_whitespace_only(self):
         """Whitespace-only input returns empty list."""
@@ -645,26 +649,26 @@ class TestVultureAdapter:
     def test_parse_empty(self):
         assert self._adapter().parse("") == []
 
-    def test_parse_valid_json(self):
-        data = [{"name": "my_var", "type": "variable", "filename": "src/a.py", "line": 10}]
-        findings = self._adapter().parse(json.dumps(data))
+    def test_parse_valid_text(self):
+        out = "src/a.py:10: unused variable 'my_var' (60% confidence)"
+        findings = self._adapter().parse(out)
         assert len(findings) == 1
         assert "my_var" in findings[0].message
 
     def test_parse_multiple_items(self):
-        data = [
-            {"name": "x", "type": "variable", "filename": "src/a.py", "line": 10},
-            {"name": "os", "type": "import", "filename": "src/b.py", "line": 5},
-        ]
-        findings = self._adapter().parse(json.dumps(data))
+        out = (
+            "src/a.py:10: unused variable 'x' (60% confidence)\n"
+            "src/b.py:5: unused import 'os' (90% confidence)\n"
+        )
+        findings = self._adapter().parse(out)
         assert len(findings) == 2
 
-    def test_parse_non_dict_item(self):
-        findings = self._adapter().parse(json.dumps(["not a dict"]))
-        assert findings == []
-
-    def test_parse_not_list(self):
-        assert self._adapter().parse(json.dumps({"key": "val"})) == []
+    def test_parse_unmatched_output_is_parse_error(self):
+        """Non-empty output with no vulture-format lines -> parse-error (F8)."""
+        findings = self._adapter().parse("usage: vulture [options]")
+        assert len(findings) == 1
+        assert findings[0].rule_id == "parse-error"
+        assert findings[0].severity == "error"
 
 
 # ---------------------------------------------------------------------------

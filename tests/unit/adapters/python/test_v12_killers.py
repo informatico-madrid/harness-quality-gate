@@ -246,20 +246,17 @@ class TestV14PythonKillers:
 
     def test_vulture_parse_fields_exact(self):
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
-        stdout = json.dumps([
-            {"name": "foo", "type": "function", "line": 7, "filename": "a.py"},
-            {"filename": "b.py"},
-        ])
+        stdout = (
+            "a.py:7: unused function 'foo' (60% confidence)\n"
+            "b.py:2: unused variable 'tmp' (100% confidence)\n"
+        )
         findings = VultureAdapter().parse(stdout)
         f_full, f_min = findings[0], findings[1]
-        assert "foo" in f_full.message
-        assert "function" in f_full.message
+        assert f_full.message == "a.py:7 — unused function 'foo'"
+        assert f_full.node == "a.py"
+        assert f_min.message == "b.py:2 — unused variable 'tmp'"
         assert "XX" not in f_min.message
-        assert "UNUSED" not in f_min.message
-        assert "unused" in f_min.message
-        assert ":0" not in f_min.node and ":1" not in f_min.node
-        # line default 0 is observable in the fix_hint suffix
-        assert (f_min.fix_hint or "").endswith("at b.py:0")
+        assert (f_min.fix_hint or "") == "Remove dead code at b.py:2: unused variable 'tmp'"
 
     def test_bandit_cwe_non_dict_non_str_stays_empty(self):
         stdout = json.dumps({"results": [{
@@ -333,8 +330,8 @@ class TestScanTargetsExcludeMutationArtifacts:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
-                                         "json", "src"]
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "-q",
+                                         "--format", "json", "src"]
 
     def test_vulture_scans_only_src_when_present(self, tmp_path: Path) -> None:
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
@@ -346,8 +343,7 @@ class TestScanTargetsExcludeMutationArtifacts:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "--format",
-                                         "json", "src"]
+        assert run.call_args.args[0] == ["/usr/bin/vulture", "src"]
 
     def test_deptry_extends_excludes_with_mutation_artifacts(self, tmp_path: Path) -> None:
         adapter = DeptryAdapter()
@@ -358,9 +354,11 @@ class TestScanTargetsExcludeMutationArtifacts:
         ):
             adapter.invoke(tmp_path, [])
         cmd = run.call_args.args[0]
-        assert cmd == ["/usr/bin/deptry", "--output", "json",
-                       "--extend-exclude", "mutants",
-                       "--extend-exclude", "\\.mutmut", "."]
+        assert cmd[0] == "/usr/bin/deptry"
+        assert cmd[1] == "--json-output"
+        assert cmd[2].endswith(".json")
+        assert cmd[3:] == ["--extend-exclude", "mutants",
+                           "--extend-exclude", "\\.mutmut", "."]
 
     def test_pytest_collects_only_tests_dir_when_present(self, tmp_path: Path) -> None:
         repo = self._repo(tmp_path)
@@ -458,8 +456,8 @@ class TestPackageAtRootLayout:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
-                                         "json", "mypkg"]
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "-q",
+                                         "--format", "json", "mypkg"]
 
     def test_vulture_targets_root_package_not_tests(self, tmp_path: Path) -> None:
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
@@ -471,8 +469,7 @@ class TestPackageAtRootLayout:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "--format",
-                                         "json", "mypkg"]
+        assert run.call_args.args[0] == ["/usr/bin/vulture", "mypkg"]
 
     def test_bandit_falls_back_to_repo_root_without_packages(self, tmp_path: Path) -> None:
         adapter = BanditAdapter()
@@ -482,8 +479,8 @@ class TestPackageAtRootLayout:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
-        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
-                                         "json", str(tmp_path)]
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "-q",
+                                         "--format", "json", str(tmp_path)]
 
     def test_source_targets_nonexistent_repo_no_crash(self, tmp_path: Path) -> None:
         """A repo path that does not exist must not crash package detection.

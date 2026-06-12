@@ -896,7 +896,8 @@ class TestRunL3B:
         (src / "fat.py").write_text(f"class Fat:\n{methods}\n", encoding="utf-8")
         a = self._adapter()
         layer = a.run_l3b(tmp_path, {})
-        assert layer.passed is False
+        # warnings are reported but do not gate (uniform severity policy, F11)
+        assert layer.passed is True
         s = next(f for f in layer.findings if f.rule_id == "SOLID-S")
         assert s.severity == "warning"
         assert s.tool == "solid-metrics"
@@ -951,7 +952,8 @@ class TestRunL3B:
         assert "Functional Decomposition" in f.message
         assert "all 3 methods are static/class methods" in f.message
         assert f.node == "Util:1"  # class name + lineno
-        assert layer.passed is False
+        # warnings are reported but do not gate (uniform severity policy, F11)
+        assert layer.passed is True
 
     def test_l3b_logger_messages_exact(self, tmp_path: Path, caplog):
         a = self._adapter()
@@ -3277,6 +3279,25 @@ class TestSrcDirResolution:
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         assert PythonAdapter._src_dir(tmp_path) == tmp_path
 
+    def test_root_package_used_when_no_src(self, tmp_path: Path):
+        """Package-at-root layout: analyse the package, not the whole repo.
+
+        Falling back to the repo walked .venv/ and mutants/ too — L2/L3B
+        hung for minutes on real repos (self-eval F10).
+        """
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        (tmp_path / "mypkg").mkdir()
+        (tmp_path / "mypkg" / "__init__.py").write_text("")
+        (tmp_path / "mutants").mkdir()
+        assert PythonAdapter._src_dir(tmp_path) == tmp_path / "mypkg"
+
+    def test_src_wins_over_root_package(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        (tmp_path / "src").mkdir()
+        (tmp_path / "mypkg").mkdir()
+        (tmp_path / "mypkg" / "__init__.py").write_text("")
+        assert PythonAdapter._src_dir(tmp_path) == tmp_path / "src"
+
 
 class TestRunL2DiversityWiring:
     def test_diversity_called_with_repo_and_python(self, tmp_path: Path):
@@ -3512,6 +3533,37 @@ class TestL3ASeverityGate:
         )
         a.pyright = _mock_subadapter(findings=[])
         layer = a.run_l3a(tmp_path, {})
+        assert layer.passed is False
+
+
+class TestL3BSeverityGate:
+    """L3B gates only on error findings (uniform severity policy, self-eval F11).
+
+    solid-metrics and antipattern Tier A emit warnings — heuristic counsel,
+    not blockers; the old ``len(findings) == 0`` gate failed L3B on any hit.
+    """
+
+    def test_l3b_warning_findings_do_not_gate(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        warn = _make_finding(severity="warning", tool="solid-metrics", layer="L3B")
+        with (
+            patch.object(PythonAdapter, "_solid_findings", return_value=[warn]),
+            patch.object(PythonAdapter, "_tier_a_findings", return_value=[warn]),
+        ):
+            layer = a.run_l3b(tmp_path, {})
+        assert layer.passed is True
+        assert len(layer.findings) == 2
+
+    def test_l3b_error_findings_gate(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        err = _make_finding(severity="error", tool="solid-metrics", layer="L3B")
+        with (
+            patch.object(PythonAdapter, "_solid_findings", return_value=[err]),
+            patch.object(PythonAdapter, "_tier_a_findings", return_value=[]),
+        ):
+            layer = a.run_l3b(tmp_path, {})
         assert layer.passed is False
 
 

@@ -15,9 +15,8 @@ Targets: 96 surviving mutants across version/invoke/parse
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -28,6 +27,10 @@ from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
 
 def _adapter() -> VultureAdapter:
     return VultureAdapter()
+
+
+def _ok_invocation(stdout: str = "") -> ToolInvocation:
+    return ToolInvocation(stdout=stdout, stderr="", exitcode=0, duration_seconds=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +148,7 @@ def test_invoke_binary_not_found_has_no_stderr_mutmut(tmp_path: Path) -> None:
 
 
 def test_invoke_command_structure_no_extra_args(tmp_path: Path) -> None:
-    """No extra args → cmd = [binary, '--format', 'json', str(repo)]."""
+    """No extra args → cmd = [binary, str(repo)] (vulture has no JSON mode)."""
     fake_bin = "/usr/bin/vulture"
     with patch("shutil.which", return_value=fake_bin):
         with patch.object(
@@ -155,8 +158,7 @@ def test_invoke_command_structure_no_extra_args(tmp_path: Path) -> None:
     mock_run.assert_called_once()
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == fake_bin
-    assert "--format" in cmd
-    assert "json" in cmd
+    assert "--format" not in cmd  # nonexistent flag caused usage error (F8)
     assert str(tmp_path) in cmd
 
 
@@ -175,7 +177,7 @@ def test_invoke_command_structure_with_extra_args(tmp_path: Path) -> None:
 
 
 def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
-    """Empty args list → cmd has exactly 4 parts (not extended)."""
+    """Empty args list → cmd has exactly 2 parts (binary + fallback target)."""
     fake_bin = "/usr/bin/vulture"
     with patch("shutil.which", return_value=fake_bin):
         with patch.object(
@@ -183,8 +185,8 @@ def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
         ) as mock_run:
             _adapter().invoke(tmp_path, [])
     cmd = mock_run.call_args[0][0]
-    # Should have exactly: binary, --format, json, repo
-    assert len(cmd) == 4
+    # Should have exactly: binary, repo (empty tmp repo → root fallback)
+    assert cmd == [fake_bin, str(tmp_path)]
 
 
 def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
@@ -232,249 +234,114 @@ def test_invoke_not_found_exitcode_is_3(tmp_path: Path) -> None:
     assert result.exitcode == 3
 
 
+# parse() — real vulture text output (self-eval F8)
 # ---------------------------------------------------------------------------
-# parse() — input validation edge cases
-# ---------------------------------------------------------------------------
+#
+# vulture has no JSON output mode; it prints one finding per line:
+#   path.py:12: unused function 'helper' (60% confidence)
+# The old parse expected JSON that the tool never emits -> L4 was vacuous.
+
+VULTURE_TEXT = """\
+src/app.py:12: unused function 'helper' (60% confidence)
+src/app.py:30: unused variable 'tmp' (100% confidence)
+src/models.py:4: unused import 'os' (90% confidence)
+"""
+
 
 def test_parse_empty_string() -> None:
-    """Empty stdout → empty findings."""
-    result = _adapter().parse("")
-    assert result == []
+    """Empty stdout → empty findings (no dead code found)."""
+    assert _adapter().parse("") == []
 
 
 def test_parse_whitespace_only() -> None:
     """Whitespace-only stdout → empty findings."""
-    result = _adapter().parse("   \n\t  ")
-    assert result == []
+    assert _adapter().parse("   \n  ") == []
 
 
-def test_parse_invalid_json() -> None:
-    """Non-JSON string → empty findings (json.JSONDecodeError caught)."""
-    result = _adapter().parse("this is not json {{{")
-    assert result == []
-
-
-def test_parse_json_object_instead_of_list() -> None:
-    """Valid JSON object (not list) → empty findings."""
-    result = _adapter().parse('{"name": "foo"}')
-    assert result == []
-
-
-def test_parse_json_empty_list() -> None:
-    """Valid JSON empty list → empty findings (not error)."""
-    result = _adapter().parse("[]")
-    assert result == []
-    assert isinstance(result, list)
-
-
-def test_parse_list_with_non_dict_item() -> None:
-    """List containing non-dict items → skipped, returns empty findings."""
-    result = _adapter().parse(json.dumps(["string_item", 42, None, True]))
-    assert result == []
-
-
-def test_parse_list_with_mixed_items() -> None:
-    """List with mix of dicts and non-dicts → only dicts parsed."""
-    raw = json.dumps([
-        {"name": "valid_func", "type": "unused", "filename": "app.py", "line": 10},
-        "string_item",
-        {"name": "another", "type": "unused", "filename": "app.py", "line": 20},
-    ])
-    result = _adapter().parse(raw)
-    assert len(result) == 2
-    assert result[0].node == "app.py"
-    assert result[0].message.startswith("app.py:10")
-    assert result[0].tool == "vulture"
-
-
-# ---------------------------------------------------------------------------
-# parse() — valid findings from JSON
-# ---------------------------------------------------------------------------
-
-def test_parse_valid_finding_minimal() -> None:
-    """Single finding with name and empty optional fields."""
-    raw = json.dumps([{"name": "unused_var", "type": "unused"}])
-    result = _adapter().parse(raw)
-    assert len(result) == 1
-    f = result[0]
-    assert f.node == "unused_var"
+def test_parse_real_text_single_finding_exact_fields() -> None:
+    """One real vulture line → one Finding with exact field mapping."""
+    findings = _adapter().parse("src/app.py:12: unused function 'helper' (60% confidence)")
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "src/app.py"
+    assert f.message == "src/app.py:12 — unused function 'helper'"
     assert f.severity == "warning"
-    assert f.message == "unused: unused_var"
     assert f.tool == "vulture"
     assert f.layer == "L4"
     assert f.language == "python"
-    assert f.rule_id == "unused"
+    assert f.rule_id == "dead-code"
+    assert f.fix_hint == "Remove dead code at src/app.py:12: unused function 'helper'"
 
 
-def test_parse_valid_finding_with_all_fields() -> None:
-    """Finding with filename + line_no → detail = 'file:line — type: name'."""
-    raw = json.dumps([{
-        "name": "dead_code",
-        "type": "unused",
-        "filename": "src/main.py",
-        "line": 42,
-    }])
-    result = _adapter().parse(raw)
-    assert len(result) == 1
-    f = result[0]
-    assert f.node == "src/main.py"
-    assert f.severity == "warning"
-    assert "src/main.py:42" in f.message
-    assert "unused: dead_code" in f.message
-    assert "Remove unused unused 'dead_code' at src/main.py:42" in f.fix_hint
+def test_parse_real_text_multiple_findings() -> None:
+    """Three real lines → three findings in order."""
+    findings = _adapter().parse(VULTURE_TEXT)
+    assert len(findings) == 3
+    assert findings[0].node == "src/app.py"
+    assert findings[1].message == "src/app.py:30 — unused variable 'tmp'"
+    assert findings[2].node == "src/models.py"
+    for f in findings:
+        assert f.severity == "warning"
+        assert f.rule_id == "dead-code"
+
+
+def test_parse_unreachable_code_line() -> None:
+    """Non-'unused' messages (e.g. unreachable code) are also captured."""
+    findings = _adapter().parse(
+        "src/app.py:7: unreachable code after 'return' (100% confidence)"
+    )
+    assert len(findings) == 1
+    assert findings[0].message == "src/app.py:7 — unreachable code after 'return'"
+
+
+def test_parse_garbage_output_yields_parse_error_finding() -> None:
+    """Non-empty stdout with no parseable lines must NOT be silently empty.
+
+    A silent [] here hides real findings (the bug this test pins): the
+    adapter must surface an error finding instead.
+    """
+    findings = _adapter().parse("usage: vulture [options] [PATH ...]\nboom")
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == "error"
+    assert f.rule_id == "parse-error"
     assert f.tool == "vulture"
 
 
-def test_parse_valid_finding_filename_no_line() -> None:
-    """Line missing (0 or absent) → detail = 'file — type: name' (no :0)."""
-    raw = json.dumps([{
-        "name": "orphan_module",
-        "type": "unused",
-        "filename": "orphan.py",
-        "line": 0,
-    }])
-    result = _adapter().parse(raw)
-    assert len(result) == 1
-    f = result[0]
-    assert f.node == "orphan.py"
-    # When line is 0 (falsy), detail uses filename only + — desc
-    assert "orphan.py" in f.message
-    assert "—" in f.message
-    assert ":0" not in f.message
-
-
-def test_parse_line_no_fallback_to_line() -> None:
-    """'line_no' key used as fallback when 'line' absent."""
-    raw = json.dumps([{
-        "name": "dead_var",
-        "type": "unused",
-        "filename": "x.py",
-        "line_no": 77,
-    }])
-    result = _adapter().parse(raw)
-    assert len(result) == 1
-    assert "77" in result[0].message
-
-
-def test_parse_multiple_findings() -> None:
-    """Multiple valid items → multiple findings in order."""
-    raw = json.dumps([
-        {"name": "func_a", "type": "unused", "filename": "a.py", "line": 5},
-        {"name": "func_b", "type": "unused export", "filename": "b.py", "line": 10},
-        {"name": "var_c", "type": "unused", "filename": "c.py", "line": 15},
-    ])
-    result = _adapter().parse(raw)
-    assert len(result) == 3
-    assert result[0].node == "a.py"
-    assert result[0].message.startswith("a.py:5")
-    assert result[1].node == "b.py"
-    assert result[2].node == "c.py"
-
-
-def test_parse_finding_fix_hint_format(tmp_path: Path) -> None:
-    """fix_hint = "Remove unused {type.lower()} '{name}' at {filepath}:{line}". """
-    raw = json.dumps([{
-        "name": "garbage",
-        "type": "Unused Function",
-        "filename": "test.py",
-        "line": 7,
-    }])
-    result = _adapter().parse(raw)
-    assert len(result) == 1
-    fix_hint = result[0].fix_hint
-    assert "Remove unused" in fix_hint
-    assert "unused function" in fix_hint   # lower()
-    assert "garbage" in fix_hint
-    assert "test.py:7" in fix_hint
-
-
-def test_parse_type_used_in_description() -> None:
-    """Description uses item type field."""
-    raw = json.dumps([{
-        "name": "x",
-        "type": "Unused Import",
-        "filename": "m.py",
-        "line": 1,
-    }])
-    result = _adapter().parse(raw)
-    assert "Unused Import: x" in result[0].message
-
-
-# ---------------------------------------------------------------------------
-# parse() — assert Finding field values precisely
-# ---------------------------------------------------------------------------
-
-def test_parse_finding_all_fields_set(tmp_path: Path) -> None:
-    """Every field on the Finding dataclass is correctly set."""
-    raw = json.dumps([{
-        "name": "dead_code",
-        "type": "unused",
-        "filename": "src/dead.py",
-        "line": 99,
-    }])
-    result = _adapter().parse(raw)
-    f = result[0]
-
-    # All fields present
-    assert f.node == "src/dead.py"
-    assert f.severity == "warning"
-    assert "src/dead.py:99" in f.message
-    assert "Remove unused unused" in f.fix_hint
-    assert f.tool == "vulture"
-    assert f.layer == "L4"
-    assert f.language == "python"
-    assert f.rule_id == "unused"
-    # cve is None by default
-    assert f.cve is None
-    assert f.cwe == ""
-
-
-def test_parse_empty_finding_list_is_empty_list_not_none() -> None:
-    """parse() always returns a list (even when nothing to parse)."""
-    for input_val in ["", "   ", "not json", "{}", "null", "123"]:
-        result = _adapter().parse(input_val)
-        assert result is not None
-        assert isinstance(result, list)
+def test_parse_mixed_lines_keeps_matches_only() -> None:
+    """Valid lines among noise are kept; no parse-error when something matched."""
+    out = "some banner\nsrc/app.py:12: unused function 'helper' (60% confidence)\n"
+    findings = _adapter().parse(out)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "dead-code"
 
 
 def test_parse_return_type_is_list_of_finding() -> None:
     """Return type is list[Finding] — each element is a Finding."""
-    raw = json.dumps([{"name": "x", "type": "unused"}])
-    result = _adapter().parse(raw)
+    result = _adapter().parse(VULTURE_TEXT)
     assert isinstance(result, list)
     for item in result:
         assert isinstance(item, Finding)
 
 
-def test_parse_multiple_findings_all_correct() -> None:
-    """All findings in a multi-item list have correct fields."""
-    raw = json.dumps([
-        {"name": "a", "type": "unused", "filename": "f1.py", "line": 1},
-        {"name": "b", "type": "unused export", "filename": "f2.py", "line": 2},
-    ])
-    findings = _adapter().parse(raw)
-    assert len(findings) == 2
-    for f in findings:
-        assert f.tool == "vulture"
-        assert f.layer == "L4"
-        assert f.language == "python"
-        assert f.severity == "warning"
-        assert f.rule_id == "unused"
+def test_parse_deterministic_on_rerun() -> None:
+    """Parsing is stateless — identical results on rerun."""
+    r1 = _adapter().parse(VULTURE_TEXT)
+    r2 = _adapter().parse(VULTURE_TEXT)
+    assert [f.message for f in r1] == [f.message for f in r2]
 
 
-def test_parse_no_assertion_hang_on_long_run(tmp_path: Path) -> None:
-    """Parsing completes and returns findings deterministically on rerun (no stateful bug)."""
-    raw = json.dumps([{"name": "deterministic", "type": "unused", "filename": "d.py", "line": 1}])
-    r1 = _adapter().parse(raw)
-    r2 = _adapter().parse(raw)
-    assert len(r1) == len(r2)
-    assert r1[0].node == r2[0].node
-    assert r1[0].fix_hint == r2[0].fix_hint
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _ok_invocation(stdout: str = "") -> ToolInvocation:
-    return ToolInvocation(stdout=stdout, stderr="", exitcode=0, duration_seconds=0.1)
+def test_parse_error_finding_every_field_exact() -> None:
+    """Pin every field of the parse-error finding (mutation killers)."""
+    findings = _adapter().parse("usage: vulture [options] [PATH ...]")
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.node == "vulture"
+    assert f.severity == "error"
+    assert f.message == "vulture produced output with no parseable findings"
+    assert f.fix_hint == ("Run vulture manually in the repo to inspect "
+                          "the output (usage error or format drift).")
+    assert f.tool == "vulture"
+    assert f.layer == "L4"
+    assert f.language == "python"
+    assert f.rule_id == "parse-error"

@@ -1,6 +1,14 @@
 """Vulture dead-code detector adapter.
 
-Wraps ``vulture --format json`` into :class:`Finding[]`.
+Wraps plain ``vulture`` text output into :class:`Finding[]`.
+
+vulture has no JSON output mode; it prints one finding per line::
+
+    path.py:12: unused function 'helper' (60% confidence)
+
+The previous implementation passed ``--format json`` (a nonexistent flag,
+usage error -> empty stdout) and parsed JSON the tool never emits — the
+L4 dead-code gate was vacuous (self-eval F8).
 
 Design: Component Responsibilities / vulture_adapter.
 Requirements: FR-29, US-3.
@@ -8,7 +16,7 @@ Requirements: FR-29, US-3.
 
 from __future__ import annotations
 
-import json
+import re
 import shutil
 from pathlib import Path
 from typing import Mapping
@@ -16,9 +24,13 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, source_targets
 
+_LINE_RE = re.compile(
+    r"^(?P<path>.+?):(?P<line>\d+): (?P<desc>.+?) \(\d+% confidence\)\s*$"
+)
+
 
 class VultureAdapter(ToolAdapter):
-    """Wraps ``vulture`` and parses JSON output into unused-code findings."""
+    """Wraps ``vulture`` and parses its text output into dead-code findings."""
 
     _name = "vulture"
 
@@ -47,9 +59,10 @@ class VultureAdapter(ToolAdapter):
         # Scan the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
         targets = source_targets(repo, "src") or [str(repo)]
-        cmd = [binary, "--format", "json", *targets]
+        cmd = [binary]
         if args:
             cmd.extend(args)
+        cmd.extend(targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]
@@ -57,43 +70,48 @@ class VultureAdapter(ToolAdapter):
         stdout: str,
         *_compat: object,
     ) -> list[Finding]:
-        """Parse vulture JSON output into :class:`Finding` objects."""
+        """Parse vulture text lines into :class:`Finding` objects.
+
+        Non-empty output where no line matches the vulture format yields a
+        single parse-error finding — silently returning ``[]`` would hide
+        real findings behind format drift (self-eval F8).
+        """
         findings: list[Finding] = []
         if not stdout.strip():
             return findings
 
-        try:
-            items = json.loads(stdout)
-        except json.JSONDecodeError:
-            return findings
-
-        if not isinstance(items, list):
-            return findings
-
-        for item in items:
-            if not isinstance(item, dict):
+        for line in stdout.splitlines():
+            m = _LINE_RE.match(line.rstrip())
+            if m is None:
                 continue
-            name = item.get("name") or ""
-            item_type = item.get("type") or "unused"
-            filepath = item.get("filename") or ""
-            line_no = item.get("line") or item.get("line_no") or 0
-            desc = f"{item_type}: {name}"
-            detail = desc
-            if filepath:
-                detail = f"{filepath}:{line_no}" if line_no else f"{filepath}"
-                detail += f" — {desc}"
-
+            path = m.group("path")
+            line_no = m.group("line")
+            desc = m.group("desc")
             findings.append(
                 Finding(
-                    node=filepath or name,
+                    node=path,
                     severity="warning",
-                    message=detail,
-                    fix_hint=f"Remove unused {item_type.lower()} '{name}' at {filepath}:{line_no}",
+                    message=f"{path}:{line_no} — {desc}",
+                    fix_hint=f"Remove dead code at {path}:{line_no}: {desc}",
                     tool="vulture",
                     layer="L4",
                     language="python",
-                    rule_id="unused",
+                    rule_id="dead-code",
                 )
             )
 
+        if not findings:
+            findings.append(
+                Finding(
+                    node="vulture",
+                    severity="error",
+                    message="vulture produced output with no parseable findings",
+                    fix_hint="Run vulture manually in the repo to inspect "
+                             "the output (usage error or format drift).",
+                    tool="vulture",
+                    layer="L4",
+                    language="python",
+                    rule_id="parse-error",
+                )
+            )
         return findings

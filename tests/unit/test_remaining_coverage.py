@@ -767,8 +767,8 @@ class TestVultureAdapter:
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
-    def test_parse_no_filepath(self):
-        stdout = json.dumps([{"name": "unused_fn", "type": "function"}])
+    def test_parse_real_text_line(self):
+        stdout = "a.py:3: unused function 'unused_fn' (60% confidence)"
         findings = self._adapter().parse(stdout)
         assert any("unused_fn" in f.message for f in findings)
 

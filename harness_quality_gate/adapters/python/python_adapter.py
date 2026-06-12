@@ -24,7 +24,7 @@ from typing import Mapping
 
 from ...bmad.diversity_metric import diversity
 from ...models import Finding, LayerResult, MutationStats
-from ..base import BaseAdapter
+from ..base import BaseAdapter, package_dirs
 from .antipattern_tier_a import run_tier_a
 from .bandit_adapter import BanditAdapter
 from .deptry_adapter import DeptryAdapter
@@ -208,7 +208,9 @@ class PythonAdapter(BaseAdapter):
         logger.info("antipattern-tier-a: %d findings", len(tier_a_findings))
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Uniform severity policy: only error findings gate; solid-metrics
+        # and Tier A emit warnings (heuristic counsel, self-eval F11).
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L3B",
@@ -284,9 +286,18 @@ class PythonAdapter(BaseAdapter):
 
     @staticmethod
     def _src_dir(repo: Path) -> Path:
-        """Return the source directory: ``repo/src`` when present, else repo."""
+        """Return the source dir: ``src/``, else the root package, else repo.
+
+        Falling straight back to the repo walked ``.venv/`` and ``mutants/``
+        too — L2/L3B hung for minutes on real repos (self-eval F10).
+        """
         src = repo / "src"
-        return src if src.is_dir() else repo
+        if src.is_dir():
+            return src
+        pkgs = package_dirs(repo)
+        if pkgs:
+            return repo / pkgs[0]
+        return repo
 
     def _weak_test_findings(self, repo: Path) -> list[Finding]:
         """Run weak-test analysis (A1-A8) and convert violations to Findings."""

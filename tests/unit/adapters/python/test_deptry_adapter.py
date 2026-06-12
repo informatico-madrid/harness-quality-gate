@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
 from harness_quality_gate.models import Finding
 
@@ -412,18 +413,25 @@ class TestInvoke:
         assert "deptry not found on PATH" in inv.stderr
 
     def test_invoke_binary_found(self, adapter):
-        """deptry on PATH → runs with --output json."""
-        mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
+        """deptry on PATH → runs with --json-output to a temp file (F9).
+
+        ``--output json`` does not exist in deptry; it caused a usage error
+        and the dependency gate was vacuous.
+        """
+        mock_result = MagicMock(stdout="", stderr="", exitcode=0)
         with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
         mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        assert call_args.args[0] == [
-            "/bin/deptry", "--output", "json",
+        cmd = mock_run.call_args.args[0]
+        assert cmd[0] == "/bin/deptry"
+        assert cmd[1] == "--json-output"
+        assert cmd[2].endswith(".json")
+        assert cmd[3:] == [
             "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
             ".",
         ]
+        assert "--output" not in cmd
 
     def test_invoke_with_extra_args(self, adapter):
         """Extra args appended to command."""
@@ -431,9 +439,9 @@ class TestInvoke:
         with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), ["--extend-exclude", "tests/"])
-        call_args = mock_run.call_args
-        assert call_args.args[0] == [
-            "/bin/deptry", "--output", "json",
+        cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "--json-output"
+        assert cmd[3:] == [
             "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
             ".", "--extend-exclude", "tests/",
         ]
@@ -444,9 +452,9 @@ class TestInvoke:
         with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
-        call_args = mock_run.call_args
-        assert call_args.args[0] == [
-            "/bin/deptry", "--output", "json",
+        cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "--json-output"
+        assert cmd[3:] == [
             "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
             ".",
         ]
@@ -490,8 +498,10 @@ class TestInvoke:
         mock_run.assert_called_once()
         call_args = mock_run.call_args
         cmd = call_args[0][0]
-        assert cmd == [
-            "/bin/deptry", "--output", "json",
+        assert cmd[0] == "/bin/deptry"
+        assert cmd[1] == "--json-output"
+        assert cmd[2].endswith(".json")
+        assert cmd[3:] == [
             "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
             ".", "--extend-exclude", "docs/",
         ]
@@ -672,3 +682,107 @@ class TestProperties:
         assert f.fix_hint == "Review unused_imports for 'bare_module'"
         assert f.tool == "deptry"
         assert f.rule_id == "unused_imports"
+
+
+# ---------------------------------------------------------------------------
+# F9: real deptry contract — temp-file JSON + 0.25 list format
+# ---------------------------------------------------------------------------
+
+
+class TestJsonTempFileContract:
+    """invoke() reads the --json-output temp file back into stdout."""
+
+    def test_stdout_recomposed_from_json_file(self, adapter, tmp_path):
+        payload = '[{"error": {"code": "DEP002", "message": "m"}, "module": "x", "location": null}]'
+
+        def fake_run(cmd, *, cwd=None, env=None, timeout=None):
+            Path(cmd[2]).write_text(payload)
+            return ToolInvocation(stdout="terminal noise", stderr="", exitcode=1,
+                                  duration_seconds=0.2)
+
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
+                   return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", side_effect=fake_run) as mock_run:
+                inv = adapter.invoke(tmp_path, [])
+        json_file = Path(mock_run.call_args.args[0][2])
+        assert inv.stdout == payload          # report comes from the file
+        assert inv.exitcode == 1              # exit code passes through
+        assert not json_file.exists()         # temp file cleaned up
+
+    def test_missing_json_file_yields_empty_stdout(self, adapter, tmp_path):
+        def fake_run(cmd, *, cwd=None, env=None, timeout=None):
+            Path(cmd[2]).unlink(missing_ok=True)  # deptry crashed before writing
+            return ToolInvocation(stdout="", stderr="boom", exitcode=2,
+                                  duration_seconds=0.1)
+
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
+                   return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", side_effect=fake_run):
+                inv = adapter.invoke(tmp_path, [])
+        assert inv.stdout == ""
+        assert inv.exitcode == 2
+
+
+class TestParseRealListFormat:
+    """deptry >= 0.12 emits a JSON list of violation objects."""
+
+    REAL = json.dumps([
+        {"error": {"code": "DEP001", "message": "'foo' imported but missing from the dependency definitions"},
+         "module": "foo",
+         "location": {"file": "pkg/mod.py", "line": 3, "column": 1}},
+        {"error": {"code": "DEP002", "message": "'pytest' defined as a dependency but not used in the codebase"},
+         "module": "pytest",
+         "location": {"file": "pyproject.toml", "line": None, "column": None}},
+    ])
+
+    def test_two_items_parsed_with_exact_fields(self, adapter):
+        findings = adapter.parse(self.REAL)
+        assert len(findings) == 2
+        dep001, dep002 = findings
+        assert dep001.rule_id == "DEP001"
+        assert dep001.severity == "error"     # missing dep = packaging bug
+        assert dep001.node == "pkg/mod.py"
+        assert dep001.message == "pkg/mod.py:3 — 'foo' imported but missing from the dependency definitions"
+        assert dep001.tool == "deptry"
+        assert dep001.layer == "L4"
+        assert dep002.rule_id == "DEP002"
+        assert dep002.severity == "warning"   # unused dep = hygiene
+        assert dep002.node == "pyproject.toml"
+        assert dep002.message == "pyproject.toml — 'pytest' defined as a dependency but not used in the codebase"
+
+    def test_null_location_handled(self, adapter):
+        findings = adapter.parse(json.dumps([
+            {"error": {"code": "DEP003", "message": "transitive"}, "module": "m",
+             "location": None},
+        ]))
+        assert len(findings) == 1
+        assert findings[0].node == "m"
+        assert findings[0].message == "transitive"
+        assert findings[0].severity == "warning"
+
+    def test_non_dict_items_skipped(self, adapter):
+        findings = adapter.parse('["junk", 42, {"error": {"code": "DEP002", "message": "x"}, "module": "m"}]')
+        assert len(findings) == 1
+        assert findings[0].rule_id == "DEP002"
+
+    def test_empty_list_no_findings(self, adapter):
+        assert adapter.parse("[]") == []
+
+
+class TestParseRealListFormatKillers:
+    """Exact-equality killers for the violation-list parser defaults."""
+
+    def test_missing_message_and_module_yield_exact_defaults(self, adapter):
+        findings = adapter.parse(json.dumps([{"error": {"code": "DEP002"}}]))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.message == ""          # missing message stays empty
+        assert f.node == "<unknown>"    # no file, no module
+        assert f.rule_id == "DEP002"
+        assert f.fix_hint == "Review DEP002 for ''"
+
+    def test_missing_code_defaults_to_dep(self, adapter):
+        findings = adapter.parse(json.dumps([{"error": {}, "module": "m"}]))
+        assert findings[0].rule_id == "DEP"
+        assert findings[0].node == "m"
+        assert findings[0].severity == "warning"

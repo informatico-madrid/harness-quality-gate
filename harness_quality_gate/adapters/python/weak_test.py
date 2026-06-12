@@ -174,6 +174,11 @@ class WeakTestVisitor(ast.NodeVisitor):
                     self.current_test["mocks"] += 1
                 if node.func.attr == "sleep":
                     self.current_test["has_sleep"] = True
+                # mock assert methods (assert_called_once_with, ...) and
+                # unittest-style self.assertEqual are assertions too —
+                # not counting them flagged spy-based tests as A1 (F13).
+                if node.func.attr.startswith("assert"):
+                    self.current_test["assertions"] += 1
 
         self.generic_visit(node)
 
@@ -212,12 +217,21 @@ class WeakTestVisitor(ast.NodeVisitor):
         if self.current_test is not None:
             for item in node.items:
                 if isinstance(item.context_expr, ast.Call):
-                    if isinstance(item.context_expr.func, ast.Attribute):
-                        if item.context_expr.func.attr == "raises":
-                            if len(node.body) == 0 or (
-                                len(node.body) == 1 and isinstance(node.body[0], ast.Pass)
-                            ):
-                                self.current_test["has_empty_raises"] = True
+                    func = item.context_expr.func
+                    name = (
+                        func.attr if isinstance(func, ast.Attribute)
+                        else func.id if isinstance(func, ast.Name)
+                        else ""
+                    )
+                    if name in ("raises", "warns"):
+                        if len(node.body) == 0 or (
+                            len(node.body) == 1 and isinstance(node.body[0], ast.Pass)
+                        ):
+                            self.current_test["has_empty_raises"] = True
+                        else:
+                            # a non-empty raises/warns block asserts the
+                            # exception contract — count it (F13)
+                            self.current_test["assertions"] += 1
 
         self.generic_visit(node)
 

@@ -46,8 +46,10 @@ class BanditAdapter(ToolAdapter):
             return ToolInvocation(stderr="bandit not found on PATH", exitcode=3)
         # Recurse the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
+        # -q keeps bandit 1.9's progress bar out of stdout — it corrupts
+        # the JSON report otherwise (self-eval F7).
         targets = source_targets(repo, "src") or [str(repo)]
-        cmd = [binary, "-r", "--format", "json", *targets]
+        cmd = [binary, "-r", "-q", "--format", "json", *targets]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
@@ -65,7 +67,21 @@ class BanditAdapter(ToolAdapter):
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError:
-            return findings
+            # Non-empty unparseable output must not pass silently — that
+            # turned every bandit run into a vacuous L4 PASS (self-eval F7).
+            return [
+                Finding(
+                    node="bandit",
+                    severity="error",
+                    message="bandit produced unparseable JSON output",
+                    fix_hint="Run bandit manually in the repo to inspect "
+                             "the output (progress noise or crash).",
+                    tool="bandit",
+                    layer="L4",
+                    language="python",
+                    rule_id="parse-error",
+                )
+            ]
 
             # the isinstance guard below collapses a missing key — no default needed
         issues = data.get("results") if isinstance(data, dict) else []

@@ -55,6 +55,23 @@ def _file_glob_for_language(language: str) -> list[str]:
     return ["test_*.py"]
 
 
+# Tool/artifact dirs never holding the project's own tests (self-eval F12):
+# sweeping .venv/ and mutants/ pulled in thousands of third-party files.
+_ARTIFACT_DIRS = {"venv", "mutants", "node_modules", "vendor", "__pycache__"}
+
+# Pairwise Levenshtein is O(n²); above this many tests the matrix runs on
+# a deterministic stride sample (self-eval F12: 2700 tests hung for 30+ min).
+_MAX_PAIRWISE_TESTS = 300
+
+
+def _is_artifact_path(test_file: Path, repo: Path) -> bool:
+    """True when *test_file* sits under a hidden or artifact directory."""
+    return any(
+        part in _ARTIFACT_DIRS or part.startswith(".")
+        for part in test_file.relative_to(repo).parts[:-1]
+    )
+
+
 def _extract_tests_python(filepath: Path) -> list[dict[str, Any]]:
     """Extract test functions from a Python file."""
     try:
@@ -202,8 +219,8 @@ def diversity(repo: Path, language: str, **kw: dict[str, Any]) -> dict[str, Any]
 
     all_tests: list[dict[str, Any]] = []
     for pattern in patterns:
-        for test_file in repo.rglob(pattern):
-            if "__pycache__" in str(test_file):
+        for test_file in sorted(repo.rglob(pattern)):
+            if _is_artifact_path(test_file, repo):
                 continue
             if language == "php":
                 tests = _extract_tests_php(test_file)
@@ -213,7 +230,16 @@ def diversity(repo: Path, language: str, **kw: dict[str, Any]) -> dict[str, Any]
                 t["file"] = str(test_file.relative_to(repo))
                 all_tests.append(t)
 
-    result = _compute_diversity(all_tests)
+    total = len(all_tests)
+    sampled = all_tests
+    if total > _MAX_PAIRWISE_TESTS:
+        # deterministic stride sample spread across the whole suite
+        stride = total / _MAX_PAIRWISE_TESTS
+        sampled = [all_tests[int(i * stride)] for i in range(_MAX_PAIRWISE_TESTS)]
+
+    result = _compute_diversity(sampled)
+    result["total_tests"] = total
+    result["sample_size"] = len(sampled)
     return result
 
 

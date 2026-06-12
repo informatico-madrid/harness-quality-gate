@@ -37,9 +37,19 @@ class TestParseEmptyAndInvalid:
         assert _adapter().parse("") == []
         assert _adapter().parse("   ") == []
 
-    def test_invalid_json(self):
-        """Non-JSON stdout → no findings."""
-        assert _adapter().parse("not json at all") == []
+    def test_invalid_json_yields_parse_error_finding(self):
+        """Non-empty unparseable stdout must NOT be silently empty (F7).
+
+        bandit 1.9 writes a rich progress bar to stdout before the JSON;
+        a silent [] turned every L4 bandit run into a vacuous PASS.
+        """
+        findings = _adapter().parse("Working... ----- 100% 0:00:00\nnot json")
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == "error"
+        assert f.rule_id == "parse-error"
+        assert f.tool == "bandit"
+        assert f.layer == "L4"
 
     def test_json_not_dict(self):
         """JSON array instead of dict → no findings."""
@@ -530,3 +540,37 @@ class TestProperties:
         }]}))
         # Name verified through finding
         assert any(f.tool == "bandit" for f in findings)
+
+
+class TestInvokeQuietFlag:
+    """invoke() must pass -q so the progress bar stays out of stdout (F7)."""
+
+    def test_cmd_includes_quiet_flag(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        adapter = _adapter()
+        with (
+            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+                  return_value="/usr/bin/bandit"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(tmp_path, [])
+        cmd = run.call_args.args[0]
+        assert cmd[:5] == ["/usr/bin/bandit", "-r", "-q", "--format", "json"]
+
+
+class TestParseErrorFindingExact:
+    """Pin every field of the bandit parse-error finding (mutation killers)."""
+
+    def test_every_field_exact(self):
+        findings = _adapter().parse("Working... not json")
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "bandit"
+        assert f.severity == "error"
+        assert f.message == "bandit produced unparseable JSON output"
+        assert f.fix_hint == ("Run bandit manually in the repo to inspect "
+                              "the output (progress noise or crash).")
+        assert f.tool == "bandit"
+        assert f.layer == "L4"
+        assert f.language == "python"
+        assert f.rule_id == "parse-error"

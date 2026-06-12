@@ -957,12 +957,13 @@ def test_pyright_adapter_parse_non_dict_diag() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_vulture_adapter_parse_json_decode_error() -> None:
-    """Lines 65-66: JSONDecodeError in vulture parse returns []."""
+def test_vulture_adapter_parse_unmatched_output() -> None:
+    """Non-empty output with no vulture lines -> parse-error finding (F8)."""
     from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
     a = VultureAdapter()
-    findings = a.parse("not valid json", "", 1)
-    assert findings == []
+    findings = a.parse("not valid output", "", 1)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "parse-error"
 
 
 # ---------------------------------------------------------------------------
