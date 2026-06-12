@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation
+from ..base import ToolAdapter, ToolInvocation, source_targets
 
 
 class VultureAdapter(ToolAdapter):
@@ -44,10 +44,10 @@ class VultureAdapter(ToolAdapter):
         binary = shutil.which("vulture")
         if binary is None:
             return ToolInvocation(stderr="vulture not found on PATH", exitcode=3)
-        # Scan src/ only (the skill's step invokes ``vulture src/``);
-        # the whole repo would sweep mutation artifacts too (H10).
-        target = repo / "src" if (repo / "src").is_dir() else repo
-        cmd = [binary, "--format", "json", str(target)]
+        # Scan the source dirs only (src/ or root packages, never tests);
+        # the whole repo would sweep mutation artifacts too (H10/F2).
+        targets = source_targets(repo, "src") or [str(repo)]
+        cmd = [binary, "--format", "json", *targets]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)

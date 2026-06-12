@@ -3481,6 +3481,40 @@ class TestL1MutmutRunWiring:
         assert layer.passed is True
 
 
+class TestL3ASeverityGate:
+    """L3A gates only on error findings (uniform severity policy, self-eval F1).
+
+    The simulation fixed L1/L4 (Python) and all PHP layers; Python L3A kept
+    the old ``len(findings) == 0`` gate — any ruff warning blocked the layer.
+    """
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_l3a_warning_and_info_findings_do_not_gate(self, tmp_path: Path):
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[_make_finding(severity="warning")])
+        a.pyright = _mock_subadapter(
+            findings=[_make_finding(severity="info", tool="pyright")]
+        )
+        layer = a.run_l3a(tmp_path, {})
+        assert layer.passed is True
+        assert len(layer.findings) == 2  # reported, just not blocking
+
+    def test_l3a_error_among_warnings_gates(self, tmp_path: Path):
+        a = self._adapter()
+        a.ruff = _mock_subadapter(
+            findings=[
+                _make_finding(severity="warning"),
+                _make_finding(severity="error"),
+            ]
+        )
+        a.pyright = _mock_subadapter(findings=[])
+        layer = a.run_l3a(tmp_path, {})
+        assert layer.passed is False
+
+
 class TestL1SeverityGate:
     def _layer(self, tmp_path, findings):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter

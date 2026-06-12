@@ -178,7 +178,9 @@ class VisitorRunnerAdapter(ToolAdapter):
         """
         if not isinstance(item, dict):
             return None
-        filepath = item.get("file", item.get("path", ""))
+        raw_path = item.get("file", item.get("path", ""))
+        # JSON "file": null (or non-string garbage) must not leak into node
+        filepath = raw_path if isinstance(raw_path, str) else ""
         line = item.get("line")
         rule_id = item.get("rule_id", "")
         message = item.get("message", "")

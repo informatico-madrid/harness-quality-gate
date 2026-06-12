@@ -56,17 +56,23 @@ class MutmutAdapter(ToolAdapter):
         repo: Path,
         *,
         env: Mapping[str, str] | None = None,
-        timeout: float = 1800.0,
+        timeout: float = 3600.0,
     ) -> ToolInvocation:
         """Execute the mutation campaign (``mutmut run``) in *repo*.
 
         L1 collects results right after; parity with PHP's Infection,
-        which the PhpAdapter also executes inline.
+        which the PhpAdapter also executes inline. ``MUTATION_MAX_CHILDREN``
+        in *env* caps parallelism — without it mutmut spawns one child per
+        core, which produces false timeouts on many-core hosts (self-eval F3).
         """
         binary = shutil.which("mutmut")
         if binary is None:
             return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
-        return self._run([binary, "run"], cwd=repo, env=env, timeout=timeout)
+        cmd = [binary, "run"]
+        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")
+        if max_children.isdigit():
+            cmd.extend(["--max-children", max_children])
+        return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]
         self,

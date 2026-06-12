@@ -310,7 +310,9 @@ class TestScanTargetsExcludeMutationArtifacts:
         assert run.call_args.args[0] == ["/usr/bin/ruff", "check",
                                          "--output-format=json", "."]
 
-    def test_pyright_targets_src_and_tests_when_present(self, tmp_path: Path) -> None:
+    def test_pyright_targets_only_src_when_present(self, tmp_path: Path) -> None:
+        """step-03a contract is ``pyright src/`` — source dirs only, no tests
+        (ruff lints tests; pyright gates the shipped sources, self-eval F6)."""
         repo = self._repo(tmp_path)
         adapter = PyrightAdapter()
         with (
@@ -320,7 +322,7 @@ class TestScanTargetsExcludeMutationArtifacts:
         ):
             adapter.invoke(repo, [])
         assert run.call_args.args[0] == ["/usr/bin/pyright", "--outputjson",
-                                         "src", "tests"]
+                                         "src"]
 
     def test_bandit_recurses_only_src_when_present(self, tmp_path: Path) -> None:
         repo = self._repo(tmp_path)
@@ -332,7 +334,7 @@ class TestScanTargetsExcludeMutationArtifacts:
         ):
             adapter.invoke(repo, [])
         assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
-                                         "json", str(repo / "src")]
+                                         "json", "src"]
 
     def test_vulture_scans_only_src_when_present(self, tmp_path: Path) -> None:
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
@@ -345,7 +347,7 @@ class TestScanTargetsExcludeMutationArtifacts:
         ):
             adapter.invoke(repo, [])
         assert run.call_args.args[0] == ["/usr/bin/vulture", "--format",
-                                         "json", str(repo / "src")]
+                                         "json", "src"]
 
     def test_deptry_extends_excludes_with_mutation_artifacts(self, tmp_path: Path) -> None:
         adapter = DeptryAdapter()
@@ -384,3 +386,123 @@ class TestScanTargetsExcludeMutationArtifacts:
             adapter.invoke(tmp_path, [])
         cmd = run.call_args.args[0]
         assert cmd[-1] == "junit_suite_name=pytest"
+
+
+class TestPackageAtRootLayout:
+    """Self-eval F2: repos with the package at the repo root (no src/) were
+    only partially scanned — source_targets must also detect top-level
+    Python packages (dirs with __init__.py), still excluding mutation
+    artifacts and conventional non-package dirs."""
+
+    def _pkg_repo(self, tmp_path: Path) -> Path:
+        (tmp_path / "mypkg").mkdir()
+        (tmp_path / "mypkg" / "__init__.py").write_text("")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "__init__.py").write_text("")
+        (tmp_path / "mutants").mkdir()
+        (tmp_path / "mutants" / "mypkg").mkdir()
+        (tmp_path / "plans").mkdir()  # plain dir without __init__.py
+        (tmp_path / "stray.py").write_text("")
+        return tmp_path
+
+    def test_source_targets_detects_root_package(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.base import source_targets
+        repo = self._pkg_repo(tmp_path)
+        assert source_targets(repo, "src", "tests") == ["tests", "mypkg"]
+
+    def test_source_targets_multiple_packages_sorted(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.base import source_targets
+        repo = self._pkg_repo(tmp_path)
+        (repo / "apkg").mkdir()
+        (repo / "apkg" / "__init__.py").write_text("")
+        assert source_targets(repo, "src", "tests") == ["tests", "apkg", "mypkg"]
+
+    def test_source_targets_deduplicates_candidate_packages(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.base import source_targets
+        repo = self._pkg_repo(tmp_path)
+        assert source_targets(repo, "mypkg") == ["mypkg"]
+
+    def test_source_targets_excludes_non_package_and_hidden_dirs(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.base import source_targets
+        repo = self._pkg_repo(tmp_path)
+        for name in ("test", "docs", "examples", "scripts", ".hidden"):
+            (repo / name).mkdir()
+            (repo / name / "__init__.py").write_text("")
+        assert source_targets(repo, "src") == ["mypkg"]
+
+    def test_source_targets_src_layout_unchanged(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.base import source_targets
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        assert source_targets(tmp_path, "src", "tests") == ["src", "tests"]
+
+    def test_ruff_targets_root_package(self, tmp_path: Path) -> None:
+        repo = self._pkg_repo(tmp_path)
+        adapter = RuffAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+                  return_value="/usr/bin/ruff"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/ruff", "check",
+                                         "--output-format=json",
+                                         "tests", "mypkg"]
+
+    def test_bandit_targets_root_package_not_tests(self, tmp_path: Path) -> None:
+        repo = self._pkg_repo(tmp_path)
+        adapter = BanditAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+                  return_value="/usr/bin/bandit"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
+                                         "json", "mypkg"]
+
+    def test_vulture_targets_root_package_not_tests(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
+        repo = self._pkg_repo(tmp_path)
+        adapter = VultureAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
+                  return_value="/usr/bin/vulture"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/vulture", "--format",
+                                         "json", "mypkg"]
+
+    def test_bandit_falls_back_to_repo_root_without_packages(self, tmp_path: Path) -> None:
+        adapter = BanditAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+                  return_value="/usr/bin/bandit"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(tmp_path, [])
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
+                                         "json", str(tmp_path)]
+
+    def test_source_targets_nonexistent_repo_no_crash(self, tmp_path: Path) -> None:
+        """A repo path that does not exist must not crash package detection.
+
+        Several adapter tests (and degraded runs) pass paths that were never
+        created; iterdir() on them raised FileNotFoundError (F2 regression).
+        """
+        from harness_quality_gate.adapters.base import source_targets
+        ghost = tmp_path / "does-not-exist"
+        assert source_targets(ghost, "src", "tests") == []
+
+    def test_pyright_targets_root_package_not_tests(self, tmp_path: Path) -> None:
+        repo = self._pkg_repo(tmp_path)
+        adapter = PyrightAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
+                  return_value="/usr/bin/pyright"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/pyright", "--outputjson",
+                                         "mypkg"]

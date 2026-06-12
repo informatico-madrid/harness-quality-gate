@@ -42,16 +42,44 @@ class ToolInvocation:
     duration_seconds: float = 0.0
 
 
+# Conventional top-level dirs that hold Python files but are not the
+# shipped package (bandit/vulture must not sweep tests, for example).
+_NON_PACKAGE_DIRS = frozenset({"test", "tests", "docs", "examples", "scripts"})
+
+
+def package_dirs(repo: Path) -> list[str]:
+    """Top-level Python package dirs (package-at-root layout, self-eval F2).
+
+    A package is a non-hidden top-level directory containing ``__init__.py``,
+    excluding conventional non-package dirs. Mutation artifacts never match:
+    ``mutants/`` has no top-level ``__init__.py``. A *repo* path that does
+    not exist yields no packages (degraded runs pass paths never created).
+    """
+    if not repo.is_dir():
+        return []
+    return sorted(
+        child.name
+        for child in repo.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and child.name not in _NON_PACKAGE_DIRS
+        and (child / "__init__.py").is_file()
+    )
+
+
 def source_targets(repo: Path, *candidates: str) -> list[str]:
     """Return the repo-relative scan targets among *candidates* that exist.
 
-    The skill contract requires ``src/`` and ``tests/`` in the target repo;
+    The skill contract prefers ``src/`` and ``tests/`` in the target repo;
     scanning the whole repo would also sweep the mutation artifacts
     (``mutants/``, mutmut cache) that L1's own campaign generates
-    (simulation bug H10). Callers fall back to the repo root when none of
-    the candidate directories exist.
+    (simulation bug H10). Repos with the package at the root (no ``src/``)
+    additionally get their top-level packages appended (self-eval F2).
+    Callers fall back to the repo root when nothing matches.
     """
-    return [c for c in candidates if (repo / c).is_dir()]
+    targets = [c for c in candidates if (repo / c).is_dir()]
+    targets.extend(p for p in package_dirs(repo) if p not in targets)
+    return targets
 
 
 # ---------------------------------------------------------------------------

@@ -53,8 +53,9 @@ class PyrightAdapter(ToolAdapter):
         cmd = [binary, "--outputjson"]
         if args:
             cmd.extend(args)
-        # src/tests only — keep mutation artifacts out of the scan (H10).
-        cmd.extend(source_targets(repo, "src", "tests") or [str(repo)])
+        # Source dirs only (step-03a contract: ``pyright src/``) — ruff lints
+        # tests; mutation artifacts stay out of the scan (H10/F6).
+        cmd.extend(source_targets(repo, "src") or [str(repo)])
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     @staticmethod

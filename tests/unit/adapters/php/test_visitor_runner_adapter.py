@@ -292,6 +292,25 @@ class TestBuildFinding:
         assert finding is not None
         assert finding.node == ":1"
 
+    def test_build_finding_null_file_with_line(self) -> None:
+        """JSON ``"file": null`` must not leak the literal 'None' into node."""
+        finding = VisitorRunnerAdapter._build_finding({"file": None, "line": 3})
+        assert finding is not None
+        assert finding.node == ":3"
+
+    def test_build_finding_null_file_no_line(self) -> None:
+        """JSON ``"file": null`` without line → node is empty str, never None."""
+        finding = VisitorRunnerAdapter._build_finding({"file": None})
+        assert finding is not None
+        assert finding.node == ""
+        assert isinstance(finding.node, str)
+
+    def test_build_finding_non_string_file(self) -> None:
+        """A non-string file value (malformed JSON) degrades to empty path."""
+        finding = VisitorRunnerAdapter._build_finding({"file": 123, "line": 7})
+        assert finding is not None
+        assert finding.node == ":7"
+
 
 # ===========================================================================
 # _merge_findings()

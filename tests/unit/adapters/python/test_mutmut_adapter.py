@@ -625,8 +625,32 @@ def test_run_executes_mutation_campaign(tmp_path: Path) -> None:
     cmd = run.call_args[0][0]
     assert cmd == ["/usr/bin/mutmut", "run"]
     assert run.call_args.kwargs["cwd"] == tmp_path
-    assert run.call_args.kwargs["timeout"] == 1800.0
+    # Full campaigns on large repos (~7000 mutants on 18 children ≈ 25 min)
+    # overflow the old 1800 s budget (self-eval F3).
+    assert run.call_args.kwargs["timeout"] == 3600.0
     assert inv.exitcode == 0
+
+
+def test_run_honors_mutation_max_children_env(tmp_path: Path) -> None:
+    """MUTATION_MAX_CHILDREN caps mutmut's parallelism (self-eval F3).
+
+    Without the cap mutmut spawns one child per core; on >18-core hosts
+    that produces false timeouts (project convention: .env sets 18).
+    """
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            _adapter().run(tmp_path, env={"MUTATION_MAX_CHILDREN": "18"})
+    assert run.call_args.args[0] == [
+        "/usr/bin/mutmut", "run", "--max-children", "18",
+    ]
+
+
+def test_run_ignores_invalid_mutation_max_children(tmp_path: Path) -> None:
+    """A non-numeric MUTATION_MAX_CHILDREN is ignored, not passed through."""
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            _adapter().run(tmp_path, env={"MUTATION_MAX_CHILDREN": "lots"})
+    assert run.call_args.args[0] == ["/usr/bin/mutmut", "run"]
 
 
 def test_run_binary_not_found_degrades(tmp_path: Path) -> None:

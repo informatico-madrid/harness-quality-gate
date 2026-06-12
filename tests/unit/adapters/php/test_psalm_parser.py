@@ -310,6 +310,43 @@ def test_make_finding_without_line() -> None:
     assert f.severity == "warning"
 
 
+def test_make_finding_null_taint_type_no_message() -> None:
+    """taint_type=None (JSON "type": null) → message is empty str, never None."""
+    f = PsalmTaintAdapter._make_finding(
+        file_name="src/x.php",
+        line=None,
+        taint_type=None,
+        message=None,
+        severity="error",
+    )
+    assert f.message == ""
+    assert f.rule_id is None
+    assert f.fix_hint is None
+
+
+def test_make_finding_null_taint_type_with_message() -> None:
+    """taint_type=None with message → message keeps the detail, str-typed."""
+    f = PsalmTaintAdapter._make_finding(
+        file_name="src/x.php",
+        line=2,
+        taint_type=None,
+        message="detail",
+        severity="error",
+    )
+    assert f.message == ": detail"
+    assert f.node == "src/x.php:2"
+
+
+def test_parse_array_null_type_treated_as_taint() -> None:
+    """JSON "type": null is the missing-key sentinel → finding with str message."""
+    data = [{"type": None, "file_name": "src/x.php", "line_from": 3}]
+    findings = _adapter().parse(json.dumps(data), "", 0)
+    assert len(findings) == 1
+    assert findings[0].message == ""
+    assert findings[0].node == "src/x.php:3"
+    assert isinstance(findings[0].message, str)
+
+
 def test_extract_type_valid_none_treated_as_taint() -> None:
     """None raw_type must be treated as taint (kills mutmut on .get default)."""
     from harness_quality_gate.adapters.php.psalm_taint_adapter import PsalmTaintAdapter

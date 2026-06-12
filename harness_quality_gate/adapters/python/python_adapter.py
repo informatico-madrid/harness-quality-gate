@@ -101,7 +101,9 @@ class PythonAdapter(BaseAdapter):
         logger.info("pyright: %d findings", len(pyright_findings))
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Uniform severity policy: only error findings gate (warnings/info
+        # are reported but non-blocking), same as L1/L4 and all PHP layers.
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L3A",

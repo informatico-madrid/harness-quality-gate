@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -93,7 +94,7 @@ class PsalmTaintAdapter(ToolAdapter):
         result = subprocess.run(
             [*cmd, "--version"],
             cwd=str(repo),
-            env={**__import__("os").environ, **(env or {})},
+            env={**os.environ, **(env or {})},
             capture_output=True,
             text=True,
             timeout=30,
@@ -120,7 +121,7 @@ class PsalmTaintAdapter(ToolAdapter):
     @staticmethod
     def _extract_type_valid(
         raw_type: str | None,
-    ) -> tuple[str | None, bool, bool]:
+    ) -> tuple[str | None, bool]:
         """Extract type validity from raw Psalm JSON input.
 
         Returns ``(raw_type, is_taint)``:
@@ -253,15 +254,20 @@ class PsalmTaintAdapter(ToolAdapter):
     def _make_finding(
         file_name: str,
         line: int | None,
-        taint_type: str,
+        taint_type: str | None,
         message: str | None,
         severity: str,
     ) -> Finding:
-        """Build a :class:`Finding` from a single Psalm taint issue."""
+        """Build a :class:`Finding` from a single Psalm taint issue.
+
+        ``taint_type`` may be None (JSON ``"type": null`` sentinel); the
+        message stays str-typed so the Finding never carries a None message.
+        """
         node = file_name
         if line:
             node = f"{file_name}:{line}"
-        desc = f"{taint_type}: {message}" if message else taint_type
+        label = taint_type or ""
+        desc = f"{label}: {message}" if message else label
         return Finding(
             node=node,
             severity=severity,

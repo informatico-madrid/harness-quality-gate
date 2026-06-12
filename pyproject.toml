@@ -13,7 +13,12 @@ requires-python = ">=3.10"
 description = "Polyglot quality gate for code repositories"
 readme = "README.md"
 license = {text = "MIT"}
-dependencies = []
+# config.py imports yaml and checkpoint.py imports jsonschema at module
+# level — the CLI cannot run without them (self-eval F5).
+dependencies = [
+    "PyYAML",
+    "jsonschema",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -22,9 +27,10 @@ dev = [
     "mutmut>=3.5.0",
     "ruff",
     "mypy",
+    "types-jsonschema",
+    "types-PyYAML",
     "responses",
-    "jsonschema",
-    "PyYAML",
+    "radon",
 ]
 
 [tool.pytest.ini_options]
@@ -38,6 +44,12 @@ markers = [
     "needs_composer",
 ]
 norecursedirs = ["fixtures", "mutants", ".mutmut", ".git", "__pycache__", ".venv"]
+
+[tool.mypy]
+# radon is an optional algorithm library (guarded import in solid_metrics)
+[[tool.mypy.overrides]]
+module = "radon.*"
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["harness_quality_gate"]

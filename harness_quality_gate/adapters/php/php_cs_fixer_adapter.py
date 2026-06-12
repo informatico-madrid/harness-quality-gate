@@ -9,6 +9,7 @@ Requirements: FR-8, US-3.
 from __future__ import annotations
 
 import json
+import os
 import logging
 import shutil
 import subprocess
@@ -55,7 +56,7 @@ class PhpCsFixerAdapter(ToolAdapter):
         result = subprocess.run(
             [*cmd, "--version"],
             cwd=str(repo),
-            env={**__import__("os").environ, **(env or {})},
+            env={**os.environ, **(env or {})},
             capture_output=True,
             text=True,
             timeout=30,
