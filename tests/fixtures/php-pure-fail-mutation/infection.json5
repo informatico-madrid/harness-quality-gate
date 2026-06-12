@@ -1,0 +1,8 @@
+{
+    "source": {
+        "directories": ["src"]
+    },
+    "minMsi": 100,
+    "minCoveredMsi": 100,
+    "tmpDir": "var/infection"
+}

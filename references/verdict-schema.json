@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-quality-gate.dev/schemas/verdict-v2",
+  "title": "Quality Gate Checkpoint v2",
+  "description": "Checkpoint v2 JSON contract — language-aware sub-blocks per layer",
+  "type": "object",
+  "required": ["version", "timestamp", "repository", "language", "layers"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "v2"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string",
+      "enum": ["python", "php", "hybrid"]
+    },
+    "layers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layerBlock" }
+    },
+    "mutation": {
+      "anyOf": [
+        {"$ref": "#/$defs/mutationStats"},
+        {"type": "null"}
+      ]
+    }
+  },
+  "$defs": {
+    "layerBlock": {
+      "type": "object",
+      "required": ["layer", "language", "passed"],
+      "properties": {
+        "layer": {
+          "type": "string",
+          "enum": ["L1", "L2", "L3A", "L3B", "L4"]
+        },
+        "language": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "duration_sec": {
+          "type": "number"
+        },
+        "per_language": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/layerBlock" }
+        },
+        "tool_specific": {
+          "anyOf": [
+            {"type": "object", "additionalProperties": true},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["node", "severity", "message"],
+      "properties": {
+        "node": { "type": "string" },
+        "severity": { "type": "string" },
+        "message": { "type": "string" },
+        "fix_hint": { "type": "string" },
+        "cve": { "type": "string" },
+        "cwe": { "type": "string" },
+        "tool": { "type": "string" },
+        "layer": { "type": "string" },
+        "language": { "type": "string" },
+        "rule_id": { "type": "string" }
+      }
+    },
+    "mutationStats": {
+      "type": "object",
+      "required": ["total", "killed", "survived", "timed_out", "escaped", "untested", "msi"],
+      "properties": {
+        "total": { "type": "integer" },
+        "killed": { "type": "integer" },
+        "survived": { "type": "integer" },
+        "timed_out": { "type": "integer" },
+        "escaped": { "type": "integer" },
+        "untested": { "type": "integer" },
+        "msi": { "type": "number" },
+        "covered_msi": { "type": "number" }
+      }
+    }
+  }
+}

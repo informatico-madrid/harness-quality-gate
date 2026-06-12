@@ -1,0 +1,9 @@
+[
+  {
+    "severity": "info",
+    "type": "psalm-info",
+    "message": "No errors!",
+    "file": null,
+    "line" : null
+  }
+]

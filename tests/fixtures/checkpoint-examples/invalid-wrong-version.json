@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "timestamp": "2026-05-25T10:00:00Z",
+  "repository": "wrong-version-repo",
+  "language": "python",
+  "layers": [
+    {
+      "layer": "L3A",
+      "language": "python",
+      "passed": true,
+      "findings": [],
+      "duration_sec": 10.0
+    }
+  ]
+}

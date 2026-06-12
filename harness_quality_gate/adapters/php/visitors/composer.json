@@ -1,0 +1,14 @@
+{
+  "name": "harness-quality-gate/php-visitors",
+  "description": "PoC nikic/php-parser visitor scripts for code-smell detection",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "nikic/php-parser": "^5"
+  },
+  "autoload": {
+    "classmap": [
+      "."
+    ]
+  }
+}

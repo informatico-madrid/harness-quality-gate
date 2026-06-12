@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/phpunit.xml" tests="6" assertions="6" errors="0" failures="0" skipped="0" time="0.001105">
+    <testsuite name="Calculator" tests="6" assertions="6" errors="0" failures="0" skipped="0" time="0.001105">
+      <testsuite name="CalculatorTest\CalculatorTest" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" tests="6" assertions="6" errors="0" failures="0" skipped="0" time="0.001105">
+        <testcase name="testAddFirstZero" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="18" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000897"/>
+        <testcase name="testAddSecondZero" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="24" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000056"/>
+        <testcase name="testAddPositiveNumbers" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="30" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000042"/>
+        <testcase name="testAddBothZero" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="36" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000036"/>
+        <testcase name="testAddNegativeFirst" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="42" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000036"/>
+        <testcase name="testAddNegativeSecond" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-pass/tests/CalculatorTest.php" line="48" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000038"/>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

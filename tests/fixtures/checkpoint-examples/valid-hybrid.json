@@ -1,0 +1,77 @@
+{
+  "version": "v2",
+  "timestamp": "2026-05-25T12:00:00Z",
+  "repository": "polyglot-monorepo",
+  "language": "hybrid",
+  "layers": [
+    {
+      "layer": "L1",
+      "language": "hybrid",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 200.0,
+      "findings": [],
+      "per_language": {
+        "python": {
+          "layer": "L1",
+          "language": "python",
+          "passed": true,
+          "status": "complete",
+          "duration_sec": 25.0,
+          "findings": [],
+          "tool_specific": { "pytest": { "tests": 100 } }
+        },
+        "php": {
+          "layer": "L1",
+          "language": "php",
+          "passed": true,
+          "status": "complete",
+          "duration_sec": 150.0,
+          "findings": [],
+          "tool_specific": {
+            "phpunit": { "tests": 200, "coverage_pct": 100.0 },
+            "infection": { "msi": 100.0, "covered_msi": 100.0 }
+          }
+        }
+      }
+    },
+    {
+      "layer": "L3A",
+      "language": "hybrid",
+      "passed": true,
+      "status": "complete",
+      "duration_sec": 60.0,
+      "findings": [],
+      "per_language": {
+        "python": {
+          "layer": "L3A",
+          "language": "python",
+          "passed": true,
+          "status": "complete",
+          "duration_sec": 30.0,
+          "findings": [],
+          "tool_specific": { "ruff": { "PASS": true } }
+        },
+        "php": {
+          "layer": "L3A",
+          "language": "php",
+          "passed": true,
+          "status": "complete",
+          "duration_sec": 30.0,
+          "findings": [],
+          "tool_specific": { "phpstan": { "PASS": true } }
+        }
+      }
+    }
+  ],
+  "mutation": {
+    "total": 300,
+    "killed": 300,
+    "survived": 0,
+    "timed_out": 0,
+    "escaped": 0,
+    "untested": 0,
+    "msi": 100.0,
+    "covered_msi": 100.0
+  }
+}

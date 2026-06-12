@@ -1,0 +1,8 @@
+[
+  {
+    "message": "Parameter $x of method Calculator::add() has invalid type int.",
+    "identifier": "parameter.type",
+    "line": 5,
+    "path": "src/Calculator.php"
+  }
+]

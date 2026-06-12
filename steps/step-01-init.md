@@ -142,10 +142,32 @@ Store availability in state for conditional execution.
 
 ---
 
-## 1.6 Next Step
+## 1.6 Detect Project Language
+
+Run this check to determine whether the project is PHP or Python:
+
+```bash
+# Check for PHP project
+if [ -f "{project-root}/composer.json" ]; then
+  echo "LANGUAGE=php"
+else
+  echo "LANGUAGE=python"
+fi
+```
+
+Store result as `{language}` in state (`php` or `python`).
+
+**Decision tree for remaining steps:**
+- `language=php` → use PHP-specific steps (PHPStan, Psalm, Deptrac, Infection, PHPUnit)
+- `language=python` → use Python-specific steps (ruff, pyright, pytest, mutmut, bandit)
+
+---
+
+## 1.7 Next Step
 
 **IMPORTANT: The execution order is L3A→L1→L2→L3B→L4→Checkpoint.**
 
 After initialization, proceed to Layer 3A (smoke test), NOT Layer 1.
 
-Load and follow: `./steps/step-03a-layer3a.md`
+- **If `language=php`:** Load and follow `./steps/step-03a-layer3a-php.md`
+- **If `language=python`:** Load and follow `./steps/step-03a-layer3a.md`

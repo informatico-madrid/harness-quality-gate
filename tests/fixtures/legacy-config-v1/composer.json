@@ -1,0 +1,6 @@
+{
+  "name": "test/legacy-config-v1",
+  "autoload": {
+    "psr-4": {"App\\": "src/"}
+  }
+}

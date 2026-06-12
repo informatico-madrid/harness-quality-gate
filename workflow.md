@@ -8,9 +8,11 @@
 
 ## PATH RESOLUTION
 
-- `{skill-root}` resolves to this workflow skill's installed directory.
+- `{skill-root}` resolves to this skill's installed directory. The skill is
+  agent-agnostic: in Claude Code that is `${CLAUDE_SKILL_DIR}`; in other
+  agents or CI systems it is wherever the skill files were installed.
 - `{project-root}` resolves to the repository working directory.
-- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps-c/...`, `steps-v/...`, and templates from `{skill-root}`, not from the workspace root.
+- Resolve sibling workflow files such as `SKILL.md`, `steps/...`, `config/...` and `references/...` from `{skill-root}`, not from the workspace root.
 
 ---
 
@@ -93,7 +95,7 @@ The following agent excuses are **INVALID** and must be rejected:
 |  3A.2 ruff format check    | 1.2 coverage               | 2.2 Mutation kill-map       |
 |  3A.3 pyright              | 1.3 mutation testing       | 2.3 Diversity metric        |
 |  3A.4 check_headers        | 1.4 orphan cleanup         |                              |
-|  3A.5 SOLID Tier A         | 1.5 E2E (make e2e) [MAND.] |                              |
+|  3A.5 SOLID Tier A         | 1.5 E2E (make e2e) [OPT.]  |                              |
 |  3A.6 Principles            |                             |                              |
 |      (DRY/KISS/YAGNI/LoD/CoI)                             |                              |
 |  3A.7 Antipatterns Tier A   |                             |                              |
@@ -176,7 +178,7 @@ The rationale: If code quality smoke test fails, running mutation testing (~15 m
   - Reads thresholds from `{project-root}/plans/mutation-targets.yaml`
   - Outputs OK/NOK per module with human-readable table
   - If NOK: recommend activating `mutation-testing` skill
-- **1.5** E2E tests via `make e2e` (**MANDATORY** — FAILS if not run or fails)
+- **1.5** E2E tests via `make e2e` (OPTIONAL — `SKIPPED` if unavailable, never blocks L1)
 
 ---
 
@@ -238,7 +240,7 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 ### L4 Execution
 
-Run via unified scanner: `python3 {skill-root}/scripts/security_scanner.py {project-root}`
+Run via the deterministic gate (L4 included): `python3 -m harness_quality_gate all {project-root} --json`
 
 Or follow step file: `./steps/step-06-layer4.md`
 
@@ -280,15 +282,15 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 | `steps/step-06-layer4.md` | Layer 4: Security & Defense |
 | `steps/step-05-checkpoint.md` | Final checkpoint generation |
 | `config/quality-gate.yaml` | All configurable thresholds (including L4) |
-| `scripts/solid_metrics.py` | Fast AST-based SOLID check (Tier A) |
-| `scripts/llm_solid_judge.py` | SOLID context generator for BMAD agents (Tier B) |
-| `scripts/weak_test_detector.py` | Weak test detection (A1-A8 rules) |
-| `scripts/antipattern_checker.py` | 50 antipatterns: 25 Tier A (AST) + 25 Tier B (BMAD) |
-| `scripts/antipattern_judge.py` | Tier B antipattern context generator for BMAD agents |
-| `scripts/principles_checker.py` | DRY, KISS, YAGNI, LoD, CoI |
-| `scripts/mutation_analyzer.py` | Mutation kill-map analysis |
-| `scripts/diversity_metric.py` | Test diversity scoring |
-| `scripts/security_scanner.py` | Unified security scanner (Layer 4) |
+| `adapters/python/solid_metrics` | Fast AST-based SOLID check (Tier A) |
+| `bmad/llm_solid_judge` | SOLID context generator for BMAD agents (Tier B) |
+| `adapters/python/weak_test` | Weak test detection (A1-A8 rules) |
+| `adapters/python/antipattern_tier_a` | 25 Tier A antipatterns (AST) |
+| `bmad/antipattern_judge` | 25 Tier B antipatterns — defined with context generator for BMAD review |
+| `adapters/python/principles` | DRY, KISS, YAGNI, LoD, CoI |
+| `bmad/mutation_analyzer` | Mutation kill-map analysis |
+| `bmad/diversity_metric` | Test diversity scoring |
+| `adapters/shared/` | Security scanners (gitleaks, checkov, trivy, semgrep) |
 | `references/security-tools-guide.md` | Tool installation, config & remediation guide |
 | `references/semgrep-js-rules.yaml` | Custom semgrep rules for JavaScript/TypeScript |
 | `references/home-assistant/semgrep-ha-rules.yaml` | Custom semgrep rules for Home Assistant (opt-in, enable via configurator) |

@@ -105,23 +105,27 @@ which trivy 2>/dev/null && echo "trivy=OK" || echo "trivy=MISSING"
 
 ---
 
-## 4.1 Phase 1: Run Unified Security Scanner
+## 4.1 Phase 1: Run Deterministic L4 Scan
 
-Execute the unified security scanner script:
+Run the quality gate and extract the L4 layer from the checkpoint
+(there is no standalone "unified scanner" script — the `all` subcommand
+is the single deterministic entry point):
 
 ```bash
-python3 {skill-root}/scripts/security_scanner.py {project-root} \
-  --severity-threshold {threshold_from_config} \
-  --config {skill-root}/config/quality-gate.yaml \
-  --output {project-root}/_bmad-output/quality-gate/security-scan-results.json \
-  --verbose 2>&1
+python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
+  python3 -c "import json,sys; d=json.load(sys.stdin); \
+  [print(json.dumps(l, indent=2)) for l in d.get('layers',[]) if l.get('layer')=='L4']"
 ```
 
-The `--severity-threshold` value comes from `{skill-root}/config/quality-gate.yaml` under `layer4.severity_threshold` (default: `high`).
+**Per-language L4 tooling executed by the adapter:**
+- **Python**: bandit (security) + vulture (dead code) + deptry (dependency analysis)
+- **PHP**: psalm --taint-analysis, composer audit, local-php-security-checker,
+  shipmonk/dead-code-detector, shipmonk/composer-dependency-analyser.
+  (deptrac runs in L3B — architecture belongs to deep quality.)
 
-**If the script fails to execute:**
+**If the command fails to execute:**
 1. Check Python version (requires 3.11+)
-2. Check if script path is correct
+2. Check the package is importable from the skill root
 3. Fall back to running individual tools manually (see sections 4.1.1–4.1.8)
 
 ### 4.1.1 Alternative: Run Individual Tools Manually
@@ -445,11 +449,9 @@ Apply the fix to the source code. If the fix requires changes to multiple files,
 ### Step 5.3: Re-run Phase 1 (Deterministic Scan Only)
 
 ```bash
-python3 {skill-root}/scripts/security_scanner.py {project-root} \
-  --severity-threshold {threshold_from_config} \
-  --config {skill-root}/config/quality-gate.yaml \
-  --output {project-root}/_bmad-output/quality-gate/security-scan-results-rerun.json \
-  --verbose 2>&1
+python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
+  python3 -c "import json,sys; d=json.load(sys.stdin); \
+  [print(json.dumps(l, indent=2)) for l in d.get('layers',[]) if l.get('layer')=='L4']"
 ```
 
 ### Step 5.4: Verify Fix

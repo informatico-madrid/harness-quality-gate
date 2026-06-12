@@ -1,5 +1,9 @@
 # Quality Gate Configuration
 # All thresholds are configurable per-project
+# schema_version 2 is required by config.load() — without it the CLI
+# rejects the file as legacy v1 (exit 4), including on this very repo
+# during self-application (self-eval F14).
+schema_version: 2
 
 # Layer 1: Test Execution
 layer1:
@@ -202,10 +206,10 @@ layer4:
     configs:
     - p/security-audit
     - p/owasp-top-ten
-    - "{skill-root}/references/semgrep-python-rules.yaml"  # Generic Python security rules (ALWAYS included)
-    - "{skill-root}/references/semgrep-js-rules.yaml"      # JavaScript/TypeScript rules
+    - "${CLAUDE_SKILL_DIR}/references/semgrep-python-rules.yaml"  # Generic Python security rules (ALWAYS included)
+    - "${CLAUDE_SKILL_DIR}/references/semgrep-js-rules.yaml"      # JavaScript/TypeScript rules
     # The following are OPT-IN via configurator:
-    # - "{skill-root}/references/home-assistant/semgrep-ha-rules.yaml"  # HA-specific rules (enable via configurator)
+    # - "${CLAUDE_SKILL_DIR}/references/home-assistant/semgrep-ha-rules.yaml"  # HA-specific rules (enable via configurator)
 
   checkov:
     priority: recommended

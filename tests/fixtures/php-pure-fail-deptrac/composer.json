@@ -1,0 +1,10 @@
+{
+  "name": "test/php-pure-fail-deptrac",
+  "autoload": {
+    "psr-4": {"App\\": "src/"}
+  },
+  "require-dev": {
+    "phpstan/phpstan": "^2.0",
+    "deptrac/deptrac": "^3.0"
+  }
+}

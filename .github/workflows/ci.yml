@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "spec/**"]
+  pull_request:
+    branches: [main]
+
+# Supersede in-flight runs of the same branch — saves runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# NOTE — deliberately NOT in CI:
+#   - Full mutation campaign (make mutation): ~7000 mutants, ~20 min on 18
+#     local cores -> hours on a 2-core hosted runner. Mutation discipline is
+#     enforced locally (make mutation / make mutation-path FILE_PATH=...)
+#     before every merge; MSI 100% is a local pre-commit gate.
+#   - Self-application of the full gate on this repo: L1 now runs the real
+#     mutmut campaign (same cost problem). The e2e suite already dogfoods
+#     the CLI end-to-end on small fixtures (tests/e2e/test_smoke_*.py).
+
+jobs:
+  # Main gate: Python version matrix, single reference PHP (8.3).
+  gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "${{ matrix.python }}"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+          coverage: pcov
+
+      - name: Composer install (PHP visitors)
+        run: composer install --no-progress --prefer-dist
+        working-directory: harness_quality_gate/adapters/php/visitors
+
+      - name: Install Python package
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check harness_quality_gate/
+
+      - name: Type check (mypy)
+        run: mypy harness_quality_gate/
+
+      - name: Unit tests + coverage (100%)
+        run: pytest tests/unit/ --cov=harness_quality_gate --cov-fail-under=100 -q --tb=short
+
+      - name: E2E (full-pipeline smoke on fixtures)
+        run: pytest tests/e2e/ -q -m e2e --tb=short
+
+      - name: Audit suppressions (PHP @infection-ignore-all + Python pragmas)
+        run: python -m harness_quality_gate audit-ignores harness_quality_gate
+
+  # PHP compatibility: only the PHP-sensitive surface (php adapter units + e2e).
+  php-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.4"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "${{ matrix.php }}"
+          tools: composer:v2
+          coverage: pcov
+
+      - name: Composer install (PHP visitors)
+        run: composer install --no-progress --prefer-dist
+        working-directory: harness_quality_gate/adapters/php/visitors
+
+      - name: Install Python package
+        run: pip install -e ".[dev]"
+
+      - name: PHP adapter unit tests
+        run: pytest tests/unit/adapters/php/ -q --tb=short
+
+      - name: E2E (full-pipeline smoke on fixtures)
+        run: pytest tests/e2e/ -q -m e2e --tb=short

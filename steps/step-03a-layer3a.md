@@ -85,8 +85,13 @@ cd {project-root} && python3 -m pyright src/ 2>&1
 
 ## 3A.4 Check Headers (Constitution)
 
+Header conventions are enforced by ruff (3A.1); a dedicated
+`check_headers` script is legacy. If the target repo ships its own
+`scripts/check_headers.py`, run it; otherwise mark the check as `SKIPPED`
+(it never blocks L3A):
+
 ```bash
-cd {project-root} && python3 scripts/check_headers.py --check 2>&1
+cd {project-root} && { [ -f scripts/check_headers.py ] && python3 scripts/check_headers.py --check 2>&1 || echo "check_headers=SKIPPED"; }
 ```
 
 **Update state:**
@@ -107,7 +112,7 @@ cd {project-root} && python3 scripts/check_headers.py --check 2>&1
 Run SOLID metrics script:
 
 ```bash
-python3 {skill-root}/scripts/solid_metrics.py {project-root}/src/ 2>&1
+python3 -m harness_quality_gate.adapters.python.solid_metrics {project-root}/src/ 2>&1
 ```
 
 ### SOLID Rules (Tier A)
@@ -142,7 +147,7 @@ python3 {skill-root}/scripts/solid_metrics.py {project-root}/src/ 2>&1
 Run principles checker:
 
 ```bash
-python3 {skill-root}/scripts/principles_checker.py {project-root}/src/ 2>&1
+python3 -m harness_quality_gate.adapters.python.principles {project-root}/src/ 2>&1
 ```
 
 ### Principles Rules
@@ -177,7 +182,7 @@ python3 {skill-root}/scripts/principles_checker.py {project-root}/src/ 2>&1
 Run AST-based antipattern checker:
 
 ```bash
-python3 {skill-root}/scripts/antipattern_checker.py {project-root}/src/ {project-root}/tests/ --tier-a-only 2>&1
+python3 -m harness_quality_gate.adapters.python.antipattern_tier_a {project-root}/src/ 2>&1
 ```
 
 ### Tier A Antipatterns (25 patterns)

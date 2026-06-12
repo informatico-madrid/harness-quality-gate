@@ -1,0 +1,8 @@
+# v1 config format — should trigger E10/ConfigInvalid
+layers:
+  l3a:
+    enabled: true
+    tool: phpstan
+  l1:
+    enabled: true
+    tool: phpunit

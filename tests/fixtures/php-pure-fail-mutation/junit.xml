@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-fail-mutation/phpunit.xml" tests="2" assertions="2" errors="0" failures="0" skipped="0" time="0.001016">
+    <testsuite name="Calculator" tests="2" assertions="2" errors="0" failures="0" skipped="0" time="0.001016">
+      <testsuite name="CalculatorTest\CalculatorTest" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-fail-mutation/tests/CalculatorTest.php" tests="2" assertions="2" errors="0" failures="0" skipped="0" time="0.001016">
+        <testcase name="testAddPositiveNumbers" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-fail-mutation/tests/CalculatorTest.php" line="17" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000961"/>
+        <testcase name="testAddZeroLeft" file="/mnt/bunker_data/harness-quality-gate/tests/fixtures/php-pure-fail-mutation/tests/CalculatorTest.php" line="22" class="CalculatorTest\CalculatorTest" classname="CalculatorTest.CalculatorTest" assertions="1" time="0.000055"/>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

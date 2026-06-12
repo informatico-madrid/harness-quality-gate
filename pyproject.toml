@@ -1,0 +1,142 @@
+[tool.ruff]
+# Fixtures are intentionally defective code used to test the gate itself.
+extend-exclude = ["tests/fixtures"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harness-quality-gate"
+version = "2.0.0"
+requires-python = ">=3.10"
+description = "Polyglot quality gate for code repositories"
+readme = "README.md"
+license = {text = "MIT"}
+# config.py imports yaml and checkpoint.py imports jsonschema at module
+# level — the CLI cannot run without them (self-eval F5).
+dependencies = [
+    "PyYAML",
+    "jsonschema",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "mutmut>=3.5.0",
+    "ruff",
+    "mypy",
+    "types-jsonschema",
+    "types-PyYAML",
+    "responses",
+    "radon",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration",
+    "e2e",
+    "needs-php",
+    "needs-composer",
+    "needs-network",
+    "needs_php",
+    "needs_composer",
+]
+norecursedirs = ["fixtures", "mutants", ".mutmut", ".git", "__pycache__", ".venv"]
+
+[tool.mypy]
+# radon is an optional algorithm library (guarded import in solid_metrics)
+[[tool.mypy.overrides]]
+module = "radon.*"
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["harness_quality_gate"]
+omit = [
+    # BMAD agent context generators — not part of the quality-gate core
+    "harness_quality_gate/bmad/*",
+    # Large AST/static-analysis modules (external algorithm libraries)
+    "harness_quality_gate/adapters/python/antipattern_tier_a.py",
+    "harness_quality_gate/adapters/python/principles.py",
+    "harness_quality_gate/adapters/python/solid_metrics.py",
+    "harness_quality_gate/adapters/python/weak_test.py",
+    # Shared infrastructure adapters for external scanners (checkov, gitleaks, semgrep, trivy)
+    "harness_quality_gate/adapters/shared/*",
+]
+
+[tool.coverage.report]
+fail_under = 100
+
+[tool.mutmut]
+# Matches ha-ev-trip-planner configuration structure
+# Array format for paths_to_mutate (not comma-separated string)
+paths_to_mutate = [
+    "harness_quality_gate/__init__.py",
+    "harness_quality_gate/adapters/__init__.py",
+    "harness_quality_gate/adapters/base.py",
+    # NOTE: __main__.py EXCLUDED — mutmut trampoline fails on frozen stdlib paths
+    # when this module is mutated. See Makefile KNOWN BUG section for details.
+    "harness_quality_gate/adapters/php/",
+    "harness_quality_gate/adapters/python/__init__.py",
+    "harness_quality_gate/adapters/python/bandit_adapter.py",
+    "harness_quality_gate/adapters/python/deptry_adapter.py",
+    "harness_quality_gate/adapters/python/mutmut_adapter.py",
+    "harness_quality_gate/adapters/python/pyright_adapter.py",
+    "harness_quality_gate/adapters/python/pytest_adapter.py",
+    "harness_quality_gate/adapters/python/python_adapter.py",
+    "harness_quality_gate/adapters/python/ruff_adapter.py",
+    "harness_quality_gate/adapters/python/vulture_adapter.py",
+    "harness_quality_gate/allow_list_auditor.py",
+    "harness_quality_gate/checkpoint.py",
+    "harness_quality_gate/cli.py",
+    "harness_quality_gate/config.py",
+    "harness_quality_gate/exit_codes.py",
+    "harness_quality_gate/messages_es.py",
+    "harness_quality_gate/models.py",
+]
+# Tests directory (REQUIRED — was missing, causing mutmut to not find tests)
+tests_dir = ["tests/unit/"]
+# Simple runner — pytest auto-discovers config from pyproject.toml
+# Only run unit tests to avoid multiprocessing context conflicts in integration tests
+runner = "pytest tests/unit/ -q --tb=no -p no:randomly"
+# Use spawn context to avoid multiprocessing fork conflicts with mutated code
+# This is critical: when mutated code imports mutmut, set_start_method('fork') fails
+# because the context is already set by a previous test run
+environment_setup_command = "export PYTHONSTARTUP="
+# Exclude system paths with broken symlinks (Ubuntu help-lang-pack)
+paths_to_exclude = ["/usr/share/help/", "/usr/share/doc/", "/usr/share/man/", "/usr/share/locale/"]
+# backup = false: Required for mutmut 3.5.0 when repo has broken symlinks
+backup = false
+# PERFORMANCE: Only mutate lines that have test coverage
+mutate_only_covered_lines = true
+# Stack depth limit (matches ha-ev-trip-planner)
+max_stack_depth = 8
+# Timeout configuration (mutmut 3.6.0 uses formula, not fixed value)
+# Formula: (duration_of_original_tests + timeout_constant) * timeout_multiplier
+# Increased to avoid false timeouts on slow mutants
+timeout_constant = 10.0
+timeout_multiplier = 30.0
+# Data dirs the package reads relative to the repo root (resolved via
+# __file__.parent.parent in checkpoint.validate() and installer config lookup).
+# mutmut runs the suite from the mutants/ sandbox, so these MUST be copied in or
+# the baseline fails with FileNotFoundError (verdict-schema.json) before any
+# mutant is graded.
+# The python_adapter (mutated) imports the coverage-omitted analysis modules
+# (weak_test, solid_metrics, antipattern_tier_a, bmad.diversity_metric); they
+# are NOT mutated (not in paths_to_mutate) but must exist inside mutants/ or
+# the baseline collection fails with ModuleNotFoundError.
+also_copy = [
+    "references",
+    "config",
+    "harness_quality_gate/bmad",
+    "harness_quality_gate/adapters/python/antipattern_tier_a.py",
+    "harness_quality_gate/adapters/python/principles.py",
+    "harness_quality_gate/adapters/python/solid_metrics.py",
+    "harness_quality_gate/adapters/python/weak_test.py",
+]
+# Type synonyms for libcst compatibility
+dict_synonyms = ["Dict", "Optional"]
+
+[tool.setuptools.packages.find]
+include = ["harness_quality_gate*"]

@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "updated": "2026-05-31T12:22:12Z",
+  "directories": [
+    {
+      "path": "./specs",
+      "specsCount": 1,
+      "isDefault": true
+    }
+  ],
+  "specs": [
+    {
+      "name": "php-support",
+      "path": "./specs/php-support",
+      "phase": "execution",
+      "taskIndex": 89,
+      "totalTasks": 120
+    }
+  ]
+}

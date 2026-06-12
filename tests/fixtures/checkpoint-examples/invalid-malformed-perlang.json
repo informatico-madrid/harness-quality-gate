@@ -1,0 +1,25 @@
+{
+  "version": "v2",
+  "timestamp": "2026-05-25T10:00:00Z",
+  "repository": "malformed-perlang-repo",
+  "language": "hybrid",
+  "layers": [
+    {
+      "layer": "L1",
+      "language": "hybrid",
+      "passed": true,
+      "findings": [],
+      "duration_sec": 50.0,
+      "per_language": {
+        "python": "this should be a layerBlock object not a string",
+        "php": {
+          "layer": "L1",
+          "language": "php",
+          "passed": true,
+          "findings": [],
+          "duration_sec": 25.0
+        }
+      }
+    }
+  ]
+}

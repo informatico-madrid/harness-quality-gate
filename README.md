@@ -27,19 +27,24 @@
 10. [Installation](#installation)
 11. [Usage](#usage)
 12. [Contributing](#contributing)
-13. [License](#license)
+13. [Mutation Testing Workflow](MUTATION_TESTING.md) — how to run mutmut, read `mutmut results` vs `mutmut-cicd-stats.json`, close survivors honestly
+14. [Mutant Killing Guide (Python)](MUTANT_KILLING_GUIDE.md) — **operative handbook for subagents**: techniques to kill mutmut mutants (dense assertions, boundary testing, spies), equivalence classification A-I with refactor solutions, 12 hard cases from real survivors
+15. [Mutant Killing Guide (PHP)](MUTANT_KILLING_GUIDE_PHP.md) — **PHP-native handbook for the L1 Infection 100/100 gate**: Infection mutator table, the assertSame/assertEquals trap, strict mock expectations, visibility mutants as design feedback, `@infection-ignore-all` audit policy
+14. [License](#license)
 
 ---
 
 ## Overview
 
-This skill implements a **multi-layer quality gate harness** for autonomous coding agents. It validates Python code produced by AI agents through:
+This skill implements a **multi-layer quality gate harness** for autonomous coding agents. It validates **Python or PHP** code produced by AI agents through:
 
-- **Static linting** (ruff, pyright)
-- **Unit testing and coverage** (pytest)
-- **Mutation testing** (mutmut)
-- **Code quality analysis** (SOLID principles, design principles, antipatterns)
-- **Security scanning** (bandit, safety, gitleaks, semgrep, checkov, deptry, vulture, trivy)
+- **Static linting** (Python: ruff, pyright · PHP: phpstan, phpmd, php-cs-fixer)
+- **Unit testing, coverage and mutation gate** (Python: pytest + mutmut · PHP: phpunit/pest + PCOV + Infection with the **MSI 100/100 hard gate**)
+- **Test quality** (weak-test detection A1-A9 + diversity metrics, both languages)
+- **Code quality analysis** (SOLID principles, design principles, antipatterns; PHP adds deptrac architecture validation in L3B)
+- **Security scanning** (Python: bandit, vulture, deptry, gitleaks, semgrep, checkov, trivy · PHP: psalm --taint-analysis, composer audit, local-php-security-checker, shipmonk/dead-code-detector, shipmonk/composer-dependency-analyser)
+
+Language detection is automatic and deliberately simple: a repo with `composer.json` is treated as **PHP-only**, anything else as Python. Hybrid repos are not supported.
 
 The output is a **checkpoint JSON** that agents can parse to verify their own output before committing.
 
@@ -245,24 +250,24 @@ This skill implements a **two-tier system** for code quality analysis:
 | `steps/step-06-layer4.md` | Layer L4: Security |
 | `steps/step-05-checkpoint.md` | Checkpoint generation |
 
-### Analysis Scripts
-| File | Purpose |
-|------|---------|
-| `scripts/solid_metrics.py` | SOLID Tier A (AST) |
-| `scripts/llm_solid_judge.py` | SOLID Tier B context (BMAD) |
-| `scripts/antipattern_checker.py` | Antipatterns Tier A (50 AST patterns) |
-| `scripts/antipattern_judge.py` | Antipatterns Tier B context (BMAD) |
-| `scripts/principles_checker.py` | DRY, KISS, YAGNI, LoD, CoI |
-| `scripts/weak_test_detector.py` | Weak test detection (A1-A8) |
-| `scripts/mutation_analyzer.py` | Mutation kill-map analysis |
-| `scripts/diversity_metric.py` | Test diversity scoring |
-| `scripts/security_scanner.py` | Unified security scanner (Layer L4) |
+### Analysis Modules
+| Module | Purpose |
+|--------|---------|
+| `harness_quality_gate.adapters.python.solid_metrics` | SOLID Tier A (AST) |
+| N/A | SOLID Tier B context (BMAD) — deferred |
+| `harness_quality_gate.adapters.python.antipattern_tier_a` | 25 deterministic Tier A antipatterns (AST) |
+| `harness_quality_gate.bmad.antipattern_judge` | 25 Tier B antipatterns — defined with context generator for BMAD review |
+| `harness_quality_gate.adapters.python.principles` | DRY, KISS, YAGNI, LoD, CoI |
+| `harness_quality_gate.adapters.python.weak_test` | Weak test detection (A1-A8) |
+| `harness_quality_gate.bmad.mutation_analyzer` | Mutation kill-map analysis |
+| N/A | Test diversity scoring — deferred |
+| `harness_quality_gate.adapters.shared` | Security scanners (gitleaks, checkov, trivy, semgrep) |
 
 ### Configuration
 | File | Purpose |
 |------|---------|
 | `config/quality-gate.yaml` | All threshold configurations |
-| `scripts/configurator.py` | Interactive configuration setup |
+| `harness_quality_gate/configurator.py` | Interactive configuration setup |
 
 ### References
 | File | Purpose |
@@ -318,29 +323,30 @@ layer4:
     # ...
 ```
 
-### Per-Module Mutation Thresholds
+### Mutation Policy: 100/100 Hard Gate
 
-The skill supports per-module mutation thresholds via `pyproject.toml`:
+Both languages enforce the same hard gate — no per-module threshold ramps:
 
-```toml
-[tool.quality-gate.mutation]
-# Per-module thresholds override global
-[tool.quality-gate.mutation."src/core"]
-kill_threshold = 0.80
-
-[tool.quality-gate.mutation."src/utils"]
-kill_threshold = 0.65
-```
+- **Python**: `mutmut` must report 0 survivors and 0 timeouts
+  (`python3 -m harness_quality_gate.bmad.mutation_analyzer <repo> --gate`).
+- **PHP**: Infection runs with `--min-msi=100 --min-covered-msi=100`;
+  a config attempting to lower the thresholds is rejected with exit 4.
 
 ### Initial Configuration
 
-For new projects, run the interactive configurator:
+No setup step is required — detection is automatic and defaults are sane:
 
 ```bash
-python3 scripts/configurator.py
+python3 -m harness_quality_gate all {project-root} --json
 ```
 
-This auto-detects project structure and asks for confirmation on each setting.
+Exit codes: `0` PASS · `1` FAIL · `2` UNSUPPORTED · `3` INFRA_INCOMPLETE
+(PHP repo missing php/phpunit/phpstan/infection — payload lists
+`missing_tools`) · `4` CONFIG_INVALID (v1 config schema is a hard error) ·
+`5` INTERNAL_ERROR.
+
+Optional tuning via a v2 config file (`.quality-gate.yaml`,
+`config/quality-gate.yaml` or `quality-gate.yaml` with `schema_version: 2`).
 
 ---
 
@@ -420,6 +426,24 @@ The output is a JSON file in `_quality-gate/quality-gate-{timestamp}.json` desig
 | `deptry` | RECOMMENDED | Import consistency |
 | `vulture` | RECOMMENDED | Dead code detection |
 | `trivy` | OPTIONAL | Docker image scanning |
+
+### PHP Tools
+
+| Tool | Layer | Priority | Purpose |
+|------|-------|----------|---------|
+| `php` (≥8.2) | — | CRITICAL (exit 3 if missing) | Runtime |
+| `phpunit` / `pest` | L1 | CRITICAL (exit 3 if missing) | Test execution |
+| `infection` | L1 | CRITICAL (exit 3 if missing) | Mutation gate MSI 100/100 |
+| `phpstan` | L3A | CRITICAL (exit 3 if missing) | Static analysis |
+| PCOV extension | L1 | RECOMMENDED | Fast coverage for Infection |
+| `phpmd` + nikic/php-parser visitors | L3A | RECOMMENDED | Antipatterns Tier A |
+| `php-cs-fixer` | L3A | RECOMMENDED | Code style |
+| `deptrac` | L3B | RECOMMENDED | Architecture validation |
+| `psalm --taint-analysis` | L4 | RECOMMENDED | Taint flow analysis |
+| `composer audit` | L4 | REQUIRED | Dependency CVE scanning |
+| `local-php-security-checker` | L4 | RECOMMENDED | Security advisories |
+| `shipmonk/dead-code-detector` | L4 | RECOMMENDED | Dead code (vulture equivalent) |
+| `shipmonk/composer-dependency-analyser` | L4 | RECOMMENDED | Dependency analysis (deptry equivalent) |
 
 ---
 
@@ -516,7 +540,7 @@ cp -r /path/to/quality-gate ~/.roo/skills/
 ```bash
 # Run the full quality gate
 cd /path/to/project
-python3 /path/to/quality-gate/scripts/security_scanner.py .
+python3 -m harness_quality_gate full .
 
 # Or follow the workflow manually
 # 1. Read step-01-init.md
@@ -527,7 +551,7 @@ python3 /path/to/quality-gate/scripts/security_scanner.py .
 
 ```bash
 # Auto-detect project structure and configure
-python3 scripts/configurator.py
+python3 -m harness_quality_gate.configurator
 ```
 
 ### Configure Thresholds
@@ -552,8 +576,14 @@ Contributions are welcome! If this skill proves useful to you, please consider g
 
 1. **Fork** the repository
 2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
-3. **Ensure all checks pass** (run L3A smoke test first: `python3 scripts/security_scanner.py .`)
-4. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
+3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate full .`)
+4. **Run the full quality gate before pushing**:
+   - `ruff check harness_quality_gate/ tests/`
+   - `pytest tests/unit/ -q --cov=harness_quality_gate --cov-fail-under=100 -p no:randomly`
+   - `python -m harness_quality_gate audit-ignores harness_quality_gate` (must exit 0)
+   - `make mutation` (CI checks `mutants/mutmut-cicd-stats.json`; must have 0 survived/no_tests/suspicious/timeout)
+   - See [MUTATION_TESTING.md](MUTATION_TESTING.md) for the why behind each gate
+5. **Commit your changes** (`git commit -m 'Add some amazing feature'`)
 5. **Push to the branch** (`git push origin feature/amazing-feature`)
 6. **Open a Pull Request**
 

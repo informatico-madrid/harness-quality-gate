@@ -1,0 +1,10 @@
+[
+  {
+    "severity": "error",
+    "type": "TaintedHtml",
+    "message": "Possible XSS",
+    "file": "src/Template.php",
+    "line": 20,
+    "from": {"file": "src/Request.php", "line": 10}
+  }
+]
