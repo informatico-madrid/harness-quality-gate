@@ -511,7 +511,8 @@ class TestRuffInvokeNormalPath:
         assert 'check' in cmd
         assert '--output-format=json' in cmd
         assert '--select=E501' in cmd
-        assert str(repo) in cmd
+        # /tmp/test_repo has no src/tests dirs -> falls back to '.'
+        assert '.' in cmd
 
     def test_invoke_executes_and_returns_result(self):
         """Invoke with mocked _run returns ToolInvocation.
@@ -560,7 +561,7 @@ class TestRuffInvokeNormalPath:
         cmd = call_args[0][0]
         # Exact command structure — any element mutation is caught
         assert cmd == [
-            BIN, "check", "--output-format=json", "--select=E501", str(repo),
+            BIN, "check", "--output-format=json", "--select=E501", ".",
         ]
         assert call_args[1]['cwd'] == repo
         assert call_args[1]['env'] == {"RUFF_FOO": "bar"}

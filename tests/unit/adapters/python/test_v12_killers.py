@@ -67,7 +67,7 @@ class TestMutmutAdapterKillers:
         ):
             adapter.invoke(tmp_path, ["--extra"])
         run.assert_called_once_with(
-            ["/usr/bin/mutmut", "results", "--json", "--extra"],
+            ["/usr/bin/mutmut", "results", "--all", "true", "--extra"],
             cwd=tmp_path, env=None, timeout=600.0,
         )
 
@@ -273,3 +273,114 @@ class TestPytestParseDefaults:
         xml = '<?xml version="1.0"?><testsuites><testsuite name="p" tests="1"><testcase classname="c" name="ok"/></testsuite></testsuites>'
         findings = PytestAdapter().parse(xml)
         assert findings == []
+
+
+class TestScanTargetsExcludeMutationArtifacts:
+    """Simulation bug H10: the gate's own mutation artifacts (mutants/,
+    .mutmut cache) polluted L3A/L1/L4 on subsequent runs because every
+    adapter scanned the whole repo. Per the skill contract the project
+    has src/ and tests/ — adapters must target them when present."""
+
+    def _repo(self, tmp_path: Path, dirs=("src", "tests", "mutants")) -> Path:
+        for d in dirs:
+            (tmp_path / d).mkdir()
+        return tmp_path
+
+    def test_ruff_targets_src_and_tests_when_present(self, tmp_path: Path) -> None:
+        repo = self._repo(tmp_path)
+        adapter = RuffAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+                  return_value="/usr/bin/ruff"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        cmd = run.call_args.args[0]
+        assert cmd == ["/usr/bin/ruff", "check", "--output-format=json",
+                       "src", "tests"]
+
+    def test_ruff_falls_back_to_repo_root_without_src_tests(self, tmp_path: Path) -> None:
+        adapter = RuffAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
+                  return_value="/usr/bin/ruff"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(tmp_path, [])
+        assert run.call_args.args[0] == ["/usr/bin/ruff", "check",
+                                         "--output-format=json", "."]
+
+    def test_pyright_targets_src_and_tests_when_present(self, tmp_path: Path) -> None:
+        repo = self._repo(tmp_path)
+        adapter = PyrightAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
+                  return_value="/usr/bin/pyright"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/pyright", "--outputjson",
+                                         "src", "tests"]
+
+    def test_bandit_recurses_only_src_when_present(self, tmp_path: Path) -> None:
+        repo = self._repo(tmp_path)
+        adapter = BanditAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
+                  return_value="/usr/bin/bandit"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/bandit", "-r", "--format",
+                                         "json", str(repo / "src")]
+
+    def test_vulture_scans_only_src_when_present(self, tmp_path: Path) -> None:
+        from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
+        repo = self._repo(tmp_path)
+        adapter = VultureAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
+                  return_value="/usr/bin/vulture"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(repo, [])
+        assert run.call_args.args[0] == ["/usr/bin/vulture", "--format",
+                                         "json", str(repo / "src")]
+
+    def test_deptry_extends_excludes_with_mutation_artifacts(self, tmp_path: Path) -> None:
+        adapter = DeptryAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
+                  return_value="/usr/bin/deptry"),
+            patch.object(adapter, "_run", return_value=MagicMock()) as run,
+        ):
+            adapter.invoke(tmp_path, [])
+        cmd = run.call_args.args[0]
+        assert cmd == ["/usr/bin/deptry", "--output", "json",
+                       "--extend-exclude", "mutants",
+                       "--extend-exclude", "\\.mutmut", "."]
+
+    def test_pytest_collects_only_tests_dir_when_present(self, tmp_path: Path) -> None:
+        repo = self._repo(tmp_path)
+        adapter = PytestAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+                  return_value="/usr/bin/python3"),
+            patch.object(adapter, "_run", return_value=MagicMock(
+                stdout="", stderr="", exitcode=0, duration_seconds=0.1)) as run,
+        ):
+            adapter.invoke(repo, [])
+        cmd = run.call_args.args[0]
+        assert cmd[-1] == "tests"
+
+    def test_pytest_no_tests_dir_keeps_default_collection(self, tmp_path: Path) -> None:
+        adapter = PytestAdapter()
+        with (
+            patch("harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
+                  return_value="/usr/bin/python3"),
+            patch.object(adapter, "_run", return_value=MagicMock(
+                stdout="", stderr="", exitcode=0, duration_seconds=0.1)) as run,
+        ):
+            adapter.invoke(tmp_path, [])
+        cmd = run.call_args.args[0]
+        assert cmd[-1] == "junit_suite_name=pytest"

@@ -97,7 +97,7 @@ which trivy 2>/dev/null && echo "trivy=OK" || echo "trivy=MISSING"
 
 **If REQUIRED tools are MISSING:**
 - Bandit, safety/pip-audit, or gitleaks missing → Layer 4 **FAILS**
-- Report to user: "Install missing REQUIRED security tools. See `${CLAUDE_SKILL_DIR}/references/security-tools-guide.md` for installation instructions."
+- Report to user: "Install missing REQUIRED security tools. See `{skill-root}/references/security-tools-guide.md` for installation instructions."
 
 **If RECOMMENDED tools are MISSING:**
 - Mark as SKIPPED, does not affect PASS/FAIL
@@ -166,8 +166,8 @@ cd {project-root} && gitleaks detect --source . --report-format json --no-banner
 cd {project-root} && python3 -m semgrep \
   --config p/security-audit \
   --config p/owasp-top-ten \
-  --config ${CLAUDE_SKILL_DIR}/references/semgrep-ha-rules.yaml \
-  --config ${CLAUDE_SKILL_DIR}/references/semgrep-js-rules.yaml \
+  --config {skill-root}/references/semgrep-ha-rules.yaml \
+  --config {skill-root}/references/semgrep-js-rules.yaml \
   --json . 2>&1
 ```
 
@@ -245,7 +245,7 @@ cross_validation_multiplier:
   Finding in known-vulnerable pattern    = 1.2 (capped at 1.0)
 ```
 
-**Confidence threshold** comes from `${CLAUDE_SKILL_DIR}/config/quality-gate.yaml` under `layer4.confidence_threshold` (default: `0.7`).
+**Confidence threshold** comes from `{skill-root}/config/quality-gate.yaml` under `layer4.confidence_threshold` (default: `0.7`).
 
 ### Phase 2 Decision
 
@@ -596,7 +596,7 @@ Present a summary of security findings:
 ║ Advisory Notes:                                                       ║
 ║ • semgrep ha-http-url: WARNING — HTTP URL in config (false positive) ║
 ║   OWASP Category: A02:2021 - Cryptographic Failures                  ║
-║   See: ${CLAUDE_SKILL_DIR}/references/security-tools-guide.md               ║
+║   See: {skill-root}/references/security-tools-guide.md               ║
 ╚═══════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -616,11 +616,11 @@ Present a summary of security findings:
 | **YAML misconfig** (checkov) | Fix configuration per checkov recommendation |
 | **JS/TS vulnerability** (semgrep-js) | See specific rule message for remediation |
 
-For detailed remediation guidance, read: `${CLAUDE_SKILL_DIR}/references/security-tools-guide.md`
+For detailed remediation guidance, read: `{skill-root}/references/security-tools-guide.md`
 
 For pentest verification guidance (post-gate, non-blocking), read:
-- `${CLAUDE_SKILL_DIR}/references/pentest-remediation-index.md` — **Primary index** mapping each finding type to verification commands
-- `${CLAUDE_SKILL_DIR}/references/security-tools-guide.md` Section 12 — Original pentest assets documentation
+- `{skill-root}/references/pentest-remediation-index.md` — **Primary index** mapping each finding type to verification commands
+- `{skill-root}/references/security-tools-guide.md` Section 12 — Original pentest assets documentation
 
 ### BMAD Party Mode Consensus on Asset Integration
 

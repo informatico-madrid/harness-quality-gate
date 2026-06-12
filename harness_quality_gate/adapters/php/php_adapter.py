@@ -407,7 +407,10 @@ class PhpAdapter(BaseAdapter):
             logger.warning("L3A tier-A visitors skipped: %s", exc)
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Severity policy: only error-severity findings block the gate
+        # (Tier-A info findings on test code must not fail a clean repo —
+        # simulation bug H11).
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L3A",
@@ -576,7 +579,9 @@ class PhpAdapter(BaseAdapter):
             if mutation_remediation is not None:
                 mutation_meta["remediation"] = mutation_remediation
 
-        passed = len(all_findings) == 0
+        # Severity policy (H11): infection/pcov/phpunit failures emit
+        # error-severity findings; advisory output must not gate.
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L1",
@@ -820,7 +825,8 @@ class PhpAdapter(BaseAdapter):
             logger.warning("L3B deptrac skipped: %s", exc)
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Severity policy (H11): only error-severity findings gate.
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L3B",
@@ -941,7 +947,8 @@ class PhpAdapter(BaseAdapter):
             logger.warning("L4 dep-analyser skipped: %s", exc)
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Severity policy (H11): only error-severity findings gate.
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L4",

@@ -8,7 +8,9 @@ Requirements: FR-29, US-3.
 
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Mapping
@@ -49,10 +51,37 @@ class PytestAdapter(ToolAdapter):
         timeout: float = 300.0,
     ) -> ToolInvocation:
         python = shutil.which("python3") or "python3"
-        cmd = [python, "-m", "pytest", "--junitxml", "/dev/stdout", "-o", "junit_suite_name=pytest"]
+        # The JUnit report goes to a temp file: writing it to /dev/stdout
+        # interleaves it with the terminal report and the XML becomes
+        # unparseable, silently hiding test failures (simulation bug H8).
+        fd, junit_name = tempfile.mkstemp(prefix="hqg-junit-", suffix=".xml")
+        os.close(fd)
+        junit_path = Path(junit_name)
+        cmd = [python, "-m", "pytest", "--junitxml", str(junit_path),
+               "-o", "junit_suite_name=pytest"]
         if args:
             cmd.extend(args)
-        return self._run(cmd, cwd=repo, env=env, timeout=timeout)
+        # Collect tests/ only when present — default collection would also
+        # pick up the copies under mutants/ (H10).
+        if (repo / "tests").is_dir():
+            cmd.append("tests")
+        try:
+            result = self._run(cmd, cwd=repo, env=env, timeout=timeout)
+            # bytes.decode() defaults to strict UTF-8 (no locale dependence,
+            # no mutable encoding literal)
+            xml_report = (
+                junit_path.read_bytes().decode()
+                if junit_path.exists() and junit_path.stat().st_size
+                else ""
+            )
+            return ToolInvocation(
+                stdout=xml_report,
+                stderr=result.stderr,
+                exitcode=result.exitcode,
+                duration_seconds=result.duration_seconds,
+            )
+        finally:
+            junit_path.unlink(missing_ok=True)
 
     def parse(
         self,
@@ -77,11 +106,15 @@ class PytestAdapter(ToolAdapter):
                 )
             )
         if not stdout.strip():
+            if exitcode != 0:
+                findings.append(self._unparseable_finding(exitcode))
             return findings
 
         try:
             root = ET.fromstring(stdout)
         except ET.ParseError:
+            if exitcode != 0:
+                findings.append(self._unparseable_finding(exitcode))
             return findings
 
         failures = []
@@ -172,18 +205,56 @@ class PytestAdapter(ToolAdapter):
 
         # Add exitcode finding if abnormal
         if exitcode > 0:
-            findings.insert(
-                0,
-                Finding(
-                    node="pytest",
-                    severity="error",
-                    message=f"Test execution failed with exit code {exitcode}",
-                    fix_hint="Review the test output and check for environment issues.",
-                    tool="pytest",
-                    layer="L1",
-                    language="python",
-                    rule_id="exitcode",
-                ),
-            )
+            if exitcode == 5 and not findings:
+                # findings is empty here, so append == insert(0)
+                findings.append(
+                    Finding(
+                        node="pytest",
+                        severity="error",
+                        message="pytest collected no tests (exit code 5)",
+                        fix_hint="Add tests under tests/ — L1 validates test "
+                                 "execution and cannot pass without tests.",
+                        tool="pytest",
+                        layer="L1",
+                        language="python",
+                        rule_id="no-tests",
+                    ),
+                )
+            else:
+                findings.insert(
+                    0,
+                    Finding(
+                        node="pytest",
+                        severity="error",
+                        message=f"Test execution failed with exit code {exitcode}",
+                        fix_hint="Review the test output and check for environment issues.",
+                        tool="pytest",
+                        layer="L1",
+                        language="python",
+                        rule_id="exitcode",
+                    ),
+                )
 
         return findings
+
+    @staticmethod
+    def _unparseable_finding(exitcode: int) -> Finding:
+        """Error finding for runs whose JUnit XML is missing or invalid.
+
+        Without this, a crashed/uncollectable pytest run silently produced
+        zero findings and L1 passed with broken tests (simulation bug H8).
+        """
+        return Finding(
+            node="pytest",
+            severity="error",
+            message=(
+                f"pytest exited with code {exitcode} but produced no "
+                "parseable JUnit XML report"
+            ),
+            fix_hint="Run pytest manually in the repo to inspect the failure "
+                     "(collection error, crash or misconfiguration).",
+            tool="pytest",
+            layer="L1",
+            language="python",
+            rule_id="parse-error",
+        )

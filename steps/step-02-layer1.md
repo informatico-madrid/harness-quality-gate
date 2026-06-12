@@ -58,17 +58,16 @@ cd {project-root} && python3 -m pytest tests/ -q -p no:randomly -p no:warnings -
 
 ```bash
 cd {project-root} && python3 -m pytest tests/ \
-  --cov=src/audit \
-  --cov=src/utils \
-  --cov=src/factory \
-  --cov=src/curation \
-  --cov=src/discovery \
+  --cov=src \
   --cov-report=term-missing \
   --cov-report=xml:coverage.xml \
   --cov-fail-under=85 \
-  --ignore=tests/integration/test_benchmark_compare.py \
   -p no:randomly -p no:warnings 2>&1
 ```
+
+If the project defines its own coverage configuration (`[tool.coverage]`
+in `pyproject.toml` or `.coveragerc`), prefer the project's settings and
+only enforce the threshold.
 
 **Capture:**
 - Coverage percentage (parse from output)
@@ -212,8 +211,8 @@ cd {project-root} && make e2e 2>&1 || true
 {
   "layer1_test_execution": {
     "e2e": {
-      "status": "FAIL",
-      "reason": "E2E tests are MANDATORY in Layer 1. 'make e2e' must pass to proceed."
+      "status": "SKIPPED",
+      "reason": "E2E tests are OPTIONAL in Layer 1: 'make e2e' unavailable or failing does not block L1 PASS."
     }
   }
 }

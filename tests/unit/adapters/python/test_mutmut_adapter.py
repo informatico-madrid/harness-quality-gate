@@ -182,7 +182,7 @@ def test_invoke_wiring_exact_call_args(tmp_path: Path) -> None:
     mock_run.assert_called_once()
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == fake_bin
-    assert cmd == [fake_bin, "results", "--json", "--path-include=.*\\.py$"]
+    assert cmd == [fake_bin, "results", "--all", "true", "--path-include=.*\\.py$"]
     assert mock_run.call_args[1]["cwd"] == tmp_path
     assert mock_run.call_args[1]["env"] == {"MUTMUT_CI": "1"}
     assert mock_run.call_args[1]["timeout"] == 700.0
@@ -203,7 +203,8 @@ def test_invoke_command_structure(tmp_path: Path) -> None:
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == fake_bin
     assert "results" in cmd
-    assert "--json" in cmd
+    assert "--all" in cmd
+    assert "true" in cmd
     assert "--path-include=.*\\.py$" in cmd
     assert "--no-summary" in cmd
 
@@ -595,3 +596,123 @@ def test_parse_partial_json_all_defaults() -> None:
     # msi = 199 / (199 + 0 + 0 + 0) = 1.0
     assert stats.msi == 1.0
     assert stats.covered_msi == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Simulation regressions (H2): mutmut 3.x has no `results --json`; the
+# adapter must collect per-mutant lines via `results --all true` and a
+# new run() method must execute the mutation campaign itself.
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_uses_results_all_true(tmp_path: Path) -> None:
+    """`mutmut results --json` does not exist in mutmut 3.x — the adapter
+    must ask for per-mutant status lines instead."""
+    adapter = _adapter()
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            adapter.invoke(tmp_path, [])
+    cmd = run.call_args[0][0]
+    assert cmd == ["/usr/bin/mutmut", "results", "--all", "true"]
+    assert "--json" not in cmd
+
+
+def test_run_executes_mutation_campaign(tmp_path: Path) -> None:
+    adapter = _adapter()
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            inv = adapter.run(tmp_path)
+    cmd = run.call_args[0][0]
+    assert cmd == ["/usr/bin/mutmut", "run"]
+    assert run.call_args.kwargs["cwd"] == tmp_path
+    assert run.call_args.kwargs["timeout"] == 1800.0
+    assert inv.exitcode == 0
+
+
+def test_run_binary_not_found_degrades(tmp_path: Path) -> None:
+    adapter = _adapter()
+    with patch("shutil.which", return_value=None):
+        inv = adapter.run(tmp_path)
+    assert inv.exitcode == 3
+    assert "mutmut not found on PATH" in inv.stderr
+
+
+def test_parse_per_mutant_lines_aggregates_statuses(tmp_path: Path) -> None:
+    stdout = "\n".join([
+        "To apply a mutant on disk:",
+        "",
+        "Survived 🙁 (1)",
+        "    greeter.x_greet__mutmut_1: killed",
+        "    greeter.x_greet__mutmut_2: killed",
+        "    greeter.x_greet__mutmut_3: survived",
+        "    greeter.x_shout__mutmut_1: timeout",
+        "    greeter.x_shout__mutmut_2: suspicious",
+        "    greeter.x_shout__mutmut_3: untested",
+    ])
+    stats = _adapter().parse(stdout)
+    assert stats.total == 6
+    assert stats.killed == 2
+    assert stats.survived == 1
+    assert stats.timed_out == 2          # timeout + suspicious (conservative)
+    assert stats.untested == 1
+    # existing contract: msi = killed / covered (fraction), covered
+    # excludes untested; covered_msi mirrors msi
+    assert stats.msi == pytest.approx(0.4)
+    assert stats.covered_msi == pytest.approx(0.4)
+
+
+def test_parse_usage_error_text_yields_zero_stats(tmp_path: Path) -> None:
+    """A CLI usage error (e.g. unknown option) must not fabricate counts."""
+    stats = _adapter().parse(
+        "Usage: mutmut results [OPTIONS]\nError: No such option '--json'.",
+    )
+    assert stats.total == 0
+    assert stats.killed == 0
+    assert stats.msi == 0.0
+
+
+# ---------------------------------------------------------------------------
+# MSI survivor killers (post-simulation campaign)
+# ---------------------------------------------------------------------------
+
+
+def test_run_queries_which_with_exact_tool_name(tmp_path: Path) -> None:
+    """A name-checking fake (not a blanket return) kills which-arg mutants."""
+    def _which(name):
+        return "/usr/bin/mutmut" if name == "mutmut" else None
+
+    with patch("shutil.which", side_effect=_which):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            _adapter().run(tmp_path)
+    assert run.call_args.args[0] == ["/usr/bin/mutmut", "run"]
+
+
+def test_run_not_found_exact_stderr(tmp_path: Path) -> None:
+    with patch("shutil.which", return_value=None):
+        inv = _adapter().run(tmp_path)
+    assert inv.stderr == "mutmut not found on PATH"
+    assert inv.exitcode == 3
+
+
+def test_run_passes_env_through(tmp_path: Path) -> None:
+    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+        with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
+            _adapter().run(tmp_path, env={"MUTMUT_CI": "1"})
+    assert run.call_args.kwargs["env"] == {"MUTMUT_CI": "1"}
+    assert run.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_parse_accumulates_repeated_statuses(tmp_path: Path) -> None:
+    """Two survivors and two untested must COUNT 2, not reset to 1."""
+    stdout = "\n".join([
+        "    greeter.x_greet__mutmut_1: survived",
+        "    greeter.x_greet__mutmut_2: survived",
+        "    greeter.x_shout__mutmut_1: untested",
+        "    greeter.x_shout__mutmut_2: no tests",
+        "    greeter.x_shout__mutmut_3: killed",
+    ])
+    stats = _adapter().parse(stdout)
+    assert stats.survived == 2
+    assert stats.untested == 2
+    assert stats.killed == 1
+    assert stats.total == 5

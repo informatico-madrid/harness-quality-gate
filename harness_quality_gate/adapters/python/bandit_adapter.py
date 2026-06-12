@@ -44,7 +44,10 @@ class BanditAdapter(ToolAdapter):
         binary = shutil.which("bandit")
         if binary is None:
             return ToolInvocation(stderr="bandit not found on PATH", exitcode=3)
-        cmd = [binary, "-r", "--format", "json", str(repo)]
+        # Recurse src/ only (the skill's step invokes ``bandit -r src/``);
+        # the whole repo would sweep mutation artifacts too (H10).
+        target = repo / "src" if (repo / "src").is_dir() else repo
+        cmd = [binary, "-r", "--format", "json", str(target)]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)

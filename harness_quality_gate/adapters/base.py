@@ -42,6 +42,18 @@ class ToolInvocation:
     duration_seconds: float = 0.0
 
 
+def source_targets(repo: Path, *candidates: str) -> list[str]:
+    """Return the repo-relative scan targets among *candidates* that exist.
+
+    The skill contract requires ``src/`` and ``tests/`` in the target repo;
+    scanning the whole repo would also sweep the mutation artifacts
+    (``mutants/``, mutmut cache) that L1's own campaign generates
+    (simulation bug H10). Callers fall back to the repo root when none of
+    the candidate directories exist.
+    """
+    return [c for c in candidates if (repo / c).is_dir()]
+
+
 # ---------------------------------------------------------------------------
 # BaseAdapter — layer orchestrator
 # ---------------------------------------------------------------------------

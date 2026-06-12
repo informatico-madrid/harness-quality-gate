@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation
+from ..base import ToolAdapter, ToolInvocation, source_targets
 
 _SEV_MAP = {
     "error": "error",
@@ -53,7 +53,8 @@ class PyrightAdapter(ToolAdapter):
         cmd = [binary, "--outputjson"]
         if args:
             cmd.extend(args)
-        cmd.append(str(repo))
+        # src/tests only — keep mutation artifacts out of the scan (H10).
+        cmd.extend(source_targets(repo, "src", "tests") or [str(repo)])
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     @staticmethod

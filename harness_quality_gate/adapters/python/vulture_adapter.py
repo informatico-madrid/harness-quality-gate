@@ -44,7 +44,10 @@ class VultureAdapter(ToolAdapter):
         binary = shutil.which("vulture")
         if binary is None:
             return ToolInvocation(stderr="vulture not found on PATH", exitcode=3)
-        cmd = [binary, "--format", "json", str(repo)]
+        # Scan src/ only (the skill's step invokes ``vulture src/``);
+        # the whole repo would sweep mutation artifacts too (H10).
+        target = repo / "src" if (repo / "src").is_dir() else repo
+        cmd = [binary, "--format", "json", str(target)]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)

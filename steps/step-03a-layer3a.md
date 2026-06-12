@@ -85,8 +85,13 @@ cd {project-root} && python3 -m pyright src/ 2>&1
 
 ## 3A.4 Check Headers (Constitution)
 
+Header conventions are enforced by ruff (3A.1); a dedicated
+`check_headers` script is legacy. If the target repo ships its own
+`scripts/check_headers.py`, run it; otherwise mark the check as `SKIPPED`
+(it never blocks L3A):
+
 ```bash
-cd {project-root} && python3 scripts/check_headers.py (legacy — use ruff) --check 2>&1
+cd {project-root} && { [ -f scripts/check_headers.py ] && python3 scripts/check_headers.py --check 2>&1 || echo "check_headers=SKIPPED"; }
 ```
 
 **Update state:**

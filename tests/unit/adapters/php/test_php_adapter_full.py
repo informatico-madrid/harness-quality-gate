@@ -616,7 +616,8 @@ class TestRunL1PestPaths:
 
         assert result.layer == "L1"
         assert result.language == "php"
-        assert result.passed is False  # info finding for mutation skipped
+        # info finding (mutation skipped) no longer gates (H11)
+        assert result.passed is True
         assert any("pest-plugin-mutate" in str(f.message) for f in result.findings)
         assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
         # Kill mutmut_50: condition `is_pest_project and not pest_has_mutate` → `is_pest_project` (False)
@@ -656,7 +657,8 @@ class TestRunL1PestPaths:
         # Kill '_pest_binary(repo)' → '_pest_binary(None)' mutation (called twice)
         assert adapter._pest._pest_binary.call_args_list[0][0][0] == tmp_path
         # Original assertions for passed/finding/mutation_skipped
-        assert result.passed is False  # info finding for mutation skipped
+        # info finding (mutation skipped) no longer gates (H11)
+        assert result.passed is True
         assert any("pest-plugin-mutate" in str(f.message) for f in result.findings)
         assert result.tool_specific.get("mutation_skipped") == "pest-plugin-mutate not installed"
         # Kill '_pest_invoke(repo)' → '_pest_invoke(None)' mutation
@@ -1433,7 +1435,8 @@ class TestRunL3b:
         result = adapter.run_l3b(tmp_path, {})
         assert result.layer == "L3B"
         assert result.language == "php"
-        assert result.passed is False
+        # warning findings no longer gate (H11)
+        assert result.passed is True
         assert len(result.findings) >= 1
         # Kill mutation on invoke parameters
         call = adapter._antipattern.invoke.call_args
@@ -1543,7 +1546,8 @@ class TestRunL3b:
         result = adapter.run_l3b(tmp_path, {})
         assert result.layer == "L3B"
         assert result.language == "php"
-        assert result.passed is False
+        # warning findings no longer gate (H11)
+        assert result.passed is True
         assert len(result.findings) == 1
         assert result.duration_sec >= 0
         # Verify exact field types - kills mutmut_24/25 (layer→None, layer→"")
@@ -3215,7 +3219,9 @@ class TestRunL1PassedFieldGranular:
         result = adapter.run_l1(tmp_path, {})
         assert result.layer == "L1"
         assert result.language == "php"
-        assert result.passed is False
+        # Severity policy (H11): the skip emits an info finding,
+        # which no longer gates the layer.
+        assert result.passed is True
 
     def test_run_l1_pcov_fail_result_fields(self, tmp_path):
         adapter = _make_mock_adapter(
@@ -3770,7 +3776,8 @@ class TestRunL3a:
 
         assert result.layer == "L3A"
         assert result.language == "php"
-        assert result.passed is False
+        # cs-fixer style warnings no longer gate (H11)
+        assert result.passed is True
 
         # --- Kill mutmut_86, 87, 88, 89 ---
         cs_logs = [m for m in caplog.messages
@@ -4200,7 +4207,8 @@ class TestRunL3a:
         caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
         result = adapter.run_l3a(tmp_path, {})
 
-        assert result.passed is False
+        # cs-fixer style warnings no longer gate (H11)
+        assert result.passed is True
         assert any(f.tool == "php-cs-fixer" for f in result.findings)
 
         cs_logs = [m for m in caplog.messages if m.startswith("L3A php-cs-fixer:")]
@@ -4421,7 +4429,8 @@ class TestRunL3a:
         caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
         result = adapter.run_l3a(tmp_path, {})
 
-        assert result.passed is False
+        # cs-fixer style warnings no longer gate (H11)
+        assert result.passed is True
         assert any(f.tool == "php-cs-fixer" for f in result.findings)
 
         # Original: "L3A php-cs-fixer: 1 findings"
@@ -4792,7 +4801,8 @@ class TestRunL1MutantKilling:
         )
         result = adapter.run_l1(tmp_path, {})
         # mutation_skipped finding makes passed=False
-        assert result.passed is False
+        # info finding (mutation skipped) no longer gates (H11)
+        assert result.passed is True
         assert len(result.findings) == 1
         assert result.findings[0].message == "Mutation testing skipped: pest-plugin-mutate not installed (TD-6)"
 
@@ -5483,3 +5493,99 @@ class TestAntipatternHelperSurvivorKillers:
             tmp_path, args=["analyse"], env=env,
         )
         adapter._antipattern.parse.assert_called_once_with("AP-STDOUT")
+
+
+# ===========================================================================
+# Simulation regression (H11): PHP layer gates must honour the severity
+# policy — only error-severity findings block. A clean hello-world repo
+# failed L3A/L3B because FE-001 (feature envy) info findings on its own
+# TEST methods gated the layer.
+# ===========================================================================
+
+def _info_finding(layer: str) -> Finding:
+    return Finding(
+        node="tests/GreeterTest.php", severity="info",
+        message='Method "testX" has 4 foreign accesses (exceeds 3)',
+        tool="antipattern-tier-a", layer=layer, language="php",
+        rule_id="FE-001",
+    )
+
+
+def _error_finding(layer: str, tool: str = "phpstan") -> Finding:
+    return Finding(
+        node="src/Greeter.php", severity="error",
+        message="boom", tool=tool, layer=layer, language="php",
+    )
+
+
+class TestPhpSeverityGates:
+    def _l3a_adapter(self, findings):
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._cs_fixer.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = findings
+        return adapter
+
+    def test_l3a_info_findings_do_not_gate(self, tmp_path):
+        adapter = self._l3a_adapter([_info_finding("L3A")])
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        assert len(result.findings) == 1
+
+    def test_l3a_error_findings_gate(self, tmp_path):
+        adapter = self._l3a_adapter([_error_finding("L3A", "antipattern-tier-a")])
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is False
+
+    def _l3b_adapter(self, findings):
+        adapter = PhpAdapter()
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = findings
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="{}", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
+        return adapter
+
+    def test_l3b_info_findings_do_not_gate(self, tmp_path):
+        adapter = self._l3b_adapter([_info_finding("L3B")])
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.passed is True
+        assert len(result.findings) == 1
+
+    def test_l3b_error_findings_gate(self, tmp_path):
+        adapter = self._l3b_adapter([_error_finding("L3B", "deptrac")])
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.passed is False
+
+    def _l4_adapter(self, findings):
+        adapter = PhpAdapter()
+        for attr in ("_psalm_taint", "_composer_audit", "_security_checker",
+                     "_dead_code", "_dep_analyser"):
+            tool = MagicMock()
+            tool.invoke.return_value = MagicMock(stdout="{}", stderr="", exitcode=0)
+            tool.parse.return_value = []
+            setattr(adapter, attr, tool)
+        adapter._psalm_taint.parse.return_value = findings
+        return adapter
+
+    def test_l4_warning_findings_do_not_gate(self, tmp_path):
+        warn = Finding(node="src/Greeter.php", severity="warning",
+                       message="advisory", tool="composer-audit",
+                       layer="L4", language="php")
+        adapter = self._l4_adapter([warn])
+        result = adapter.run_l4(tmp_path, {})
+        assert result.passed is True
+        assert len(result.findings) == 1
+
+    def test_l4_error_findings_gate(self, tmp_path):
+        adapter = self._l4_adapter([_error_finding("L4", "psalm-taint")])
+        result = adapter.run_l4(tmp_path, {})
+        assert result.passed is False

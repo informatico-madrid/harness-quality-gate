@@ -29,9 +29,13 @@ Do NOT activate this skill when:
 
 ## Conventions
 
-- `${CLAUDE_SKILL_DIR}` resolves to this workflow skill's installed directory.
+- `{skill-root}` resolves to this skill's installed directory. The skill is
+  agent-agnostic: in Claude Code that is `${CLAUDE_SKILL_DIR}`; in other
+  agents or CI systems it is wherever the skill files were installed.
 - `{project-root}` resolves to the repository working directory.
-- Resolve sibling workflow files such as `instructions.md`, `checklist.md`, `steps/...`, and templates from `${CLAUDE_SKILL_DIR}`, not from the workspace root.
+- Resolve sibling workflow files such as `workflow.md`, `steps/...`,
+  `config/...` and `references/...` from `{skill-root}`, not from the
+  workspace root.
 
 ---
 
@@ -183,8 +187,8 @@ the missing list in the JSON payload.
 
 ### Normal Workflow
 
-1. Read `${CLAUDE_SKILL_DIR}/workflow.md` and follow it exactly.
-2. If a custom configuration exists at `{project-root}/_quality-gate/quality-gate.yaml`, it will be used. Otherwise, defaults are used from `${CLAUDE_SKILL_DIR}/config/quality-gate.yaml`.
+1. Read `{skill-root}/workflow.md` and follow it exactly.
+2. If a custom configuration exists at `{project-root}/_quality-gate/quality-gate.yaml`, it will be used. Otherwise, defaults are used from `{skill-root}/config/quality-gate.yaml`.
 3. The workflow will guide you through all 5 layers sequentially: L3A → L1 → L2 → L3B → L4.
 4. L3A is the smoke test — if it fails, stop immediately without running L1/L2/L3B/L4.
 5. L4 is the security gate — runs after all quality/test layers pass.

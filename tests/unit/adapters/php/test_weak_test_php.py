@@ -78,7 +78,8 @@ class TestRunL3b:
     def test_run_l2_multiple_findings(self, tmp_path: Path) -> None:
         """Multiple findings from different rules → all returned."""
         findings_data = [
-            {"file": "tests/A.php", "line": 1, "rule_id": "A1", "message": "msg1"},
+            {"file": "tests/A.php", "line": 1, "rule_id": "A1",
+             "message": "msg1", "severity": "error"},
             {"file": "tests/B.php", "line": 5, "rule_id": "A2-PHP", "message": "msg2"},
             {"file": "tests/C.php", "line": 10, "rule_id": "A5", "message": "msg3"},
         ]
@@ -130,7 +131,8 @@ class TestRunL3b:
     def test_run_l2_with_findings_and_stderr(self, tmp_path: Path) -> None:
         """Invoke with non-zero exitcode due to stderr findings still produces LayerResult."""
         findings_data = [
-            {"file": "tests/Test.php", "line": 5, "rule_id": "A6", "message": "spare ignore"},
+            {"file": "tests/Test.php", "line": 5, "rule_id": "A6",
+             "message": "spare ignore", "severity": "error"},
         ]
         invocation = _mock_ok(
             stdout=json.dumps(findings_data),
@@ -313,7 +315,8 @@ class TestRunL3bWithRealFiles:
             adapter = PhpWeakTestLayerAdapter()
             result = adapter.run_l2(tmp_path, {})
 
-        assert result.passed is False
+        # A1 without explicit severity defaults to info → no gate (H11)
+        assert result.passed is True
         assert result.findings[0].rule_id == "A1"
 
     def test_run_l2_no_test_directory(self, tmp_path: Path) -> None:
@@ -1331,7 +1334,8 @@ class TestRunL3bReturnStructure:
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
             stdout=json.dumps([{
-                "file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "m"
+                "file": "tests/X.php", "line": 1, "rule_id": "A1",
+                "message": "m", "severity": "error"
             }])
         )):
             result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
@@ -1358,7 +1362,7 @@ class TestRunL3bReturnStructure:
         Kills mutations on the `len(findings) == 0` check or `not findings`.
         """
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
-            stdout=json.dumps([{"file": "t.php", "line": 1}])
+            stdout=json.dumps([{"file": "t.php", "line": 1, "severity": "error"}])
         )):
             result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is False
@@ -1428,7 +1432,8 @@ class TestRunL3bReturnStructure:
         
         with patch.object(PhpWeakTestAdapter, "invoke", return_value=_mock_ok(
             stdout=json.dumps([{
-                "file": "tests/X.php", "line": 1, "rule_id": "A1", "message": "m"
+                "file": "tests/X.php", "line": 1, "rule_id": "A1",
+                "message": "m", "severity": "error"
             }])
         )):
             with patch.object(PhpWeakTestAdapter, "_collect_test_files", return_value=[tmp_path / "tests/X.php"]):
@@ -2455,14 +2460,26 @@ class TestRunL3bExactLogMessage:
             f"mutmut_45: passed must be True with 0 findings. Got: {result.passed}"
         )
 
-        # One finding → passed=False
+        # One info finding → still passes under the severity policy (H11)
         with patch.object(
             PhpWeakTestAdapter, "invoke",
             return_value=_mock_ok(stdout=json.dumps([{"file": "t.php", "line": 1}])),
         ):
             result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
+        assert result.passed is True, (
+            f"info findings must not gate (H11). Got: {result.passed}"
+        )
+
+        # One error finding → passed=False (the gate itself)
+        with patch.object(
+            PhpWeakTestAdapter, "invoke",
+            return_value=_mock_ok(stdout=json.dumps(
+                [{"file": "t.php", "line": 1, "severity": "error"}],
+            )),
+        ):
+            result = PhpWeakTestLayerAdapter().run_l2(tmp_path, {})
         assert result.passed is False, (
-            f"mutmut_45: passed must be False with 1 finding. Got: {result.passed}"
+            f"error findings must gate. Got: {result.passed}"
         )
 
 

@@ -44,29 +44,56 @@ class MutmutAdapter(ToolAdapter):
         binary = shutil.which("mutmut")
         if binary is None:
             return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
-        cmd = [binary, "results", "--json"]
+        # mutmut 3.x has no ``results --json``; per-mutant status lines are
+        # the only machine-readable output (same source as mutation_analyzer).
+        cmd = [binary, "results", "--all", "true"]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
+
+    def run(
+        self,
+        repo: Path,
+        *,
+        env: Mapping[str, str] | None = None,
+        timeout: float = 1800.0,
+    ) -> ToolInvocation:
+        """Execute the mutation campaign (``mutmut run``) in *repo*.
+
+        L1 collects results right after; parity with PHP's Infection,
+        which the PhpAdapter also executes inline.
+        """
+        binary = shutil.which("mutmut")
+        if binary is None:
+            return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
+        return self._run([binary, "run"], cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]
         self,
         stdout: str,
         *_compat: object,
     ) -> MutationStats:
-        """Parse mutmut JSON output into :class:`MutationStats`.
+        """Parse mutmut output into :class:`MutationStats`.
 
-        Accepts the ``mutmut results --json`` format:
-        ``{"total": N, "killed": N, "survived": N, ...}``.
-        Falls back to ``mutmut show`` text parsing if JSON is empty.
+        Accepts, in order of preference: a JSON object
+        (``{"total": N, "killed": N, ...}``), the per-mutant lines of
+        ``mutmut results --all true`` (``pkg.x_f__mutmut_1: killed``), or
+        bare ``key: number`` pairs as a last-resort text fallback.
         """
-        data: dict = {}
+        # reason: Tipo C — cualquier valor falsy inicial es gemelo de {}: las dos
+        # ramas siguientes reasignan data antes de cualquier acceso (json.loads
+        # o _aggregate_mutant_lines, que siempre devuelve dict). # audited: 2026-06-12
+        data: dict = {}  # pragma: no mutate
 
         # --- try valid JSON first ------------------------------------------
         try:
             data = json.loads(stdout)
         except (json.JSONDecodeError, ValueError):
             pass
+
+        # --- per-mutant status lines (mutmut 3.x ``results --all true``) ---
+        if not data:
+            data = self._aggregate_mutant_lines(stdout)
 
         # --- fallback: extract key-value pairs from text output ----------
         if not data:
@@ -96,3 +123,34 @@ class MutmutAdapter(ToolAdapter):
             msi=round(msi, 4),
             covered_msi=round(covered_msi, 4),
         )
+
+    @staticmethod
+    def _aggregate_mutant_lines(stdout: str) -> dict:
+        """Aggregate ``pkg.x_f__mutmut_N: status`` lines into count keys.
+
+        ``suspicious`` counts as timeout (conservative: it gates), while
+        ``skipped``/``untested``/``no tests`` count as untested.
+        """
+        import re
+
+        line_re = re.compile(
+            r"^\s*\S+__mutmut_\d+:\s*"
+            r"(killed|survived|timeout|suspicious|skipped|untested|no tests)\s*$"
+        )
+        counts = {"total": 0, "killed": 0, "survived": 0,
+                  "timeout": 0, "untested": 0}
+        for line in stdout.splitlines():
+            m = line_re.match(line)
+            if m is None:
+                continue
+            status = m.group(1)
+            counts["total"] += 1
+            if status == "killed":
+                counts["killed"] += 1
+            elif status == "survived":
+                counts["survived"] += 1
+            elif status in ("timeout", "suspicious"):
+                counts["timeout"] += 1
+            else:
+                counts["untested"] += 1
+        return counts if counts["total"] else {}

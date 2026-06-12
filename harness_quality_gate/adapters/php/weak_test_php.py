@@ -317,7 +317,8 @@ class PhpWeakTestLayerAdapter:
         return LayerResult(
             layer="L2",
             language="php",
-            passed=len(findings) == 0,
+            # Severity policy (H11): only error-severity findings gate.
+            passed=not any(f.severity == "error" for f in findings),
             findings=findings,
             duration_sec=round(duration, 3),
         )

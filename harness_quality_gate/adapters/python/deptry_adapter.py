@@ -44,8 +44,12 @@ class DeptryAdapter(ToolAdapter):
         binary = shutil.which("deptry")
         if binary is None:
             return ToolInvocation(stderr="deptry not found on PATH", exitcode=3)
-        # deptry supports JSON via --output or --no-color + --quiet with format
-        cmd = [binary, "--output", "json", "."]
+        # deptry supports JSON via --output or --no-color + --quiet with format.
+        # Mutation artifacts are excluded explicitly (H10): deptry walks the
+        # whole project and mutants/ holds a full copy of the sources.
+        cmd = [binary, "--output", "json",
+               "--extend-exclude", "mutants",
+               "--extend-exclude", r"\.mutmut", "."]
         if args:
             cmd.extend(args)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)

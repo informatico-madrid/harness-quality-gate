@@ -419,7 +419,11 @@ class TestInvoke:
                 adapter.invoke(Path("/tmp/empty"), [])
         mock_run.assert_called_once()
         call_args = mock_run.call_args
-        assert call_args.args[0] == ["/bin/deptry", "--output", "json", "."]
+        assert call_args.args[0] == [
+            "/bin/deptry", "--output", "json",
+            "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
+            ".",
+        ]
 
     def test_invoke_with_extra_args(self, adapter):
         """Extra args appended to command."""
@@ -429,8 +433,9 @@ class TestInvoke:
                 adapter.invoke(Path("/tmp/empty"), ["--extend-exclude", "tests/"])
         call_args = mock_run.call_args
         assert call_args.args[0] == [
-            "/bin/deptry", "--output", "json", ".",
-            "--extend-exclude", "tests/",
+            "/bin/deptry", "--output", "json",
+            "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
+            ".", "--extend-exclude", "tests/",
         ]
 
     def test_invoke_args_empty(self, adapter):
@@ -440,7 +445,11 @@ class TestInvoke:
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
         call_args = mock_run.call_args
-        assert call_args.args[0] == ["/bin/deptry", "--output", "json", "."]
+        assert call_args.args[0] == [
+            "/bin/deptry", "--output", "json",
+            "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
+            ".",
+        ]
 
     def test_invoke_with_env(self, adapter):
         """env mapping passed to _run."""
@@ -481,7 +490,11 @@ class TestInvoke:
         mock_run.assert_called_once()
         call_args = mock_run.call_args
         cmd = call_args[0][0]
-        assert cmd == ["/bin/deptry", "--output", "json", ".", "--extend-exclude", "docs/"]
+        assert cmd == [
+            "/bin/deptry", "--output", "json",
+            "--extend-exclude", "mutants", "--extend-exclude", "\\.mutmut",
+            ".", "--extend-exclude", "docs/",
+        ]
         assert call_args.kwargs["cwd"] == Path("/tmp/deploy")
         assert call_args.kwargs["env"] == {"DEPTRY_ENV": "1"}
         assert call_args.kwargs["timeout"] == 150.0

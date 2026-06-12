@@ -136,7 +136,10 @@ class PythonAdapter(BaseAdapter):
             tool_spec["remediation"] = self._mutation_remediation(mutation_stats)
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0 and mutation_passed
+        # Severity policy: only error-severity findings gate (skipped tests
+        # map to info and must not block — simulation bug H9).
+        has_errors = any(f.severity == "error" for f in all_findings)
+        passed = not has_errors and mutation_passed
 
         return LayerResult(
             layer="L1",
@@ -262,7 +265,10 @@ class PythonAdapter(BaseAdapter):
         logger.info("deptry: %d findings", len(deptry_findings))
 
         duration = time.monotonic() - t0
-        passed = len(all_findings) == 0
+        # Severity policy: only error-severity findings block the gate
+        # (bandit LOW/info — e.g. B101 asserts in tests — must not fail a
+        # clean repo; simulation bug H1).
+        passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L4",
@@ -426,6 +432,12 @@ class PythonAdapter(BaseAdapter):
                 escaped=0, untested=0, msi=0.0, covered_msi=0.0,
             )
         try:
+            # Execute the campaign first (parity with PHP's Infection);
+            # ``mutmut results`` alone is empty on a fresh repo (bug H2).
+            run_inv = self.mutmut.run(repo, env=dict(env) if env else {})
+            if run_inv.exitcode != 0:
+                logger.warning("mutmut run exited %d: %s",
+                               run_inv.exitcode, run_inv.stderr.strip())
             inv = self.mutmut.invoke(repo, [], env=dict(env) if env else {})
             return self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:

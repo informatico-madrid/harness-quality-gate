@@ -6,7 +6,7 @@
 
 ## 1.1 Load Configuration
 
-Read config from `${CLAUDE_SKILL_DIR}/config/quality-gate.yaml` if exists.
+Read config from `{skill-root}/config/quality-gate.yaml` if exists.
 
 If no config found, use defaults:
 - `output_folder = _bmad-output/quality-gate`

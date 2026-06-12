@@ -3073,12 +3073,14 @@ class TestPyAdapterSurvivorKillers:
             escaped=0, untested=0, msi=100.0, covered_msi=100.0,
         )
         a.mutmut.parse.return_value = stats
+        a.mutmut.run.return_value = MagicMock(exitcode=0, stderr="")
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
              patch(_PA_WHICH, return_value="/usr/bin/x"), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l1(tmp_path, self.ENV)
         a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.pytest.parse.assert_called_once_with("out-2", "err-2", 2)
+        a.mutmut.run.assert_called_once_with(tmp_path, env=self.ENV)
         a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
         assert _pa_messages(caplog) == ["pytest: 0 findings"]
@@ -3189,6 +3191,7 @@ class TestPyAdapterSurvivorKillers:
 
     def test_run_mutmut_failure_returns_exact_zero_stats(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
+        a.mutmut.run.return_value = MagicMock(exitcode=0, stderr="")
         a.mutmut.invoke.side_effect = RuntimeError("mm-boom")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
              patch(_PA_WHICH, return_value="/usr/bin/mutmut"):
@@ -3446,3 +3449,119 @@ class TestTierAFindingsContract:
         }
         findings = self._findings(tmp_path, report)
         assert [f.rule_id for f in findings] == ["AP01", "AP09"]
+
+
+# ---------------------------------------------------------------------------
+# Simulation regressions (H1/H9): layer gates must honour the severity
+# policy (only error-severity findings block), and L1 must actually run
+# the mutation campaign before collecting results (H2).
+# ---------------------------------------------------------------------------
+
+class TestL1MutmutRunWiring:
+    def test_run_l1_executes_mutmut_run_before_collecting_results(self, tmp_path: Path):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        from harness_quality_gate.models import MutationStats
+
+        a = PythonAdapter()
+        a.pytest = MagicMock()
+        a.pytest.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        a.pytest.parse.return_value = []
+        stats = MutationStats(total=4, killed=4, survived=0, timed_out=0,
+                              escaped=0, untested=0, msi=100.0, covered_msi=100.0)
+        a.mutmut = MagicMock()
+        a.mutmut.invoke.return_value = MagicMock(stdout="x", stderr="", exitcode=0)
+        a.mutmut.parse.return_value = stats
+        with patch("shutil.which", return_value="/usr/bin/x"):
+            layer = a.run_l1(tmp_path, {})
+        a.mutmut.run.assert_called_once()
+        # run() must happen before results collection
+        names = [c[0] for c in a.mutmut.method_calls]
+        assert names.index("run") < names.index("invoke")
+        assert layer.tool_specific["mutation_stats"] is stats
+        assert layer.passed is True
+
+
+class TestL1SeverityGate:
+    def _layer(self, tmp_path, findings):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        from harness_quality_gate.models import MutationStats
+
+        a = PythonAdapter()
+        stats = MutationStats(total=1, killed=1, survived=0, timed_out=0,
+                              escaped=0, untested=0, msi=100.0, covered_msi=100.0)
+        with (
+            patch.object(PythonAdapter, "_run_pytest", return_value=findings),
+            patch.object(PythonAdapter, "_run_mutmut", return_value=stats),
+        ):
+            return a.run_l1(tmp_path, {})
+
+    def test_skipped_tests_info_findings_do_not_gate(self, tmp_path: Path):
+        info = Finding(node="t.py::test_a", severity="info",
+                       message="Test skipped", tool="pytest",
+                       layer="L1", language="python", rule_id="skipped")
+        layer = self._layer(tmp_path, [info])
+        assert layer.passed is True
+        assert layer.findings == [info]
+
+    def test_error_findings_gate(self, tmp_path: Path):
+        err = Finding(node="t.py::test_a", severity="error",
+                      message="Test failed", tool="pytest",
+                      layer="L1", language="python", rule_id="failure")
+        layer = self._layer(tmp_path, [err])
+        assert layer.passed is False
+
+
+class TestL4SeverityGate:
+    def _layer(self, tmp_path, findings):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        a = PythonAdapter()
+        with (
+            patch.object(PythonAdapter, "_run_bandit", return_value=findings),
+            patch.object(PythonAdapter, "_run_vulture", return_value=[]),
+            patch.object(PythonAdapter, "_run_deptry", return_value=[]),
+        ):
+            return a.run_l4(tmp_path, {})
+
+    def test_info_and_warning_findings_do_not_gate(self, tmp_path: Path):
+        """bandit B101 (assert in tests) maps to info — a clean hello-world
+        repo must not fail L4 because its tests use assert."""
+        lows = [
+            Finding(node="tests/test_x.py", severity="info",
+                    message="Use of assert detected", tool="bandit",
+                    layer="L4", language="python"),
+            Finding(node="src/x.py", severity="warning",
+                    message="medium issue", tool="bandit",
+                    layer="L4", language="python"),
+        ]
+        layer = self._layer(tmp_path, lows)
+        assert layer.passed is True
+        assert len(layer.findings) == 2
+
+    def test_error_finding_gates(self, tmp_path: Path):
+        high = Finding(node="src/x.py", severity="error",
+                       message="hardcoded password", tool="bandit",
+                       layer="L4", language="python")
+        layer = self._layer(tmp_path, [high])
+        assert layer.passed is False
+
+
+class TestRunMutmutRunFailureLog:
+    def test_nonzero_mutmut_run_logs_exact_warning(self, tmp_path, caplog):
+        import logging as _logging
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        from harness_quality_gate.models import MutationStats
+
+        a = PythonAdapter()
+        a.mutmut = MagicMock()
+        a.mutmut.run.return_value = MagicMock(exitcode=2, stderr=" boom\n")
+        a.mutmut.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        a.mutmut.parse.return_value = MutationStats(
+            total=0, killed=0, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+        )
+        with caplog.at_level(
+            _logging.WARNING,
+            logger="harness_quality_gate.adapters.python.python_adapter",
+        ), patch("shutil.which", return_value="/usr/bin/mutmut"):
+            a._run_mutmut(tmp_path, {})
+        assert "mutmut run exited 2: boom" in caplog.messages

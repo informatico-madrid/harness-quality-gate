@@ -84,10 +84,24 @@ def parse_mutmut(repo: Path) -> dict[str, ModuleMutStats]:
     return stats
 
 
-def parse_infection(repo: Path) -> dict[str, ModuleMutStats]:
-    """Parse ``infection-log.json`` output.
+# Infection 0.29 groups mutants into per-status LISTS; each entry carries
+# mutator.originalFilePath. Maps each list to the ModuleMutStats field it
+# increments (simulation bug H13: the legacy "mutators" mapping never
+# existed in modern Infection, so the kill-map was always empty).
+_INFECTION_STATUS_FIELDS = {
+    "killed": "killed",
+    "escaped": "survived",
+    "timeouted": "timeout",
+    "uncovered": "skipped",
+    "ignored": "skipped",
+}
 
-    Returns a dict mapping module name to :class:`ModuleMutStats`.
+
+def parse_infection(repo: Path) -> dict[str, ModuleMutStats]:
+    """Parse ``infection-log.json`` (Infection 0.29 JSON logger format).
+
+    Returns a dict mapping module name (source file stem) to
+    :class:`ModuleMutStats`.
     """
     log_file = _find_infection_log(repo)
     if log_file is None or not log_file.exists():
@@ -101,23 +115,31 @@ def parse_infection(repo: Path) -> dict[str, ModuleMutStats]:
     if not isinstance(data, dict):
         return {}
 
-    stats: dict[str, ModuleMutStats] = {}
+    counts: dict[str, dict[str, int]] = {}
 
-    for module, mutants in (data.get("mutators") or {}).items():
+    for status_list, field_name in _INFECTION_STATUS_FIELDS.items():
+        mutants = data.get(status_list)
         if not isinstance(mutants, list):
             continue
-        killed = sum(1 for m in mutants if m.get("status") == "killed")
-        survived = sum(1 for m in mutants if m.get("status") == "survived")
-        timeout = sum(1 for m in mutants if m.get("status") == "timed_out")
-        skipped = sum(1 for m in mutants if m.get("status") in ("skipped", "no_changes"))
-        total = len(mutants)
+        for mutant in mutants:
+            if not isinstance(mutant, dict):
+                continue
+            file_path = (mutant.get("mutator") or {}).get("originalFilePath")
+            if not file_path:
+                continue
+            module = Path(file_path).stem
+            module_counts = counts.setdefault(
+                module,
+                {"total": 0, "killed": 0, "survived": 0,
+                 "timeout": 0, "skipped": 0},
+            )
+            module_counts["total"] += 1
+            module_counts[field_name] += 1
 
-        stats[module] = ModuleMutStats(
-            module=module, total=total, killed=killed,
-            survived=survived, timeout=timeout, skipped=skipped,
-        )
-
-    return stats
+    return {
+        module: ModuleMutStats(module=module, **c)
+        for module, c in counts.items()
+    }
 
 
 @dataclass

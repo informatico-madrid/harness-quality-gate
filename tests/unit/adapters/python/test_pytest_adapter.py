@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, "/mnt/bunker_data/harness-quality-gate")
 
+from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.adapters.python.pytest_adapter import (
     PytestAdapter,
 )
@@ -124,7 +125,7 @@ class TestInvoke:
                 assert result.exitcode == 0
 
     def test_invoke_command_arguments(self, tmp_path: Path) -> None:
-        """Command contains python -m pytest --junitxml /dev/stdout …"""
+        """Command contains python -m pytest --junitxml <tempfile.xml> …"""
         with patch("shutil.which", return_value="/usr/bin/python3"):
             with patch(
                 "harness_quality_gate.adapters.base.subprocess.run"
@@ -140,7 +141,10 @@ class TestInvoke:
                 assert "-m" in cmd
                 assert "pytest" in cmd
                 assert "--junitxml" in cmd
-                assert "/dev/stdout" in cmd
+                junit_arg = cmd[cmd.index("--junitxml") + 1]
+                assert junit_arg != "/dev/stdout"
+                assert "hqg-junit-" in junit_arg
+                assert junit_arg.endswith(".xml")
                 assert "-o" in cmd
                 assert "junit_suite_name=pytest" in cmd
                 assert "-k" in cmd
@@ -161,10 +165,12 @@ class TestInvoke:
                 cmd = call_args.args[0]
                 # base flags present
                 assert "pytest" in cmd
-                # no extra items appended beyond defaults
+                # no extra items appended beyond defaults (the junit temp
+                # file path varies per call)
+                junit_arg = cmd[cmd.index("--junitxml") + 1]
                 extra = [a for a in cmd if a not in (
                     "python3", "/usr/bin/python3", "-m", "pytest",
-                    "--junitxml", "/dev/stdout", "-o", "junit_suite_name=pytest",
+                    "--junitxml", junit_arg, "-o", "junit_suite_name=pytest",
                 )]
                 assert extra == []
 
@@ -233,7 +239,9 @@ class TestInvoke:
         call_args = mock_run.call_args
         # Exact cmd list
         cmd = call_args.args[0]
-        assert cmd == ["/usr/bin/python3", "-m", "pytest", "--junitxml", "/dev/stdout", "-o", "junit_suite_name=pytest", "-k", "foo"]
+        junit_arg = cmd[cmd.index("--junitxml") + 1]
+        assert "hqg-junit-" in junit_arg and junit_arg.endswith(".xml")
+        assert cmd == ["/usr/bin/python3", "-m", "pytest", "--junitxml", junit_arg, "-o", "junit_suite_name=pytest", "-k", "foo"]
         # Verify all keyword args exactly
         assert call_args.kwargs["cwd"] == tmp_path
         assert call_args.kwargs["env"] == {"PYTEST_ENV": "1"}
@@ -1122,3 +1130,172 @@ class TestDefaults:
         assert skip.layer == "L1"
         assert skip.language == "python"
         assert skip.rule_id == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# Simulation regressions (H8): junitxml on /dev/stdout interleaves with the
+# terminal report making the XML unparseable, so failures vanished silently.
+# The adapter must write JUnit XML to a temp file and harden parse().
+# ---------------------------------------------------------------------------
+
+_COLLECT_ERROR_XML = (
+    '<testsuites name="pytest tests"><testsuite name="pytest" errors="1" '
+    'failures="0" skipped="0" tests="1"><testcase classname="" '
+    'name="tests/test_x.py"><error message="collection failure">'
+    'ModuleNotFoundError: No module named &#x27;greeter&#x27;</error>'
+    "</testcase></testsuite></testsuites>"
+)
+
+
+class TestJunitTempFileContract:
+    def test_invoke_returns_junit_xml_not_terminal_noise(self, tmp_path: Path) -> None:
+        adapter = PytestAdapter()
+
+        def _fake_run(cmd, **kwargs):
+            junit_path = Path(cmd[cmd.index("--junitxml") + 1])
+            junit_path.write_text(_COLLECT_ERROR_XML, encoding="utf-8")
+            return ToolInvocation(
+                stdout="===== test session starts =====\n1 error in 0.05s",
+                stderr="", exitcode=2, duration_seconds=0.1,
+            )
+
+        with patch.object(PytestAdapter, "_run", side_effect=_fake_run) as run:
+            inv = adapter.invoke(tmp_path, [])
+        cmd = run.call_args[0][0]
+        assert "/dev/stdout" not in cmd
+        assert inv.stdout == _COLLECT_ERROR_XML
+        assert inv.exitcode == 2
+        # the temp file must not leak
+        junit_path = Path(cmd[cmd.index("--junitxml") + 1])
+        assert not junit_path.exists()
+
+    def test_invoke_missing_junit_file_yields_empty_stdout(self, tmp_path: Path) -> None:
+        """pytest crashed before writing the report — stdout must be empty,
+        so the hardened parse() turns the nonzero exit into a finding."""
+        adapter = PytestAdapter()
+        crash = ToolInvocation(stdout="boom", stderr="crash", exitcode=3,
+                               duration_seconds=0.1)
+        with patch.object(PytestAdapter, "_run", return_value=crash):
+            inv = adapter.invoke(tmp_path, [])
+        assert inv.stdout == ""
+        assert inv.exitcode == 3
+
+
+class TestParseHardening:
+    def test_unparseable_output_with_nonzero_exit_is_error_finding(self) -> None:
+        findings = PytestAdapter().parse("not xml at all", "", 2)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == "error"
+        assert f.tool == "pytest"
+        assert f.layer == "L1"
+        assert f.rule_id == "parse-error"
+        assert "2" in f.message
+
+    def test_empty_output_with_nonzero_exit_is_error_finding(self) -> None:
+        findings = PytestAdapter().parse("", "", 1)
+        assert len(findings) == 1
+        assert findings[0].rule_id == "parse-error"
+        assert findings[0].severity == "error"
+
+    def test_empty_output_with_zero_exit_is_clean(self) -> None:
+        assert PytestAdapter().parse("", "", 0) == []
+
+    def test_collection_error_xml_yields_error_finding(self) -> None:
+        findings = PytestAdapter().parse(_COLLECT_ERROR_XML, "", 2)
+        # exitcode + summary + the collection error itself
+        assert [f.rule_id for f in findings] == ["exitcode", "summary", "error"]
+        assert all(f.severity == "error" for f in findings)
+        assert findings[2].message == "collection failure"
+
+    def test_no_tests_collected_exit5_is_error_finding(self) -> None:
+        xml = ('<testsuites><testsuite name="pytest" errors="0" failures="0" '
+               'skipped="0" tests="0"></testsuite></testsuites>')
+        findings = PytestAdapter().parse(xml, "", 5)
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+        assert findings[0].rule_id == "no-tests"
+
+
+# ---------------------------------------------------------------------------
+# MSI survivor killers (post-simulation campaign)
+# ---------------------------------------------------------------------------
+
+_UNPARSEABLE_FIX_HINT = ("Run pytest manually in the repo to inspect the "
+                         "failure (collection error, crash or misconfiguration).")
+
+
+class TestInvokeRecomposition:
+    def test_invoke_recomposes_invocation_exactly(self, tmp_path: Path) -> None:
+        """stderr/exitcode/duration must pass through verbatim."""
+        adapter = PytestAdapter()
+
+        def _fake_run(cmd, **kwargs):
+            junit_path = Path(cmd[cmd.index("--junitxml") + 1])
+            junit_path.write_text("<testsuites/>", encoding="utf-8")
+            return ToolInvocation(stdout="noise", stderr="warn-x",
+                                  exitcode=7, duration_seconds=1.5)
+
+        with patch.object(PytestAdapter, "_run", side_effect=_fake_run):
+            inv = adapter.invoke(tmp_path, [])
+        assert inv == ToolInvocation(stdout="<testsuites/>", stderr="warn-x",
+                                     exitcode=7, duration_seconds=1.5)
+
+    def test_invoke_junit_temp_name_shape(self, tmp_path: Path) -> None:
+        adapter = PytestAdapter()
+        with patch.object(PytestAdapter, "_run", return_value=ToolInvocation()) as run:
+            adapter.invoke(tmp_path, [])
+        junit_arg = Path(run.call_args.args[0][run.call_args.args[0].index("--junitxml") + 1])
+        assert junit_arg.name.startswith("hqg-junit-")
+        assert junit_arg.suffix == ".xml"
+
+    def test_invoke_survives_subprocess_deleting_junit_file(self, tmp_path: Path) -> None:
+        """If the subprocess removes the report, invoke must neither stat()
+        nor unlink() a missing file into an exception."""
+        adapter = PytestAdapter()
+
+        def _fake_run(cmd, **kwargs):
+            junit_path = Path(cmd[cmd.index("--junitxml") + 1])
+            junit_path.unlink()
+            return ToolInvocation(stdout="", stderr="", exitcode=3)
+
+        with patch.object(PytestAdapter, "_run", side_effect=_fake_run):
+            inv = adapter.invoke(tmp_path, [])
+        assert inv.stdout == ""
+        assert inv.exitcode == 3
+
+
+class TestSurvivorExactFields:
+    def test_unparseable_finding_exact_fields_exit2(self) -> None:
+        findings = PytestAdapter().parse("garbage not xml", "", 2)
+        f = findings[0]
+        assert f.node == "pytest"
+        assert f.severity == "error"
+        assert f.message == ("pytest exited with code 2 but produced no "
+                             "parseable JUnit XML report")
+        assert f.fix_hint == _UNPARSEABLE_FIX_HINT
+        assert f.tool == "pytest"
+        assert f.layer == "L1"
+        assert f.language == "python"
+        assert f.rule_id == "parse-error"
+
+    def test_unparseable_finding_interpolates_exitcode_on_empty(self) -> None:
+        findings = PytestAdapter().parse("", "", 1)
+        assert findings[0].message == ("pytest exited with code 1 but "
+                                       "produced no parseable JUnit XML report")
+
+    def test_no_tests_finding_exact_fields(self) -> None:
+        xml = ('<testsuites><testsuite name="pytest" errors="0" failures="0" '
+               'skipped="0" tests="0"></testsuite></testsuites>')
+        findings = PytestAdapter().parse(xml, "", 5)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.node == "pytest"
+        assert f.severity == "error"
+        assert f.message == "pytest collected no tests (exit code 5)"
+        assert f.fix_hint == ("Add tests under tests/ — L1 validates test "
+                              "execution and cannot pass without tests.")
+        assert f.tool == "pytest"
+        assert f.layer == "L1"
+        assert f.language == "python"
+        assert f.rule_id == "no-tests"
