@@ -117,17 +117,15 @@ class TestPytestAdapterKillers:
 </testsuites>"""
 
     def test_invoke_fallback_python3_literal_in_cmd(self, tmp_path: Path) -> None:
+        # No longer uses shutil.which — now uses sys.executable.
+        # Verify that invocation uses sys.executable instead of "python3".
         adapter = PytestAdapter()
         with (
-            patch(
-                "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-                return_value=None,
-            ) as which,
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
-        which.assert_called_once_with("python3")
-        assert run.call_args.args[0][0] == "python3"
+        # cmd[0] must be sys.executable, not "python3"
+        assert run.call_args.args[0][0] == __import__("sys").executable
 
     def test_parse_summary_first_with_exact_joined_message(self) -> None:
         findings = PytestAdapter().parse(self._JUNIT, "", 0)
@@ -224,25 +222,14 @@ class TestV14PythonKillers:
         adapter = PytestAdapter()
         inv = MagicMock(stdout="pytest 8.0\n")
         with (
-            patch(
-                "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-                return_value="/usr/bin/python3",
-            ) as which,
             patch.object(adapter, "_run", return_value=inv) as run,
         ):
             adapter.version(tmp_path)
-        # the lookup KEY must be exactly "python3" (kills XX/upper variants)
-        which.assert_called_once_with("python3")
-        assert run.call_args.args[0] == ["/usr/bin/python3", "-m", "pytest", "--version"]
-        with (
-            patch(
-                "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-                return_value=None,
-            ),
-            patch.object(adapter, "_run", return_value=inv) as run2,
-        ):
-            adapter.version(tmp_path)
-        assert run2.call_args.args[0] == ["python3", "-m", "pytest", "--version"]
+        # Always uses sys.executable (the adapter no longer calls shutil.which)
+        cmd = run.call_args.args[0]
+        import sys
+        assert cmd[0] == sys.executable
+        assert cmd == [sys.executable, "-m", "pytest", "--version"]
 
     def test_vulture_parse_fields_exact(self):
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
@@ -293,8 +280,9 @@ class TestScanTargetsExcludeMutationArtifacts:
         ):
             adapter.invoke(repo, [])
         cmd = run.call_args.args[0]
+        # L3A excludes tests — test quality is L2's responsibility
         assert cmd == ["/usr/bin/ruff", "check", "--output-format=json",
-                       "src", "tests"]
+                       "src"]
 
     def test_ruff_falls_back_to_repo_root_without_src_tests(self, tmp_path: Path) -> None:
         adapter = RuffAdapter()
@@ -363,9 +351,8 @@ class TestScanTargetsExcludeMutationArtifacts:
     def test_pytest_collects_only_tests_dir_when_present(self, tmp_path: Path) -> None:
         repo = self._repo(tmp_path)
         adapter = PytestAdapter()
+        # No longer mocks shutil.which — uses sys.executable directly.
         with (
-            patch("harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-                  return_value="/usr/bin/python3"),
             patch.object(adapter, "_run", return_value=MagicMock(
                 stdout="", stderr="", exitcode=0, duration_seconds=0.1)) as run,
         ):
@@ -376,8 +363,6 @@ class TestScanTargetsExcludeMutationArtifacts:
     def test_pytest_no_tests_dir_keeps_default_collection(self, tmp_path: Path) -> None:
         adapter = PytestAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-                  return_value="/usr/bin/python3"),
             patch.object(adapter, "_run", return_value=MagicMock(
                 stdout="", stderr="", exitcode=0, duration_seconds=0.1)) as run,
         ):
@@ -443,9 +428,10 @@ class TestPackageAtRootLayout:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
+        # L3A excludes tests — only production package is scanned
         assert run.call_args.args[0] == ["/usr/bin/ruff", "check",
                                          "--output-format=json",
-                                         "tests", "mypkg"]
+                                         "mypkg"]
 
     def test_bandit_targets_root_package_not_tests(self, tmp_path: Path) -> None:
         repo = self._pkg_repo(tmp_path)

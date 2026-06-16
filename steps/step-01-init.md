@@ -117,28 +117,76 @@ Create in-memory state structure:
 
 ## 1.5 Verify Tools Availability
 
-Check which tools are installed:
+Check which tools are installed **in the project venv, or on the system PATH**.
+
+**If a venv is present, check venv first:**
 
 ```bash
-# Core tools (L3A, L1, L2, L3B)
-python3 -m pytest --version 2>/dev/null && echo "pytest=OK" || echo "pytest=MISSING"
-python3 -m ruff --version 2>/dev/null && echo "ruff=OK" || echo "ruff=MISSING"
-python3 -m pyright --version 2>/dev/null && echo "pyright=OK" || echo "pyright=MISSING"
-python3 -c "import mutmut" 2>/dev/null && echo "mutmut=OK" || echo "mutmut=MISSING"
+if [ -d "{project-root}/.venv" ]; then
+  VENV_PY="{project-root}/.venv/bin/python"
+else
+  VENV_PY="python3"
+fi
+```
+
+**Then run checks:**
+
+```bash
+# Core tools (L3A, L1, L2, L3B) — check venv first
+$VENV_PY -m pytest --version 2>/dev/null && echo "pytest=OK" || echo "pytest=MISSING"
+$VENV_PY -m ruff check --version 2>/dev/null && echo "ruff=OK" || echo "ruff=MISSING"
+$VENV_PY -m pyright --version 2>/dev/null && echo "pyright=OK" || echo "pyright=MISSING"
+$VENV_PY -c "import mutmut" 2>/dev/null && echo "mutmut=OK" || echo "mutmut=MISSING"
 
 # Security tools (L4)
-python3 -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
-python3 -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
-python3 -c "import pip_audit" 2>/dev/null && echo "pip-audit=OK" || echo "pip-audit=MISSING"
+$VENV_PY -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
+$VENV_PY -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
 which gitleaks 2>/dev/null && echo "gitleaks=OK" || echo "gitleaks=MISSING"
-python3 -c "import semgrep" 2>/dev/null && echo "semgrep=OK" || echo "semgrep=MISSING"
-python3 -c "import checkov" 2>/dev/null && echo "checkov=OK" || echo "checkov=MISSING"
-python3 -c "import deptry" 2>/dev/null && echo "deptry=OK" || echo "deptry=MISSING"
-python3 -c "import vulture" 2>/dev/null && echo "vulture=OK" || echo "vulture=MISSING"
-which trivy 2>/dev/null && echo "trivy=OK" || echo "trivy=MISSING"
+```
 ```
 
 Store availability in state for conditional execution.
+
+---
+
+## 1.5.5 Detect and Enforce venv (Python projects only)
+
+**CRITICAL**: Python quality-gate layers (L1-L4) require tools like pytest, ruff,
+pyright, radon, bandit, etc. These are typically installed as dev-dependencies in
+the project's virtualenv (`{project-root}/.venv/`).
+
+When the CLI is invoked from the **system Python** (e.g., `python3 -m harness_quality_gate all .`),
+all Python adapters use `sys.executable` which resolves to the **currently running interpreter**.
+If running from system Python but the project uses a venv, tools like pytest **are not visible**
+→ L1 fails with teardown errors, L3A fails with `reportMissingImports`.
+
+**Fix — always invoke from the venv:**
+
+```bash
+# Check if project has a .venv
+if [ -d "{project-root}/.venv" ]; then
+  # Verify .venv Python has the required packages
+  .venv/bin/python -c "import pytest; import ruff" 2>/dev/null && echo "VENV_CHECK=OK" || echo "VENV_CHECK=MISSING_DEPS"
+
+  # If venv_check fails, recommend activation:
+  echo "WARN: Use .venv/bin/python -m harness_quality_gate all ."
+  VENV_PYTHON="{project-root}/.venv/bin/python"
+else
+  echo "VENV_CHECK=SKIPPED"
+  VENV_PYTHON=""
+fi
+```
+
+When language is **python**, always set:
+
+```
+PYTHON_RUNNER="$VENV_PYTHON"  # or fallback to $PYTHON_RUNNER="" (shell will use system)
+```
+
+**Decision:**
+- `VENV_CHECK=OK` → proceed normally — all tools available in venv
+- `VENV_CHECK=MISSING_DEPS` → warn: `pip install -e ".[dev]"` in the venv
+- `VENV_CHECK=SKIPPED` (no .venv) → tools must be available on system PATH (CI/CD uses this path)
 
 ---
 

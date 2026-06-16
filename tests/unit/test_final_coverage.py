@@ -975,29 +975,28 @@ def test_vulture_adapter_parse_unmatched_output() -> None:
 
 
 def test_python_adapter_run_pytest_python_not_found(tmp_path: Path, caplog) -> None:
-    """_run_pytest skips with an exact warning when python3 is not on PATH.
+    """_run_pytest skips with an exact warning when sys.executable is falsy.
 
-    Pins the simplified single-which lookup (the redundant fallback dance
-    `which("python3") or "python3"` was removed as dead code).
+    The guard was migrated from shutil.which("python3") to sys.executable.
+    This test verifies the guard still fires when the interpreter path is
+    falsy (simulated via patch).
     """
     import logging
+    import sys
 
     from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
 
     a = PythonAdapter()
     a.pytest = MagicMock()
-    mock_which = MagicMock(return_value=None)
 
-    with patch(
-        "harness_quality_gate.adapters.python.python_adapter.shutil.which", mock_which,
-    ):
+    with patch.object(sys, "executable", ""):
         with caplog.at_level(logging.WARNING):
             findings = a._run_pytest(tmp_path, {})
 
     assert findings == []
-    mock_which.assert_called_once_with("python3")
+    assert any("pyth" in r.message.lower() for r in caplog.records)
     a.pytest.invoke.assert_not_called()
-    assert "python3 not found on PATH, skipping" in caplog.messages
+    assert "Python interpreter not found" in str(caplog.messages)
 
 
 def test_python_adapter_run_vulture_success(tmp_path: Path) -> None:

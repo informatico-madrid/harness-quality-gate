@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -394,7 +395,10 @@ class PythonAdapter(BaseAdapter):
             logger.warning("pyright not found on PATH, skipping")
             return []
         try:
-            inv = self.pyright.invoke(repo, [], env=dict(env) if env else {})
+            inv = self.pyright.invoke(
+                repo, [], env=dict(env) if env else {},
+                python_path=sys.executable,
+            )
             return self.pyright.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("pyright invocation failed: %s", exc)
@@ -402,8 +406,8 @@ class PythonAdapter(BaseAdapter):
 
     def _run_pytest(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke pytest and parse JUnit XML findings."""
-        if shutil.which("python3") is None:
-            logger.warning("python3 not found on PATH, skipping")
+        if not sys.executable:
+            logger.warning("Python interpreter not found (sys.executable empty), skipping")
             return []
         try:
             inv = self.pytest.invoke(repo, [], env=dict(env) if env else {})

@@ -9,7 +9,7 @@ Requirements: FR-29, US-9, FR-21.
 from __future__ import annotations
 
 import json
-import shutil
+import sys
 from pathlib import Path
 from typing import Mapping
 
@@ -38,7 +38,7 @@ class SemgrepAdapter(ToolAdapter):
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         result = self._run(
-            [shutil.which("python3") or "python3", "-m", "semgrep", "--version"],
+            [sys.executable, "-m", "semgrep", "--version"],
             cwd=repo,
             env=env,
         )
@@ -52,7 +52,7 @@ class SemgrepAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        python = shutil.which("python3") or "python3"
+        python = sys.executable
         configs = ["p/security-audit", "p/owasp-top-ten"]
         cmd = [
             python, "-m", "semgrep",

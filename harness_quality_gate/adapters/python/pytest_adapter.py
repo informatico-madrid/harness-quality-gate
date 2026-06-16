@@ -9,7 +9,7 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import os
-import shutil
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -36,7 +36,7 @@ class PytestAdapter(ToolAdapter):
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         result = self._run(
-            [shutil.which("python3") or "python3", "-m", "pytest", "--version"],
+            [sys.executable, "-m", "pytest", "--version"],
             cwd=repo,
             env=env,
         )
@@ -50,7 +50,7 @@ class PytestAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        python = shutil.which("python3") or "python3"
+        python = sys.executable
         # The JUnit report goes to a temp file: writing it to /dev/stdout
         # interleaves it with the terminal report and the XML becomes
         # unparseable, silently hiding test failures (simulation bug H8).

@@ -176,8 +176,13 @@ removed — decision 69b05df). Language detection is automatic and the gate
 runs with sane defaults:
 
 ```bash
-python3 -m harness_quality_gate all {project-root} --json
+$PYTHON_RUNNER -m harness_quality_gate all {project-root} --json
 ```
+
+> **PYTHON_RUNNER:** This variable is resolved in `steps/step-01-init.md` to
+> `{project-root}/.venv/bin/python` when a venv exists, or `python3` otherwise.
+> **Never** use bare `python3` — it resolves to the system interpreter which
+> may lack the project's dev dependencies, causing false FAILs.
 
 Optional: a v2 config file (`.quality-gate.yaml`, `config/quality-gate.yaml`
 or `quality-gate.yaml` with `schema_version: 2`) can tune thresholds. v1
@@ -222,21 +227,21 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 **Unified scanner (recommended):**
 ```bash
-python3 -m harness_quality_gate.full {project-root} --layer l4 --severity-threshold high --verbose
+$PYTHON_RUNNER -m harness_quality_gate.full {project-root} --layer l4 --severity-threshold high --verbose
 ```
 
 **Individual tools** (if unified scanner unavailable):
 ```bash
 # REQUIRED
-python3 -m bandit -r src/ -f json
-python3 -m safety check --json
+$PYTHON_RUNNER -m bandit -r src/ -f json
+$PYTHON_RUNNER -m safety check --json
 gitleaks detect --source . --report-format json --no-banner
 
 # RECOMMENDED
-python3 -m semgrep --config p/security-audit --config p/owasp-top-ten --json .
-python3 -m checkov -d . --framework dockerfile yaml json --output json
-python3 -m deptry .
-python3 -m vulture src/ --min-confidence 80
+$PYTHON_RUNNER -m semgrep --config p/security-audit --config p/owasp-top-ten --json .
+$PYTHON_RUNNER -m checkov -d . --framework dockerfile yaml json --output json
+$PYTHON_RUNNER -m deptry .
+$PYTHON_RUNNER -m vulture src/ --min-confidence 80
 
 # OPTIONAL
 trivy config --format json .
@@ -288,17 +293,20 @@ The quality gate skill has **soft dependencies** on other skills. They are NOT r
 
 | Skill | Type | When Recommended | What It Does |
 |-------|------|------------------|--------------|
-| `mutation-testing` | RECOMMENDED | When mutation testing fails | Provides guidance on improving weak tests that don't kill mutants |
+| `mutation-testing` (`mutation-testing-guide`) | MANDATORY | When mutation testing fails | Full mutation killing protocol (§0–§7); injected into sub-agent prompts |
 | `bmad-party-mode` | OPTIONAL | For Tier B deep quality (L3B) | Multi-agent consensus for SOLID Tier B and Antipatterns Tier B |
 | `pentest-commands` | REFERENCE | Post-gate fix validation | Specific commands to verify security fixes actually work |
 | `pentest-checklist` | REFERENCE | Post-gate verification | Structured checklists for penetration testing categories |
 
 ### How Dependencies Work
 
-1. **mutation-testing** skill:
-   - When mutation testing FAILS (NOK), the skill RECOMMENDS activating this skill
-   - Agent can choose to activate it for guidance, but it's not required
-   - If not activated, gate remains in FAIL until agent improves tests independently
+1. **mutation-testing** (`mutation-testing-guide`) skill:
+    - When mutation testing FAILS (NOK), the skill is **MANDATORY — not optional**.
+    - The coordinator MUST load `MUTANT_KILLING_GUIDE_SKILL.md` and forward its
+      full content to ANY agent/sub-agent tasked with killing survivors.
+    - No sub-agent may kill mutants without this skill loaded in its prompt.
+    - If not loaded, the gate stays FAIL until agents kill survivors independently
+      using the protocol described in this document.
 
 2. **bmad-party-mode** skill:
    - Tier B (L3B) uses this if available; if not, Tier B is marked SKIPPED
@@ -327,7 +335,7 @@ When optional skills are not available, the user is informed:
 | Skill Missing | Notification | Action |
 |--------------|--------------|--------|
 | `bmad-party-mode` | `⚠️ WARNING: Running Simulated Party Mode...` | Run basic heuristics, flag findings as LOW confidence |
-| `mutation-testing` | `⚠️ WARNING: mutation-testing skill not available...` | Continue without mutation guidance |
+| `mutation-testing-guide` | `⚠️ ERROR: mutation guide not available. The gate CANNOT proceed.` | Load `MUTANT_KILLING_GUIDE_SKILL.md` from the skill repository. The gate does NOT continue without it. |
 | `pentest-commands` | `ℹ️ INFO: pentest-commands not available...` | Use references/security-tools-guide.md instead |
 | `pentest-checklist` | `ℹ️ INFO: pentest-checklist not available...` | Use references/owasp-checklist.md instead |
 
@@ -379,11 +387,41 @@ Edit `pyproject.toml` `[tool.quality-gate.mutation]` section to:
 - Track module `status` (`"in_progress"`, `"passing"`, `"planned"`, `"future"`)
 - Configure incremental strategy (`increment_step`, `target_final`)
 
-### When Gate Fails (NOK)
+### When Gate Fails (NOK) — **MANDATORY MUTATION KILLING PROTOCOL**
 
-If mutation testing FAILS, the agent should:
-1. Report which modules failed and their scores vs thresholds
-2. **RECOMMEND** activating the `mutation-testing` skill for guidance on improving weak tests
+If mutation testing FAILS, the mutation killing phase is **MANDATORY, not optional.** Every survivor MUST be addressed before the gate can pass.
+
+**STEP 1 — Load the `mutation-testing-guide` skill:**
+
+The coordinator MUST load `{skill-root}/MUTANT_KILLING_GUIDE_SKILL.md` (name: `mutation-testing-guide`) and forward its full content to ANY agent/sub-agent that is tasked with killing survivors. **There is no shortcut — no sub-agent may kill mutants without this skill loaded in its prompt.**
+
+This skill contains 7 mandatory sections (§0–§7):
+- **§0:** Priority chain — `test > refactor > pragma` (pragma is the absolute last resort, requires `# reason:` + `# audited:`)
+- **§1:** Per-survivor loop (`mutmut show` → classify → kill → verify)
+- **§2:** What mutmut mutates → what assertion kills each mutation type
+- **§3:** Triage before acting (observable from outside → weak test; observable only inside → spy/mock; unobservable → equivalent, goto §5)
+- **§4:** Catalog of kill techniques (dense assertions, boundaries, spies, break/continue, accumulation)
+- **§5:** Equivalence taxonomy (Types A–I) — every equivalent MUST be proven, not assumed
+- **§6:** Hard cases with real repo survivors (H1–H12)
+- **§7:** Pragma policy — must include `# reason:` and `# audited:` in the 5 lines above, or the gate rejects it
+
+**STEP 2 — Load the sharded guide index:**
+
+The coordinator MUST also reference `{skill-root}/MUTANT_KILLING_GUIDE.md` and the `MUTANT_KILLING_GUIDE/` directory. Agents MUST load specific shards based on their survivor type:
+- **h14** — Trampa del XX-wrap: `"foo" in out` NUNCA mata `"XXfooXX"` (use `==` or anchored literal)
+- **h15** — Gemelos falsy: `""` vs `None` indistinguibles con `if x:`, cambia a `is not None`
+- **3-triage** — Clasifica TODO mutante ANTES de escribir cualquier test
+- **7-politica-de-pragmas** — Pragma sin `# reason:` + `# audited:` = RECHAZADO
+
+**STEP 3 — Delegate with skill in prompt:**
+
+When the coordinator dispatches `python-development__python-pro`, `rust-pro`, or any other agent to kill survivors, the FULL text of `MUTANT_KILLING_GUIDE_SKILL.md` MUST be copied into that agent's prompt. **Never delegate mutation kills without the guide.**
+
+**Report to user:**
+- Which modules failed and their scores vs thresholds
+- List of surviving mutants per failed module
+- Which MUTANT_KILLING_GUIDE_SKILL.md sections (§X) guide each kill decision
+- Final MSI target: **100%** (no threshold tolerance — every survivor MUST be killed or proven equivalent with a valid pragma)
 
 ---
 

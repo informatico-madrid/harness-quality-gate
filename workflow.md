@@ -58,6 +58,36 @@ The following agent excuses are **INVALID** and must be rejected:
 
 ---
 
+## PYTHON_RUNNER RESOLUTION (MANDATORY)
+
+Every command in this workflow that invokes Python MUST use `$PYTHON_RUNNER`
+instead of bare `python3`. This variable is resolved once during initialization
+(step-01-init.md §1.5.5) and MUST be used by all subsequent steps:
+
+```
+# step-01-init.md resolves it:
+if [ -d "{project-root}/.venv" ]; then
+  PYTHON_RUNNER="{project-root}/.venv/bin/python"
+else
+  PYTHON_RUNNER="python3"
+fi
+export PYTHON_RUNNER
+```
+
+**Why:** When a project uses a virtualenv, bare `python3` resolves to the system
+interpreter, which lacks the project's dev dependencies (pytest, ruff, bandit,
+etc.). This causes false FAILs on L3A, L1, L2, and L4. The CLI
+(`harness_quality_gate`) already uses `sys.executable` (which is venv-aware),
+but the step files previously used `python3` — causing agents to run the wrong
+interpreter.
+
+**Rule:** Every `python3 -m …` in any step file MUST be written as
+`$PYTHON_RUNNER -m …`. The only exception is the CLI itself, which is always
+invoked as `$PYTHON_RUNNER -m harness_quality_gate` (the CLI internally uses
+`sys.executable` for all sub-process calls, so it is always venv-correct).
+
+---
+
 ## LAYER EXECUTION ORDER: L3A → L1 → L2 → L3B → L4
 
 ### Why This Order?
@@ -177,7 +207,10 @@ The rationale: If code quality smoke test fails, running mutation testing (~15 m
 - **1.4** mutation testing with per-module gate (`mutation_analyzer.py --gate`)
   - Reads thresholds from `{project-root}/plans/mutation-targets.yaml`
   - Outputs OK/NOK per module with human-readable table
-  - If NOK: recommend activating `mutation-testing` skill
+  - If NOK: MANDATORY MUTATION KILLING PROTOCOL (§3 in SKILL.md) — load
+    `MUTANT_KILLING_GUIDE_SKILL.md` (name: `mutation-testing-guide`) and inject
+    its full content into any sub-agent tasked with killing survivors. No
+    delegation without the guide.
 - **1.5** E2E tests via `make e2e` (OPTIONAL — `SKIPPED` if unavailable, never blocks L1)
 
 ---
@@ -240,7 +273,7 @@ Configurable in `config/quality-gate.yaml` under `layer4.severity_threshold` (de
 
 ### L4 Execution
 
-Run via the deterministic gate (L4 included): `python3 -m harness_quality_gate all {project-root} --json`
+Run via the deterministic gate (L4 included): `$PYTHON_RUNNER -m harness_quality_gate all {project-root} --json`
 
 Or follow step file: `./steps/step-06-layer4.md`
 

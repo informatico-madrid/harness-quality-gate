@@ -67,7 +67,7 @@ def package_dirs(repo: Path) -> list[str]:
     )
 
 
-def source_targets(repo: Path, *candidates: str) -> list[str]:
+def source_targets(repo: Path, *candidates: str, exclude_tests: bool = False) -> list[str]:
     """Return the repo-relative scan targets among *candidates* that exist.
 
     The skill contract prefers ``src/`` and ``tests/`` in the target repo;
@@ -76,9 +76,15 @@ def source_targets(repo: Path, *candidates: str) -> list[str]:
     (simulation bug H10). Repos with the package at the root (no ``src/``)
     additionally get their top-level packages appended (self-eval F2).
     Callers fall back to the repo root when nothing matches.
+
+    When *exclude_tests* is True, directories whose stem matches ``test*``
+    (case-insensitive) are stripped from the result — useful for
+    type-checkers like pyright that should only scan production code.
     """
     targets = [c for c in candidates if (repo / c).is_dir()]
     targets.extend(p for p in package_dirs(repo) if p not in targets)
+    if exclude_tests:
+        targets = [t for t in targets if "test" not in str(t).lower()]
     return targets
 
 

@@ -7,6 +7,8 @@ and the main() dispatcher.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -517,6 +519,8 @@ class TestCmdAll:
 
         assert captured["runtime"] == {
             "python_version": platform.python_version(),
+            "venv_path": os.path.realpath(sys.executable),
+            "venv_activated": [],
             "concurrency": "sequential",
             "ci": False,
         }

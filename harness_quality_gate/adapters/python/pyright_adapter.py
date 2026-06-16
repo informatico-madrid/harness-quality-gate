@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation, source_targets
+from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
 _SEV_MAP = {
     "error": "error",
@@ -46,16 +46,27 @@ class PyrightAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        python_path: Path | str | None = None,
     ) -> ToolInvocation:
         binary = shutil.which("pyright")
         if binary is None:
             return ToolInvocation(stderr="pyright not found on PATH", exitcode=3)
         cmd = [binary, "--outputjson"]
+        # Venv-aware python path: when pyright is installed globally but the
+        # project has a .venv, --pythonpath ensures pyright resolves packages
+        # from the venv (radon, pytest, etc.) that exist *only* in the venv.
+        if python_path is not None:
+            ppath = str(python_path)
+            cmd.extend(["--pythonpath", ppath])
         if args:
             cmd.extend(args)
-        # Source dirs only (step-03a contract: ``pyright src/``) — ruff lints
-        # tests; mutation artifacts stay out of the scan (H10/F6).
-        cmd.extend(source_targets(repo, "src") or [str(repo)])
+        # Default scan targets for type-checking — exclude_tests ensures
+        # pyright never scans test code. L2/L1 handle test quality separately.
+        default_targets = source_targets(repo, "src", exclude_tests=True) or [
+            str(p) if isinstance(p, Path) else p
+            for p in package_dirs(repo) if "test" not in str(p).lower()
+        ] or [str(repo)]
+        cmd.extend(default_targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     @staticmethod

@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,41 @@ from .messages_es import t
 from .models import LayerResult
 
 logger = logging.getLogger("harness_quality_gate.cli")
+
+
+# ---------------------------------------------------------------------------
+# venv self-diagnostic (FR-26/27 — Python)
+# ---------------------------------------------------------------------------
+
+def _check_venv(repo: Path, language: str) -> list[str]:
+    """Return warnings if the current interpreter is not inside a project venv.
+
+    The Python adapters use ``sys.executable`` (which is venv-aware). When the
+    CLI runs from the system interpreter but the project uses a venv, key tools
+    (pytest, ruff, pyright, radon) will be missing and layers L1/L3A will fail.
+
+    Returns a list of warning messages (empty = all good).
+    """
+    warnings: list[str] = []
+    if language != "python":
+        return warnings
+
+    # Detect if a .venv exists in the repo
+    venv_py = repo / ".venv" / "bin" / "python"
+    has_venv = venv_py.exists()
+
+    if has_venv:
+        # Check if sys.executable IS the venv python
+        real_venv = os.path.realpath(venv_py)
+        real_current = os.path.realpath(sys.executable)
+        if real_current != real_venv:
+            warnings.append(
+                f"Quality gate running from {sys.executable} "
+                f"(outside venv). Project has .venv at {venv_py}. "
+                f"Run ``source .venv/bin/activate`` and re-run, or use "
+                f"``.venv/bin/python -m harness_quality_gate all .``."
+            )
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +162,11 @@ def _cmd_all(args: argparse.Namespace) -> int:
 
     language = _detect_language(repo)
 
+    # Self-diagnostic: warn if running outside venv for a Python project
+    _diag_warnings = _check_venv(repo, language)
+    for _w in _diag_warnings:
+        logger.warning(_w)
+
     # Config v1 rejection (FR-34): a config file with a deprecated schema is
     # a hard error; a missing config file simply means defaults.
     try:
@@ -197,6 +238,8 @@ def _cmd_all(args: argparse.Namespace) -> int:
     import platform
     runtime: dict[str, Any] = {
         "python_version": platform.python_version(),
+        "venv_path": os.path.realpath(sys.executable),
+        "venv_activated": _check_venv(repo, language),
         "concurrency": "sequential",
         "ci": bool(os.environ.get("CI")),
     }

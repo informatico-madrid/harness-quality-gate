@@ -10,7 +10,7 @@ Requirements: FR-29, US-9, FR-21.
 from __future__ import annotations
 
 import json
-import shutil
+import sys
 from pathlib import Path
 from typing import Mapping
 
@@ -32,7 +32,7 @@ class CheckovAdapter(ToolAdapter):
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
         result = self._run(
-            [shutil.which("python3") or "python3", "-m", "checkov", "--version"],
+            [sys.executable, "-m", "checkov", "--version"],
             cwd=repo,
             env=env,
         )
@@ -46,7 +46,7 @@ class CheckovAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 180.0,
     ) -> ToolInvocation:
-        python = shutil.which("python3") or "python3"
+        python = sys.executable
         cmd = [
             python, "-m", "checkov",
             "-d", str(repo),

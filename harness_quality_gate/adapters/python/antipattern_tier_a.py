@@ -852,7 +852,7 @@ def detect_ap26(violations: list[dict[str, Any]], src_dir: Path) -> None:
     """AP26: Inconsistent Naming — detected via ruff N8XX rules."""
     try:
         result = subprocess.run(
-            ["python3", "-m", "ruff", "check", str(src_dir), "--select=N802,N803,N804,N805,N806"],
+            [sys.executable, "-m", "ruff", "check", str(src_dir), "--select=N802,N803,N804,N805,N806"],
             capture_output=True, text=True, timeout=60,
         )
         if result.returncode != 0:

@@ -12,8 +12,6 @@ from unittest.mock import MagicMock, patch
 
 import sys
 
-sys.path.insert(0, "/mnt/bunker_data/harness-quality-gate")
-
 from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.adapters.python.pytest_adapter import (
     PytestAdapter,
@@ -26,33 +24,32 @@ from harness_quality_gate.adapters.python.pytest_adapter import (
 
 class TestVersion:
     def test_version_when_python3_missing(self, tmp_path: Path) -> None:
-        """shutil.which returns None → _run still works because fallback
-        string literal is used inside _run call."""
-        with patch("shutil.which", return_value=None):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="pytest 8.1.1\n", returncode=0, stderr=""
-                )
-                adapter = PytestAdapter()
-                result = adapter.version(tmp_path)
-                assert isinstance(result, str)
-                assert result == "pytest 8.1.1"
+        """shutil.which removed — sys.executable is always available.
+        _run still works because sys.executable resolves to the current
+        interpreter."""
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="pytest 8.1.1\n", returncode=0, stderr=""
+            )
+            adapter = PytestAdapter()
+            result = adapter.version(tmp_path)
+            assert isinstance(result, str)
+            assert result == "pytest 8.1.1"
 
     def test_version_default_stdout(self, tmp_path: Path) -> None:
         """Empty stdout → 'unknown'."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", returncode=0, stderr=""
-                )
-                adapter = PytestAdapter()
-                result = adapter.version(tmp_path)
-                assert isinstance(result, str)
-                assert result == "unknown"
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", returncode=0, stderr=""
+            )
+            adapter = PytestAdapter()
+            result = adapter.version(tmp_path)
+            assert isinstance(result, str)
+            assert result == "unknown"
 
     def test_version_returns_lowercase_name(self, tmp_path: Path) -> None:
         """Property name returns the internal _name."""
@@ -68,19 +65,17 @@ class TestVersion:
         - mutmut_18,19: env → None mutation
         Uses §4.4 strict mock args on _run spy.
         """
-        with patch(
-            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-            return_value="/usr/bin/python3",
-        ):
-            adapter = PytestAdapter()
-            mock_result = MagicMock(stdout="pytest 8.1.1\n", stderr="")
-            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
-                adapter.version(tmp_path, env={"ENV1": "v1"})
+        # No longer mocks shutil.which — we use sys.executable directly.
+        adapter = PytestAdapter()
+        mock_result = MagicMock(stdout="pytest 8.1.1\n", stderr="")
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.version(tmp_path, env={"ENV1": "v1"})
 
         mock_run.assert_called_once()
-        assert mock_run.call_args.args[0] == [
-            "/usr/bin/python3", "-m", "pytest", "--version",
-        ]
+        cmd = mock_run.call_args.args[0]
+        # cmd[0] = sys.executable (the venv/system interpreter)
+        assert cmd[0] == sys.executable
+        assert cmd == [sys.executable, "-m", "pytest", "--version"]
         assert mock_run.call_args.kwargs["cwd"] == tmp_path
         assert mock_run.call_args.kwargs["env"] == {"ENV1": "v1"}
 
@@ -90,14 +85,11 @@ class TestVersion:
         Kills mutmut_18,19: env=env → env=None mutation.
         Verifies that _run receives the exact env value, not a mutated None.
         """
-        with patch(
-            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-            return_value="/usr/bin/python3",
-        ):
-            adapter = PytestAdapter()
-            mock_result = MagicMock(stdout="pytest 8.1.1\n")
-            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
-                adapter.version(tmp_path)
+        # No longer mocks shutil.which — we use sys.executable directly.
+        adapter = PytestAdapter()
+        mock_result = MagicMock(stdout="pytest 8.1.1\n")
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.version(tmp_path)
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["env"] is None
@@ -110,111 +102,105 @@ class TestVersion:
 class TestInvoke:
     def test_invoke_returns_tool_invocation(self, tmp_path: Path) -> None:
         """Normal invocation returns a ToolInvocation with exitcode."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="<testsuites/>",
-                    stderr="",
-                    returncode=0,
-                )
-                adapter = PytestAdapter()
-                result = adapter.invoke(tmp_path, ["tests/"])
-                assert hasattr(result, "exitcode")
-                assert result.exitcode == 0
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="<testsuites/>",
+                stderr="",
+                returncode=0,
+            )
+            adapter = PytestAdapter()
+            result = adapter.invoke(tmp_path, ["tests/"])
+            assert hasattr(result, "exitcode")
+            assert result.exitcode == 0
 
     def test_invoke_command_arguments(self, tmp_path: Path) -> None:
-        """Command contains python -m pytest --junitxml <tempfile.xml> …"""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", stderr="", returncode=0
-                )
-                adapter = PytestAdapter()
-                adapter.invoke(tmp_path, ["-k", "foo"])
-                call_args = mock_run.call_args
-                cmd = call_args.args[0]  # first positional = cmd list
-                assert "python3" in cmd or "/usr/bin/python3" in cmd
-                assert "-m" in cmd
-                assert "pytest" in cmd
-                assert "--junitxml" in cmd
-                junit_arg = cmd[cmd.index("--junitxml") + 1]
-                assert junit_arg != "/dev/stdout"
-                assert "hqg-junit-" in junit_arg
-                assert junit_arg.endswith(".xml")
-                assert "-o" in cmd
-                assert "junit_suite_name=pytest" in cmd
-                assert "-k" in cmd
-                assert "foo" in cmd
+        """Command contains sys.executable -m pytest --junitxml <tempfile.xml> …"""
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", stderr="", returncode=0
+            )
+            adapter = PytestAdapter()
+            adapter.invoke(tmp_path, ["-k", "foo"])
+            call_args = mock_run.call_args
+            cmd = call_args.args[0]  # first positional = cmd list
+            assert cmd[0] == sys.executable
+            assert "-m" in cmd
+            assert "pytest" in cmd
+            assert "--junitxml" in cmd
+            junit_arg = cmd[cmd.index("--junitxml") + 1]
+            assert junit_arg != "/dev/stdout"
+            assert "hqg-junit-" in junit_arg
+            assert junit_arg.endswith(".xml")
+            assert "-o" in cmd
+            assert "junit_suite_name=pytest" in cmd
+            assert "-k" in cmd
+            assert "foo" in cmd
 
     def test_invoke_empty_args(self, tmp_path: Path) -> None:
         """No extra args → command only has default pytest flags."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", stderr="", returncode=0
-                )
-                adapter = PytestAdapter()
-                adapter.invoke(tmp_path, [])
-                call_args = mock_run.call_args
-                cmd = call_args.args[0]
-                # base flags present
-                assert "pytest" in cmd
-                # no extra items appended beyond defaults (the junit temp
-                # file path varies per call)
-                junit_arg = cmd[cmd.index("--junitxml") + 1]
-                extra = [a for a in cmd if a not in (
-                    "python3", "/usr/bin/python3", "-m", "pytest",
-                    "--junitxml", junit_arg, "-o", "junit_suite_name=pytest",
-                )]
-                assert extra == []
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", stderr="", returncode=0
+            )
+            adapter = PytestAdapter()
+            adapter.invoke(tmp_path, [])
+            call_args = mock_run.call_args
+            cmd = call_args.args[0]
+            # base flags present
+            assert "pytest" in cmd
+            # no extra items appended beyond defaults (the junit temp
+            # file path varies per call)
+            junit_arg = cmd[cmd.index("--junitxml") + 1]
+            extra = [a for a in cmd if a not in (
+                sys.executable, "-m", "pytest",
+                "--junitxml", junit_arg, "-o", "junit_suite_name=pytest",
+            )]
+            assert extra == []
 
     def test_invoke_run_called_with_cwd(self, tmp_path: Path) -> None:
         """_run is called with cwd=repo."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", stderr="", returncode=0
-                )
-                adapter = PytestAdapter()
-                adapter.invoke(tmp_path, [])
-                call_kwargs = mock_run.call_args.kwargs
-                assert Path(call_kwargs["cwd"]) == tmp_path
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", stderr="", returncode=0
+            )
+            adapter = PytestAdapter()
+            adapter.invoke(tmp_path, [])
+            call_kwargs = mock_run.call_args.kwargs
+            assert Path(call_kwargs["cwd"]) == tmp_path
 
     def test_invoke_passes_env(self, tmp_path: Path) -> None:
         """env dict is forwarded to _run."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", stderr="", returncode=0
-                )
-                adapter = PytestAdapter()
-                adapter.invoke(tmp_path, [], env={"FOO": "bar"})
-                call_kwargs = mock_run.call_args.kwargs
-                assert call_kwargs["env"]["FOO"] == "bar"
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", stderr="", returncode=0
+            )
+            adapter = PytestAdapter()
+            adapter.invoke(tmp_path, [], env={"FOO": "bar"})
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["env"]["FOO"] == "bar"
 
     def test_invoke_passes_timeout(self, tmp_path: Path) -> None:
         """Custom timeout is forwarded."""
-        with patch("shutil.which", return_value="/usr/bin/python3"):
-            with patch(
-                "harness_quality_gate.adapters.base.subprocess.run"
-            ) as mock_run:
-                mock_run.return_value = MagicMock(
-                    stdout="", stderr="", returncode=0
-                )
-                adapter = PytestAdapter()
-                adapter.invoke(tmp_path, [], timeout=10.0)
-                call_kwargs = mock_run.call_args.kwargs
-                assert call_kwargs["timeout"] == 10.0
+        with patch(
+            "harness_quality_gate.adapters.base.subprocess.run"
+        ) as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout="", stderr="", returncode=0
+            )
+            adapter = PytestAdapter()
+            adapter.invoke(tmp_path, [], timeout=10.0)
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["timeout"] == 10.0
 
     def test_invoke_wiring_exact_call_args(self, tmp_path: Path) -> None:
         """_run is called with exact cmd list, cwd, env, timeout.
@@ -223,25 +209,26 @@ class TestInvoke:
         in cmd, positional index, cwd, env, timeout — all observed via spy.
         Uses §4.4 strict mock args + §4.7 argv list equality.
         """
-        with patch(
-            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-            return_value="/usr/bin/python3",
-        ):
-            adapter = PytestAdapter()
-            mock_result = MagicMock(stdout="", stderr="", returncode=0)
-            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
-                adapter.invoke(
-                    tmp_path, ["-k", "foo"],
-                    env={"PYTEST_ENV": "1"}, timeout=120.0,
-                )
+        # No longer mocks shutil.which — we use sys.executable directly.
+        adapter = PytestAdapter()
+        mock_result = MagicMock(stdout="", stderr="", returncode=0)
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(
+                tmp_path, ["-k", "foo"],
+                env={"PYTEST_ENV": "1"}, timeout=120.0,
+            )
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args
-        # Exact cmd list
+        # Exact cmd list — first element is sys.executable
         cmd = call_args.args[0]
         junit_arg = cmd[cmd.index("--junitxml") + 1]
         assert "hqg-junit-" in junit_arg and junit_arg.endswith(".xml")
-        assert cmd == ["/usr/bin/python3", "-m", "pytest", "--junitxml", junit_arg, "-o", "junit_suite_name=pytest", "-k", "foo"]
+        expected_cmd = [
+            sys.executable, "-m", "pytest", "--junitxml", junit_arg,
+            "-o", "junit_suite_name=pytest", "-k", "foo",
+        ]
+        assert cmd == expected_cmd
         # Verify all keyword args exactly
         assert call_args.kwargs["cwd"] == tmp_path
         assert call_args.kwargs["env"] == {"PYTEST_ENV": "1"}
@@ -252,14 +239,11 @@ class TestInvoke:
 
         Kills mutmut: default timeout=300.0 → 301.0 mutation.
         """
-        with patch(
-            "harness_quality_gate.adapters.python.pytest_adapter.shutil.which",
-            return_value="/usr/bin/python3",
-        ):
-            adapter = PytestAdapter()
-            mock_result = MagicMock(stdout="", stderr="", returncode=0)
-            with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
-                adapter.invoke(tmp_path, [])
+        # No longer mocks shutil.which — we use sys.executable directly.
+        adapter = PytestAdapter()
+        mock_result = MagicMock(stdout="", stderr="", returncode=0)
+        with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
+            adapter.invoke(tmp_path, [])
         assert mock_run.call_args.kwargs["timeout"] == 300.0
 
 

@@ -83,12 +83,22 @@ class WeakTestVisitor(ast.NodeVisitor):
         t = self.current_test
         violations: list[dict[str, Any]] = []
 
-        # A1: <=1 assertion = ERROR
-        if t["assertions"] <= 1:
+        # A1: <=1 assertion = ERROR (but tests with 0 assertions that have
+        # mocks or calls are testing something — only flag pure assertions)
+        # Tests with 0 asserts that have setup/teardown are infrastructure
+        # helpers and should not be penalised (F11).
+        if t["assertions"] == 0 and not t["mocks"] and not t["has_setup"] and not t["has_teardown"]:
             violations.append({
                 "rule": "A1",
-                "description": f"only {t['assertions']} assertion(s) -- suspicious",
+                "description": "zero assertions and no mocks/fixtures -- empty test body",
                 "severity": "ERROR",
+            })
+        elif t["assertions"] == 1 and not t["mocks"] and not t["has_setup"] and not t["has_teardown"]:
+            # Single assertion without any supporting structure is suspicious (F12).
+            violations.append({
+                "rule": "A1",
+                "description": "only 1 assertion with no supporting structure -- suspicious",
+                "severity": "WARNING",
             })
 
         # A2: <3 assertions = WARNING
@@ -99,8 +109,10 @@ class WeakTestVisitor(ast.NodeVisitor):
                 "severity": "WARNING",
             })
 
-        # A3: no parametrization + single case = WARNING
-        if t["parametrize_count"] == 0:
+        # A3: no parametrization + single case = WARNING (relaxed: only flag
+        # tests with >= 2 assertions — single-assert tests aren't worth
+        # parametrising)
+        if t["parametrize_count"] == 0 and t["assertions"] >= 2:
             violations.append({
                 "rule": "A3",
                 "description": "no parametrization detected -- hardcoded single-input test",
@@ -118,8 +130,9 @@ class WeakTestVisitor(ast.NodeVisitor):
                     "severity": "ERROR",
                 })
 
-        # A5: no setup/teardown/fixtures = WARNING
-        if not (t["has_setup"] or t["has_teardown"] or t["has_fixture_ref"]):
+        # A5: no setup/teardown/fixtures = WARNING (relaxed: allow tests
+        # with >= 2 assertions since they may use direct construction)
+        if not (t["has_setup"] or t["has_teardown"] or t["has_fixture_ref"]) and t["assertions"] < 2:
             violations.append({
                 "rule": "A5",
                 "description": "no setup/teardown/fixtures -- stateless test",
