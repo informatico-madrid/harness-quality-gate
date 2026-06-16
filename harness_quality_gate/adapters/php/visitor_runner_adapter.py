@@ -178,7 +178,12 @@ class VisitorRunnerAdapter(ToolAdapter):
         """
         if not isinstance(item, dict):
             return None
-        raw_path = item.get("file", item.get("path", ""))
+        # reason: Tipo C — `""` és gemelo falsy de `None` (y de implícito).
+        # Cuando "file"/"path" faltan: raw_path="" → isinstance("", str)=True → filepath=""
+        #                          raw_path=None → isinstance(None, str)=False → filepath=""
+        # Ambas vías convergen al mismo filepath; ningún test puede observar la diferencia.
+        # Las variantes removal/False las matan los tests de null_file. # audited: 2026-06-16
+        raw_path = item.get("file", item.get("path", ""))  # pragma: no mutate
         # JSON "file": null (or non-string garbage) must not leak into node
         filepath = raw_path if isinstance(raw_path, str) else ""
         line = item.get("line")

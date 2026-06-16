@@ -8,7 +8,7 @@ antipatterns Tier B, and architectural intent using the BMAD LLM judge.
 **Precondition:** Layer 2-PHP must have PASSED.
 
 > **Deterministic vs LLM split:** `PhpAdapter.run_l3b` (via
-> `python3 -m harness_quality_gate all {project-root}`) already covers the
+> `$PYTHON_RUNNER -m harness_quality_gate all {project-root}`) already covers the
 > deterministic part of L3B — antipatterns Tier A (PHPMD + visitors merge)
 > and **deptrac** architecture validation. This step adds the
 > non-deterministic Tier B judgement (BMAD multi-judge consensus), which
@@ -27,7 +27,7 @@ Analyse `src/` for SOLID adherence beyond what Deptrac/PHPStan can check:
 
 Invoke the SOLID judge context generator:
 ```bash
-python3 -m harness_quality_gate.bmad.llm_solid_judge {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.llm_solid_judge {project-root}/src/ 2>&1
 ```
 The output JSON contains a `review_context` field — present it to the
 BMAD Party Mode agents. It does NOT call external APIs.

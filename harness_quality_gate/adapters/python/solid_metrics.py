@@ -29,7 +29,7 @@ from typing import Any
 
 # Optional: radon for cyclomatic complexity metrics
 try:
-    from radon.complexity import cc_visit  # noqa: F401
+    from radon.complexity import cc_visit  # noqa: F401 # pyright: ignore[reportMissingImports]
     HAS_RADON = True
 except ImportError:
     HAS_RADON = False

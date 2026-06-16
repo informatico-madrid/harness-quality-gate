@@ -28,7 +28,7 @@ mkdir -p {project-root}/_bmad-output/quality-gate
 Execute the orphan cleanup script to ensure clean test environment:
 
 ```bash
-python3 {project-root}/.ralph/kill_pytest_orphans.py
+$PYTHON_RUNNER {project-root}/.ralph/kill_pytest_orphans.py
 ```
 
 If script not found, skip this step.
@@ -123,24 +123,25 @@ Check which tools are installed **in the project venv, or on the system PATH**.
 
 ```bash
 if [ -d "{project-root}/.venv" ]; then
-  VENV_PY="{project-root}/.venv/bin/python"
+  PYTHON_RUNNER="{project-root}/.venv/bin/python"
 else
-  VENV_PY="python3"
+  PYTHON_RUNNER="python3"
 fi
+export PYTHON_RUNNER
 ```
 
 **Then run checks:**
 
 ```bash
 # Core tools (L3A, L1, L2, L3B) — check venv first
-$VENV_PY -m pytest --version 2>/dev/null && echo "pytest=OK" || echo "pytest=MISSING"
-$VENV_PY -m ruff check --version 2>/dev/null && echo "ruff=OK" || echo "ruff=MISSING"
-$VENV_PY -m pyright --version 2>/dev/null && echo "pyright=OK" || echo "pyright=MISSING"
-$VENV_PY -c "import mutmut" 2>/dev/null && echo "mutmut=OK" || echo "mutmut=MISSING"
+$PYTHON_RUNNER -m pytest --version 2>/dev/null && echo "pytest=OK" || echo "pytest=MISSING"
+$PYTHON_RUNNER -m ruff check --version 2>/dev/null && echo "ruff=OK" || echo "ruff=MISSING"
+$PYTHON_RUNNER -m pyright --version 2>/dev/null && echo "pyright=OK" || echo "pyright=MISSING"
+$PYTHON_RUNNER -c "import mutmut" 2>/dev/null && echo "mutmut=OK" || echo "mutmut=MISSING"
 
 # Security tools (L4)
-$VENV_PY -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
-$VENV_PY -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
+$PYTHON_RUNNER -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
+$PYTHON_RUNNER -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
 which gitleaks 2>/dev/null && echo "gitleaks=OK" || echo "gitleaks=MISSING"
 ```
 ```
@@ -170,17 +171,13 @@ if [ -d "{project-root}/.venv" ]; then
 
   # If venv_check fails, recommend activation:
   echo "WARN: Use .venv/bin/python -m harness_quality_gate all ."
-  VENV_PYTHON="{project-root}/.venv/bin/python"
+  PYTHON_RUNNER="{project-root}/.venv/bin/python"
 else
   echo "VENV_CHECK=SKIPPED"
-  VENV_PYTHON=""
+  PYTHON_RUNNER="python3"
 fi
-```
-
-When language is **python**, always set:
-
-```
-PYTHON_RUNNER="$VENV_PYTHON"  # or fallback to $PYTHON_RUNNER="" (shell will use system)
+export PYTHON_RUNNER
+# PYTHON_RUNNER is used by ALL subsequent step files — never use bare python3
 ```
 
 **Decision:**
@@ -219,3 +216,22 @@ After initialization, proceed to Layer 3A (smoke test), NOT Layer 1.
 
 - **If `language=php`:** Load and follow `./steps/step-03a-layer3a-php.md`
 - **If `language=python`:** Load and follow `./steps/step-03a-layer3a.md`
+
+---
+
+## 1.8 PYTHON_RUNNER Contract
+
+The variable `PYTHON_RUNNER` resolved in §1.5.5 is **THE** canonical Python
+interpreter path for the entire quality-gate workflow. Every subsequent step
+file (step-03a, step-02, step-03, step-04, step-06, step-05) MUST use
+`$PYTHON_RUNNER` instead of bare `python3`.
+
+**Why:** When a project uses a virtualenv, bare `python3` resolves to the
+system interpreter which lacks dev dependencies (pytest, ruff, bandit, etc.),
+causing false FAILs across all layers.
+
+**Contract:**
+- `$PYTHON_RUNNER` is set and exported in this step (§1.5.5)
+- All subsequent steps receive it in their shell environment
+- No step may use bare `python3` — always `$PYTHON_RUNNER`
+- The CLI (`harness_quality_gate`) is always invoked via `$PYTHON_RUNNER -m harness_quality_gate`

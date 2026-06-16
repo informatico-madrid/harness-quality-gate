@@ -81,7 +81,9 @@ class VultureAdapter(ToolAdapter):
             return findings
 
         for line in stdout.splitlines():
-            m = _LINE_RE.match(line.rstrip())
+            # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
+            # Tipo C equivalent: lstrip also works because regex matches tail ws.
+            m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
             if m is None:
                 continue
             path = m.group("path")

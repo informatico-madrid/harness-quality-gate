@@ -697,7 +697,7 @@ class TestJsonTempFileContract:
 
         def fake_run(cmd, *, cwd=None, env=None, timeout=None):
             Path(cmd[2]).write_text(payload)
-            return ToolInvocation(stdout="terminal noise", stderr="", exitcode=1,
+            return ToolInvocation(stdout="terminal noise", stderr="deptry warn", exitcode=1,
                                   duration_seconds=0.2)
 
         with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
@@ -707,6 +707,8 @@ class TestJsonTempFileContract:
         json_file = Path(mock_run.call_args.args[0][2])
         assert inv.stdout == payload          # report comes from the file
         assert inv.exitcode == 1              # exit code passes through
+        assert inv.stderr == "deptry warn"    # stderr passes through (kills mutmut_54,58)
+        assert inv.duration_seconds == 0.2    # duration passes through (kills mutmut_56,60)
         assert not json_file.exists()         # temp file cleaned up
 
     def test_missing_json_file_yields_empty_stdout(self, adapter, tmp_path):
@@ -721,6 +723,27 @@ class TestJsonTempFileContract:
                 inv = adapter.invoke(tmp_path, [])
         assert inv.stdout == ""
         assert inv.exitcode == 2
+
+    def test_invoke_temp_file_prefix_is_hqg_deptry(self, adapter, tmp_path):
+        """Temp file name starts with 'hqg-deptry-' prefix.
+
+        Kills mutmut_16 (prefix=None), mutmut_18 (prefix removed),
+        mutmut_20 (prefix='XXhqg-deptry-XX'), mutmut_21 (prefix='HQG-DEPTRY-').
+        When prefix is None, mkstemp produces a name that does NOT contain
+        'hqg-deptry-'; when prefix is changed to XX..XX or uppercase, same.
+        """
+        def fake_run(cmd, *, cwd=None, env=None, timeout=None):
+            return ToolInvocation(stdout='[]', stderr="", exitcode=0,
+                                  duration_seconds=0.1)
+
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
+                   return_value="/bin/deptry"):
+            with patch.object(adapter, "_run", side_effect=fake_run) as mock_run:
+                adapter.invoke(tmp_path, [])
+        json_file_name = Path(mock_run.call_args.args[0][2]).name
+        assert json_file_name.startswith("hqg-deptry-"), (
+            f"Expected temp file name to start with 'hqg-deptry-', got: {json_file_name}"
+        )
 
 
 class TestParseRealListFormat:
@@ -745,10 +768,25 @@ class TestParseRealListFormat:
         assert dep001.message == "pkg/mod.py:3 — 'foo' imported but missing from the dependency definitions"
         assert dep001.tool == "deptry"
         assert dep001.layer == "L4"
+        assert dep001.language == "python"
         assert dep002.rule_id == "DEP002"
         assert dep002.severity == "warning"   # unused dep = hygiene
         assert dep002.node == "pyproject.toml"
         assert dep002.message == "pyproject.toml — 'pytest' defined as a dependency but not used in the codebase"
+        assert dep002.language == "python"
+
+    def test_violation_list_language_field_python(self, adapter):
+        """language='python' on all violation list findings (kills mutmut_53,61,77,78).
+
+        These mutants change language to None, remove the line, set to 'XXpythonXX',
+        or 'PYTHON'. Assert exact match kills all four variants.
+        """
+        findings = adapter.parse(json.dumps([
+            {"error": {"code": "DEP001", "message": "missing dep"}, "module": "x",
+             "location": {"file": "f.py", "line": 1}},
+        ]))
+        assert len(findings) == 1
+        assert findings[0].language == "python"
 
     def test_null_location_handled(self, adapter):
         findings = adapter.parse(json.dumps([

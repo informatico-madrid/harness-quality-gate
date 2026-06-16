@@ -66,7 +66,12 @@ def test_build_with_layers(good_detection: dict, layer_dicts: list[dict]) -> Non
 def test_build_validates_through_schema(good_detection: dict) -> None:
     """build() output passes JSON Schema validation."""
     data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
-    validate(data)  # should not raise
+    validate(data)  # must not raise
+    assert isinstance(data, dict)
+    assert data["version"] == "v2"
+    assert "repository" in data
+    assert "language" in data
+    assert "layers" in data
 
 
 def test_build_rejects_invalid_schema() -> None:
@@ -257,9 +262,11 @@ def test_validate_schema_path_resolves(good_detection: dict) -> None:
     validate() must successfully load the schema file (not None).
     If schema_path=None, schema_path.open() would raise AttributeError.
     """
+    from pathlib import Path
     data = build([], {"python_version": "3.12", "concurrency": "auto", "ci": False}, good_detection)
-    # Should not raise — schema file must be found and loaded
-    validate(data)
+    validate(data)  # must not raise — schema file must be found and loaded
+    schema_path = Path(__file__).resolve().parent.parent.parent / "references" / "verdict-schema.json"
+    assert schema_path.exists(), f"schema file not found at {schema_path}"
 
 
 def test_build_layer_with_per_language(good_detection: dict) -> None:

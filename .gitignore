@@ -79,3 +79,7 @@ localDocs/*
 .github/agents
 .opencode/
 _bmad/*
+
+# Shell command output leakage (debug artifacts, never source)
+stderr.txt
+stdout.txt

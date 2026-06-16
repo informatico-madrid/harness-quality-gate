@@ -14,14 +14,14 @@ weak-test detector (Tier A AST visitors A1–A8).
 Run the PHP weak-test visitor against the test directory:
 
 ```bash
-python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
-  python3 -c "import json,sys; d=json.load(sys.stdin); \
+$PYTHON_RUNNER -m harness_quality_gate all {project-root} --json 2>&1 | \
+  $PYTHON_RUNNER -c "import json,sys; d=json.load(sys.stdin); \
   [print(json.dumps(l)) for l in d.get('layers',[]) if l.get('layer')=='L2']"
 ```
 
 Or invoke the adapter directly (if the harness is available as a path/editable dep):
 ```bash
-python3 -c "
+$PYTHON_RUNNER -c "
 from harness_quality_gate.adapters.php.php_adapter import PhpAdapter
 from pathlib import Path
 import json, os
@@ -56,7 +56,7 @@ JSON logger is configured — ensure the target repo's `infection.json5` has:
 Then run:
 
 ```bash
-python3 -m harness_quality_gate.bmad.mutation_analyzer {project-root} --gate --tool infection 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.mutation_analyzer {project-root} --gate --tool infection 2>&1
 ```
 
 Exit 0 = OK (every module 100% killed), exit 1 = NOK. Without the log the

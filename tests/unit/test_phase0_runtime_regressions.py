@@ -188,6 +188,11 @@ class TestCheckpointStripsNoneFromFindingDicts:
             detection={"repo_path": "/r", "language": "python"},
         )
         validate_checkpoint(data)  # must not raise
+        assert data["version"] == "v2"
+        assert isinstance(data["layers"], list)
+        assert len(data["layers"]) == 1
+        finding = data["layers"][0]["findings"][0]
+        assert "rule_id" not in finding, "None fields must be stripped before schema validation"
 
 
 # ---------------------------------------------------------------------------

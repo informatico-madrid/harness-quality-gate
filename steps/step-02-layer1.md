@@ -20,7 +20,7 @@ If L3A failed, the agent should have already refactorized before reaching this s
 ## 1.1 Kill Pytest Orphans (Re-confirm)
 
 ```bash
-python3 {project-root}/.ralph/kill_pytest_orphans.py 2>/dev/null || true
+$PYTHON_RUNNER {project-root}/.ralph/kill_pytest_orphans.py 2>/dev/null || true
 ```
 
 ---
@@ -28,7 +28,7 @@ python3 {project-root}/.ralph/kill_pytest_orphans.py 2>/dev/null || true
 ## 1.2 Run pytest
 
 ```bash
-cd {project-root} && python3 -m pytest tests/ -q -p no:randomly -p no:warnings --tb=short 2>&1
+cd {project-root} && $PYTHON_RUNNER -m pytest tests/ -q -p no:randomly -p no:warnings --tb=short 2>&1
 ```
 
 **Capture:**
@@ -57,7 +57,7 @@ cd {project-root} && python3 -m pytest tests/ -q -p no:randomly -p no:warnings -
 ## 1.3 Run Coverage Check
 
 ```bash
-cd {project-root} && python3 -m pytest tests/ \
+cd {project-root} && $PYTHON_RUNNER -m pytest tests/ \
   --cov=src \
   --cov-report=term-missing \
   --cov-report=xml:coverage.xml \
@@ -105,7 +105,7 @@ cd {project-root} && . .venv/bin/activate && mutmut run 2>&1 || true
 ### 1.4.2 Run mutation gate (100/100 hard gate)
 
 ```bash
-. .venv/bin/activate && python3 -m harness_quality_gate.bmad.mutation_analyzer {project-root} --gate 2>&1
+. .venv/bin/activate && $PYTHON_RUNNER -m harness_quality_gate.bmad.mutation_analyzer {project-root} --gate 2>&1
 ```
 
 **This command:**
@@ -167,10 +167,47 @@ cd {project-root} && . .venv/bin/activate && mutmut run 2>&1 || true
 - Warn user to add `[tool.quality-gate.mutation]` section to `pyproject.toml`
 
 **If mutation testing FAILS (NOK):**
-Report to user:
+
+This is the **MUTANT KILLING PHASE** — NOT a normal coding task. The coordinator MUST load the mutation guide skill and pass its rules to whoever kills survivors. **No exceptions.**
+
+### Phase 2: Mandatory Mutation Killing Protocol
+
+**STEP 1 — Load the guide skill:**
+```bash
+# The guide skill file MUST be loaded and its full content injected
+# into whatever agent/sub-agent is responsible for killing mutants:
+#   {skill-root}/MUTANT_KILLING_GUIDE_SKILL.md
+# This skill contains:
+#   §0  Reglas de oro (priority chain: test → refactor → pragma)
+#   §1  Bucle de trabajo por superviviente (mutmut show/apply/debugging)
+#   §2  Qué muta mutmut (tabla operador → qué asersión requiere)
+#   §3  Triage: clasifica antes de actuar (observable? → test débil)
+#   §4  Catálogo de técnicas (asersiones densas, fronteras, spies, etc.)
+#   §5  Taxonomía de equivalentes (Tipo C default muerto, etc.)
+#   §6  Casos difíciles H1–H12 (passthrough, logging, etc.)
+#   §7  Política de pragmas (# reason: + # audited: obligatorios)
+```
+
+**STEP 2 — Load the sharded guide index:**
+```bash
+# {skill-root}/MUTANT_KILLING_GUIDE.md  (the navigable index)
+# {skill-root}/MUTANT_KILLING_GUIDE/     (shard files for jumping to specific rules)
+# CRITICAL shards to know:
+#   h14: Trampa del XX-wrap — "foo" in out NUNCA mata "XXfooXX"
+#   h15: Gemelos falsy — if x: no distingue "" de None
+#   3-triage: clasifica TODO mutante ANTES de escribir un solo test
+#   7-politica-de-pragmas: pragma SIN `# reason:` + `# audited:` = RECHAZADO
+```
+
+**STEP 3 — Delegate to mutation specialist WITH guide rules:**
+> **MANDATORY:** The sub-agent receiving mutation kills instructions **MUST** have the full text of `MUTANT_KILLING_GUIDE_SKILL.md` in its prompt. If the coordinator dispatches `python-development__python-pro`, `rust-pro`, or any other agent, the guide content MUST be copied into that agent's prompt. **Never delegate mutation kills without the guide.**
+
+**Report to user:**
 - Which modules failed and their scores vs thresholds
 - List of surviving mutants per failed module
-- **RECOMMEND:** "Activate the 'mutation-testing' skill for guidance on improving weak tests that fail to kill surviving mutants."
+- Number of survivors being killed now
+- List of guide rules being followed (§0-§7)
+- Final MSI target: **100%** (no threshold tolerance — every survivor MUST be killed or proven equivalent with a pragma that has `# reason:` and `# audited:`)
 
 ---
 

@@ -84,14 +84,14 @@ If any earlier layer failed, the workflow should have already stopped before rea
 Before running scans, check which security tools are installed:
 
 ```bash
-python3 -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
-python3 -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
-python3 -c "import pip_audit" 2>/dev/null && echo "pip-audit=OK" || echo "pip-audit=MISSING"
+$PYTHON_RUNNER -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandit=MISSING"
+$PYTHON_RUNNER -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
+$PYTHON_RUNNER -c "import pip_audit" 2>/dev/null && echo "pip-audit=OK" || echo "pip-audit=MISSING"
 which gitleaks 2>/dev/null && echo "gitleaks=OK" || echo "gitleaks=MISSING"
-python3 -c "import semgrep" 2>/dev/null && echo "semgrep=OK" || echo "semgrep=MISSING"
-python3 -c "import checkov" 2>/dev/null && echo "checkov=OK" || echo "checkov=MISSING"
-python3 -c "import deptry" 2>/dev/null && echo "deptry=OK" || echo "deptry=MISSING"
-python3 -c "import vulture" 2>/dev/null && echo "vulture=OK" || echo "vulture=MISSING"
+$PYTHON_RUNNER -c "import semgrep" 2>/dev/null && echo "semgrep=OK" || echo "semgrep=MISSING"
+$PYTHON_RUNNER -c "import checkov" 2>/dev/null && echo "checkov=OK" || echo "checkov=MISSING"
+$PYTHON_RUNNER -c "import deptry" 2>/dev/null && echo "deptry=OK" || echo "deptry=MISSING"
+$PYTHON_RUNNER -c "import vulture" 2>/dev/null && echo "vulture=OK" || echo "vulture=MISSING"
 which trivy 2>/dev/null && echo "trivy=OK" || echo "trivy=MISSING"
 ```
 
@@ -112,8 +112,8 @@ Run the quality gate and extract the L4 layer from the checkpoint
 is the single deterministic entry point):
 
 ```bash
-python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
-  python3 -c "import json,sys; d=json.load(sys.stdin); \
+$PYTHON_RUNNER -m harness_quality_gate all {project-root} --json 2>&1 | \
+  $PYTHON_RUNNER -c "import json,sys; d=json.load(sys.stdin); \
   [print(json.dumps(l, indent=2)) for l in d.get('layers',[]) if l.get('layer')=='L4']"
 ```
 
@@ -135,23 +135,23 @@ If the unified scanner is unavailable, run each tool individually:
 #### Bandit (REQUIRED)
 
 ```bash
-cd {project-root} && python3 -m bandit -r src/ -f json 2>&1
+cd {project-root} && $PYTHON_RUNNER -m bandit -r src/ -f json 2>&1
 ```
 
 #### Safety (REQUIRED)
 
 ```bash
-cd {project-root} && python3 -m safety check --json 2>&1
+cd {project-root} && $PYTHON_RUNNER -m safety check --json 2>&1
 ```
 
 Or with requirements file:
 ```bash
-cd {project-root} && python3 -m safety check -r requirements.txt --json 2>&1
+cd {project-root} && $PYTHON_RUNNER -m safety check -r requirements.txt --json 2>&1
 ```
 
 **Fallback:** If safety not available, try pip-audit:
 ```bash
-cd {project-root} && python3 -m pip_audit --format json 2>&1
+cd {project-root} && $PYTHON_RUNNER -m pip_audit --format json 2>&1
 ```
 
 #### Gitleaks (REQUIRED)
@@ -163,7 +163,7 @@ cd {project-root} && gitleaks detect --source . --report-format json --no-banner
 #### Semgrep (RECOMMENDED)
 
 ```bash
-cd {project-root} && python3 -m semgrep \
+cd {project-root} && $PYTHON_RUNNER -m semgrep \
   --config p/security-audit \
   --config p/owasp-top-ten \
   --config {skill-root}/references/semgrep-ha-rules.yaml \
@@ -176,19 +176,19 @@ cd {project-root} && python3 -m semgrep \
 #### Checkov (RECOMMENDED)
 
 ```bash
-cd {project-root} && python3 -m checkov -d . --framework dockerfile yaml json --output json --compact 2>&1
+cd {project-root} && $PYTHON_RUNNER -m checkov -d . --framework dockerfile yaml json --output json --compact 2>&1
 ```
 
 #### Deptry (RECOMMENDED)
 
 ```bash
-cd {project-root} && python3 -m deptry . 2>&1
+cd {project-root} && $PYTHON_RUNNER -m deptry . 2>&1
 ```
 
 #### Vulture (RECOMMENDED)
 
 ```bash
-cd {project-root} && python3 -m vulture src/ --min-confidence 80 2>&1
+cd {project-root} && $PYTHON_RUNNER -m vulture src/ --min-confidence 80 2>&1
 ```
 
 #### Trivy (OPTIONAL)
@@ -449,8 +449,8 @@ Apply the fix to the source code. If the fix requires changes to multiple files,
 ### Step 5.3: Re-run Phase 1 (Deterministic Scan Only)
 
 ```bash
-python3 -m harness_quality_gate all {project-root} --json 2>&1 | \
-  python3 -c "import json,sys; d=json.load(sys.stdin); \
+$PYTHON_RUNNER -m harness_quality_gate all {project-root} --json 2>&1 | \
+  $PYTHON_RUNNER -c "import json,sys; d=json.load(sys.stdin); \
   [print(json.dumps(l, indent=2)) for l in d.get('layers',[]) if l.get('layer')=='L4']"
 ```
 

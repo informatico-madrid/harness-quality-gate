@@ -345,3 +345,17 @@ def test_parse_error_finding_every_field_exact() -> None:
     assert f.layer == "L4"
     assert f.language == "python"
     assert f.rule_id == "parse-error"
+
+
+def test_parse_trailing_whitespace_stripped_before_match() -> None:
+    """rstrip() not lstrip() — trailing whitespace stripped before regex match.
+
+    Kills mutmut_5: rstrip → lstrip. With lstrip, trailing whitespace
+    remains and the regex $ anchor fails to match, yielding zero findings.
+    """
+    findings = _adapter().parse(
+        "src/app.py:12: unused function 'x' (60% confidence)   \t\t"
+    )
+    assert len(findings) == 1
+    assert findings[0].node == "src/app.py"
+    assert findings[0].rule_id == "dead-code"

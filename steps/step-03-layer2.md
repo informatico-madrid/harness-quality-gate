@@ -20,7 +20,7 @@ If L1 failed, the agent should have fixed the tests before proceeding to L2. The
 Run the weak test detector script:
 
 ```bash
-python3 -m harness_quality_gate.adapters.python.weak_test {project-root}/tests/ {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.adapters.python.weak_test {project-root}/tests/ {project-root}/src/ 2>&1
 ```
 
 ### Weak Test Rules (A1-A8)
@@ -76,7 +76,7 @@ Only run if mutation testing data exists from Layer 1.
 Parse mutation results from `/.mutmut/index.html` or similar output:
 
 ```bash
-python3 -m harness_quality_gate.bmad.mutation_analyzer {project-root}/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.mutation_analyzer {project-root}/ 2>&1
 ```
 
 **Expected output:**
@@ -107,7 +107,7 @@ python3 -m harness_quality_gate.bmad.mutation_analyzer {project-root}/ 2>&1
 Run diversity analysis:
 
 ```bash
-python3 -m harness_quality_gate.bmad.diversity_metric {project-root}/tests/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.diversity_metric {project-root}/tests/ 2>&1
 ```
 
 **Expected output:**

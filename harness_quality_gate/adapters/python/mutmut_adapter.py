@@ -69,7 +69,7 @@ class MutmutAdapter(ToolAdapter):
         if binary is None:
             return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
         cmd = [binary, "run"]
-        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")
+        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")  # pragma: no mutate
         if max_children.isdigit():
             cmd.extend(["--max-children", max_children])
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)

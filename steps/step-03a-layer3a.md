@@ -25,7 +25,7 @@
 ## 3A.1 Ruff Lint Check
 
 ```bash
-cd {project-root} && python3 -m ruff check src/ tests/ 2>&1
+cd {project-root} && $PYTHON_RUNNER -m ruff check src/ tests/ 2>&1
 ```
 
 **Capture:**
@@ -51,7 +51,7 @@ cd {project-root} && python3 -m ruff check src/ tests/ 2>&1
 ## 3A.2 Ruff Format Check
 
 ```bash
-cd {project-root} && python3 -m ruff format --check src/ tests/ 2>&1
+cd {project-root} && $PYTHON_RUNNER -m ruff format --check src/ tests/ 2>&1
 ```
 
 **If FAIL (formatting issues):**
@@ -62,7 +62,7 @@ cd {project-root} && python3 -m ruff format --check src/ tests/ 2>&1
 ## 3A.3 Pyright Type Check
 
 ```bash
-cd {project-root} && python3 -m pyright src/ 2>&1
+cd {project-root} && $PYTHON_RUNNER -m pyright src/ 2>&1
 ```
 
 **Capture:**
@@ -91,7 +91,7 @@ Header conventions are enforced by ruff (3A.1); a dedicated
 (it never blocks L3A):
 
 ```bash
-cd {project-root} && { [ -f scripts/check_headers.py ] && python3 scripts/check_headers.py --check 2>&1 || echo "check_headers=SKIPPED"; }
+cd {project-root} && { [ -f scripts/check_headers.py ] && $PYTHON_RUNNER scripts/check_headers.py --check 2>&1 || echo "check_headers=SKIPPED"; }
 ```
 
 **Update state:**
@@ -112,7 +112,7 @@ cd {project-root} && { [ -f scripts/check_headers.py ] && python3 scripts/check_
 Run SOLID metrics script:
 
 ```bash
-python3 -m harness_quality_gate.adapters.python.solid_metrics {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.adapters.python.solid_metrics {project-root}/src/ 2>&1
 ```
 
 ### SOLID Rules (Tier A)
@@ -147,7 +147,7 @@ python3 -m harness_quality_gate.adapters.python.solid_metrics {project-root}/src
 Run principles checker:
 
 ```bash
-python3 -m harness_quality_gate.adapters.python.principles {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.adapters.python.principles {project-root}/src/ 2>&1
 ```
 
 ### Principles Rules
@@ -182,7 +182,7 @@ python3 -m harness_quality_gate.adapters.python.principles {project-root}/src/ 2
 Run AST-based antipattern checker:
 
 ```bash
-python3 -m harness_quality_gate.adapters.python.antipattern_tier_a {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.adapters.python.antipattern_tier_a {project-root}/src/ 2>&1
 ```
 
 ### Tier A Antipatterns (25 patterns)

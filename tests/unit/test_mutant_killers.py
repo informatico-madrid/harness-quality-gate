@@ -15,89 +15,120 @@ import pytest
 # models.py — frozen dataclass tests (kill frozen=False mutants)
 # ---------------------------------------------------------------------------
 
-def _assert_frozen(cls, *args, **kwargs) -> None:
-    """Assert that a dataclass instance is frozen (FrozenInstanceError on assignment)."""
-    obj = cls(*args, **kwargs)
+def test_runtime_is_frozen() -> None:
+    from harness_quality_gate.models import Runtime
+    obj = Runtime(python_version="3.12", concurrency="parallel", ci=False)
     first_field = list(obj.__dataclass_fields__)[0]
     with pytest.raises((AttributeError, TypeError)):
         setattr(obj, first_field, None)
 
 
-def test_runtime_is_frozen() -> None:
-    from harness_quality_gate.models import Runtime
-    _assert_frozen(Runtime, python_version="3.12", concurrency="parallel", ci=False)
-
-
 def test_detection_is_frozen() -> None:
     from harness_quality_gate.models import Detection, Runtime
     rt = Runtime(python_version="3.12", concurrency="parallel", ci=False)
-    _assert_frozen(Detection, repo_path="/tmp", language="python", framework=None,
-                   confidence=1.0, runtime=rt)
+    obj = Detection(repo_path="/tmp", language="python", framework=None,
+                    confidence=1.0, runtime=rt)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_finding_is_frozen() -> None:
     from harness_quality_gate.models import Finding
-    _assert_frozen(Finding, node="f.py", severity="error", message="test")
+    obj = Finding(node="f.py", severity="error", message="test")
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_mutation_stats_is_frozen() -> None:
     from harness_quality_gate.models import MutationStats
-    _assert_frozen(MutationStats, total=10, killed=10, survived=0, timed_out=0,
-                   escaped=0, untested=0, msi=100.0, covered_msi=100.0)
+    obj = MutationStats(total=10, killed=10, survived=0, timed_out=0,
+                        escaped=0, untested=0, msi=100.0, covered_msi=100.0)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_ignore_entry_is_frozen() -> None:
     from harness_quality_gate.models import IgnoreEntry
-    _assert_frozen(IgnoreEntry, tool="ruff", hash="abc", reason="test",
-                   date_added="2026-01-01", expiry=None)
+    obj = IgnoreEntry(tool="ruff", hash="abc", reason="test",
+                      date_added="2026-01-01", expiry=None)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_audit_report_is_frozen() -> None:
     from harness_quality_gate.models import AuditReport
-    _assert_frozen(AuditReport, findings=[], summary="ok")
+    obj = AuditReport(findings=[], summary="ok")
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_tool_check_report_is_frozen() -> None:
     from harness_quality_gate.models import ToolCheckReport
-    _assert_frozen(ToolCheckReport, tool="ruff", exit_code=0, output="v0.4", error=None)
+    obj = ToolCheckReport(tool="ruff", exit_code=0, output="v0.4", error=None)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_layer_result_is_frozen() -> None:
     from harness_quality_gate.models import LayerResult
-    _assert_frozen(LayerResult, layer="L1", language="python", passed=True,
-                   findings=[], duration_sec=1.0)
+    obj = LayerResult(layer="L1", language="python", passed=True,
+                      findings=[], duration_sec=1.0)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_concurrency_plan_is_frozen() -> None:
     from harness_quality_gate.models import ConcurrencyPlan
-    _assert_frozen(ConcurrencyPlan, mode="parallel", ci_detected=False, max_threads=1)
+    obj = ConcurrencyPlan(mode="parallel", ci_detected=False, max_threads=1)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_doctor_report_is_frozen() -> None:
     from harness_quality_gate.models import DoctorReport
-    _assert_frozen(DoctorReport, verdict="INFRA_OK", python_version="3.12",
-                   php_version="8.3", composer_version="2.7",
-                   tools=[], warnings=[])
+    obj = DoctorReport(verdict="INFRA_OK", python_version="3.12",
+                       php_version="8.3", composer_version="2.7",
+                       tools=[], warnings=[])
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_install_report_is_frozen() -> None:
     from harness_quality_gate.models import InstallReport
-    _assert_frozen(InstallReport, status="ok", tools_installed=[],
-                   tools_failed=[], errors=[])
+    obj = InstallReport(status="ok", tools_installed=[],
+                        tools_failed=[], errors=[])
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_checkpoint_v2_is_frozen() -> None:
     from harness_quality_gate.models import CheckpointV2, LayerResult
     lr = LayerResult(layer="L1", language="python", passed=True,
                      findings=[], duration_sec=1.0)
-    _assert_frozen(CheckpointV2, version="v2", timestamp="2026-01-01T00:00:00Z",
-                   repository="/tmp", language="python", layers=[lr], mutation=None)
+    obj = CheckpointV2(version="v2", timestamp="2026-01-01T00:00:00Z",
+                       repository="/tmp", language="python", layers=[lr], mutation=None)
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 def test_tool_taxonomy_entry_is_frozen() -> None:
     from harness_quality_gate.models import ToolTaxonomyEntry
-    _assert_frozen(ToolTaxonomyEntry, tool="phpstan", layer="L3A",
-                   tier="A", language="php")
+    obj = ToolTaxonomyEntry(tool="phpstan", layer="L3A",
+                            tier="A", language="php")
+    first_field = list(obj.__dataclass_fields__)[0]
+    with pytest.raises((AttributeError, TypeError)):
+        setattr(obj, first_field, None)
 
 
 # ---------------------------------------------------------------------------

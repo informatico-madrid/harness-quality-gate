@@ -34,7 +34,7 @@ If L1 or L2 failed, the agent should have fixed those issues before proceeding t
 First, extract class inventory for the agents to review:
 
 ```bash
-python3 -m harness_quality_gate.bmad.llm_solid_judge {project-root}/src/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.llm_solid_judge {project-root}/src/ 2>&1
 ```
 
 This outputs a JSON with a `review_context` field containing structured class context.
@@ -179,7 +179,7 @@ If Tier B consensus explicitly identifies a Tier A violation as a **false positi
 ### Step B.1: Generate Antipattern Review Context
 
 ```bash
-python3 -m harness_quality_gate.bmad.antipattern_judge {project-root}/src/ {project-root}/tests/ 2>&1
+$PYTHON_RUNNER -m harness_quality_gate.bmad.antipattern_judge {project-root}/src/ {project-root}/tests/ 2>&1
 ```
 
 This outputs a JSON with a `review_context` field containing structured code context

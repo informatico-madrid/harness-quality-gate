@@ -240,9 +240,13 @@ class TestDetectFrameworks:
         result = PhpAdapter.detect_frameworks(tmp_path)
         assert len(result) == 0
 
+    @pytest.mark.xfail(reason="known bug: TypeError on **string when require is not a dict in composer.json", strict=True)
     def test_detect_require_not_dict(self, tmp_path):
-        """require not a dict is a production bug (line 151 TypeError on **string) — skip until fixed."""
-        pass
+        """require not a dict should be handled gracefully — currently crashes with TypeError."""
+        self._write_composer(tmp_path, {"require": "not-a-dict"})
+        result = PhpAdapter.detect_frameworks(tmp_path)
+        assert isinstance(result, dict), "detect_frameworks must return a dict even for malformed require"
+        assert len(result) == 0, "malformed require should yield no frameworks"
 
 
 # ===========================================================================
