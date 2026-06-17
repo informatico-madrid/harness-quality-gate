@@ -17,6 +17,7 @@ Requirements: FR-5, FR-41, US-3
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
 import time
@@ -406,11 +407,25 @@ class PythonAdapter(BaseAdapter):
     # -- private helpers --------------------------------------------------
 
     def _run_ruff(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
-        """Invoke ruff and parse findings."""
-        if shutil.which("ruff") is None:
-            logger.warning("ruff not found on PATH, skipping")
-            return []
+        """Invoke ruff and parse findings.
+
+        Uses the venv ruff when available (avoids PATH confusion when
+        both system and venv versions exist).
+        """
+        venv_ruff = repo / ".venv" / "bin" / "ruff"
+        has_on_path = shutil.which("ruff") is not None
+        if not venv_ruff.is_file() or not os.access(str(venv_ruff), os.X_OK):
+            if not has_on_path:
+                logger.warning("ruff not found on PATH, skipping")
+                return []
+
         try:
+            if venv_ruff.is_file() and os.access(str(venv_ruff), os.X_OK):
+                venv_dir = str(venv_ruff.parent)
+                patched_env = dict(env) if env else {}
+                prev_path = patched_env.get("PATH", os.environ.get("PATH", ""))
+                patched_env["PATH"] = venv_dir + os.pathsep + prev_path
+                env = patched_env  # type: ignore[assignment]
             inv = self.ruff.invoke(repo, [], env=dict(env) if env else {})
             return self.ruff.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
@@ -433,11 +448,25 @@ class PythonAdapter(BaseAdapter):
             return []
 
     def _run_pytest(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
-        """Invoke pytest and parse JUnit XML findings."""
+        """Invoke pytest and parse JUnit XML findings.
+
+        Uses the venv pytest when available (newer version may contain
+        fixture/runtime fixes absent from the system version).
+        """
         if not sys.executable:
             logger.warning("Python interpreter not found (sys.executable empty), skipping")
             return []
+
+        venv_dir: str | None = None
+        if os.path.isfile(str(repo / ".venv" / "bin" / "pytest")):
+            venv_dir = str(repo / ".venv" / "bin")
+
         try:
+            if venv_dir:
+                patched_env = dict(env) if env else {}
+                prev_path = patched_env.get("PATH", os.environ.get("PATH", ""))
+                patched_env["PATH"] = venv_dir + os.pathsep + prev_path
+                env = patched_env  # type: ignore[assignment]
             inv = self.pytest.invoke(repo, [], env=dict(env) if env else {})
             return self.pytest.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
@@ -473,14 +502,36 @@ class PythonAdapter(BaseAdapter):
 
         Returns a tuple of (MutationStats, bool) where run_ok is False
         when the mutmut run failed or the tool is not found.
+
+        When the repo has a ``.venv/`` containing ``mutmut``, prefers the
+        venv binary over any system version (system mutmut may be outdated
+        and missing ``mutmut.mutation.trampoline``, which silently destroys
+        the mutation stats — bug H2).
         """
         empty_stats = MutationStats(
             total=0, killed=0, survived=0, timed_out=0,
             escaped=0, untested=0, msi=0.0, covered_msi=0.0,
         )
-        if shutil.which("mutmut") is None:
+        venv_bin = repo / ".venv" / "bin" / "mutmut"
+        # Prefer venv mutmut (may have newer version with working trampoline);
+        # fall back to PATH discovery if venv version is missing.
+        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
+            mutmut_binary = str(venv_bin)
+        elif shutil.which("mutmut") is None:
             logger.warning("mutmut not found on PATH, returning empty stats")
             return (empty_stats, False)
+        else:
+            mutmut_binary = shutil.which("mutmut")
+
+        venv_dir: str | None = str(venv_bin.parent) if venv_bin.is_file() else None
+        # Prepend venv bin to PATH so ``mutmut`` and its depedencies resolve
+        # to the venv packages (e.g. pytest 9.x instead of 8.x).
+        if venv_dir:
+            patched_env = dict(env) if env else {}
+            prev_path = patched_env.get("PATH", os.environ.get("PATH", ""))
+            patched_env["PATH"] = venv_dir + os.pathsep + prev_path
+            env = patched_env  # type: ignore[assignment]
+
         try:
             # Execute the campaign first (parity with PHP's Infection);
             # ``mutmut results`` alone is empty on a fresh repo (bug H2).

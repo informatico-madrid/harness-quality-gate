@@ -9,6 +9,7 @@ Requirements: FR-29, US-9.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Mapping
@@ -27,7 +28,11 @@ class MutmutAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("mutmut")
+        venv_bin = repo / ".venv" / "bin" / "mutmut"
+        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
+            binary = str(venv_bin)
+        else:
+            binary = shutil.which("mutmut")
         if binary is None:
             raise RuntimeError("mutmut not found on PATH")
         result = self._run([binary, "--version"], cwd=repo, env=env)
@@ -41,7 +46,11 @@ class MutmutAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 600.0,
     ) -> ToolInvocation:
-        binary = shutil.which("mutmut")
+        venv_bin = repo / ".venv" / "bin" / "mutmut"
+        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
+            binary = str(venv_bin)
+        else:
+            binary = shutil.which("mutmut")
         if binary is None:
             return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
         # mutmut 3.x has no ``results --json``; per-mutant status lines are
@@ -64,8 +73,17 @@ class MutmutAdapter(ToolAdapter):
         which the PhpAdapter also executes inline. ``MUTATION_MAX_CHILDREN``
         in *env* caps parallelism — without it mutmut spawns one child per
         core, which produces false timeouts on many-core hosts (self-eval F3).
+
+        When the repo has a ``.venv/bin/mutmut``, prefers the venv binary
+        over the system version — system mutmut (3.5.0) is missing the
+        ``mutmut.mutation.trampoline`` module that the campaign needs,
+        causing silent test failures and empty mutation stats (bug H2).
         """
-        binary = shutil.which("mutmut")
+        venv_bin = repo / ".venv" / "bin" / "mutmut"
+        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
+            binary = str(venv_bin)
+        else:
+            binary = shutil.which("mutmut")
         if binary is None:
             return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
         cmd = [binary, "run"]
