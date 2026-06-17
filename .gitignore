@@ -72,12 +72,14 @@ results.json
 mutmut_run.log
 results.txt
 uv.lock
+skills-lock.json
 localDocs/*
 .env
 .agents/*
 .claude/*
 .github/agents
 .opencode/
+skills/
 _bmad/*
 
 # Shell command output leakage (debug artifacts, never source)
