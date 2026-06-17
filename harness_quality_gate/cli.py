@@ -256,6 +256,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
         runtime=runtime,
         detection=detection_info,
     )
+    checkpoint_dict["PASS"] = all_passed
 
     # reason: timestamp format string mutations are equivalent (file is written, content validated). # audited: 2026-06-04
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")  # pragma: no mutate

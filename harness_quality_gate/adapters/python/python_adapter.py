@@ -131,8 +131,8 @@ class PythonAdapter(BaseAdapter):
         all_findings.extend(pytest_findings)
         logger.info("pytest: %d findings", len(pytest_findings))
 
-        mutation_stats = self._run_mutmut(repo, env)
-        mutation_passed = mutation_stats.survived == 0 and mutation_stats.timed_out == 0
+        mutation_stats, mutmut_run_ok = self._run_mutmut(repo, env)
+        mutation_passed = mutmut_run_ok and mutation_stats.survived == 0 and mutation_stats.timed_out == 0
 
         tool_spec: dict[str, object] = {"mutation_stats": mutation_stats}
         if not mutation_passed:
@@ -245,7 +245,12 @@ class PythonAdapter(BaseAdapter):
             "timed_out": stats.timed_out,
         }
 
-    # -- L4 (security: bandit + dead code + dependency analysis) -----------
+    # Required L4 tools per language. If a required tool is missing from PATH,
+    # L4 must FAIL rather than pass vacuously (bug H15).
+    _REQUIRED_L4_TOOLS: dict[str, tuple[str, ...]] = {
+        "python": ("bandit",),
+        "php": (),
+    }
 
     def run_l4(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
         """Run bandit, vulture, deptry; merge security findings.
@@ -256,10 +261,14 @@ class PythonAdapter(BaseAdapter):
         """
         t0 = time.monotonic()
         all_findings: list[Finding] = []
+        required_tools_skipped: list[str] = []
 
         bandit_findings = self._run_bandit(repo, env)
         all_findings.extend(bandit_findings)
         logger.info("bandit: %d findings", len(bandit_findings))
+        if not bandit_findings and shutil.which("bandit") is None:
+            logger.warning("bandit not found on PATH -- required L4 tool missing")
+            required_tools_skipped.append("bandit")
 
         vulture_findings = self._run_vulture(repo, env)
         all_findings.extend(vulture_findings)
@@ -271,8 +280,27 @@ class PythonAdapter(BaseAdapter):
 
         duration = time.monotonic() - t0
         # Severity policy: only error-severity findings block the gate
-        # (bandit LOW/info — e.g. B101 asserts in tests — must not fail a
+        # (bandit LOW/info -- e.g. B101 asserts in tests -- must not fail a
         # clean repo; simulation bug H1).
+        # Required-tools policy: if a required L4 tool is missing, gate fails
+        # rather than pass vacuously (bug H15).
+        required_tools = self._REQUIRED_L4_TOOLS.get(self._name, ())
+        for tool_name in required_tools:
+            if tool_name not in required_tools_skipped and shutil.which(tool_name) is None:
+                required_tools_skipped.append(tool_name)
+
+        if required_tools_skipped:
+            all_findings.append(
+                Finding(
+                    node="L4",
+                    severity="error",
+                    message="Required L4 tool(s) not installed: " + ", ".join(required_tools_skipped) + ". Install them to enable full security scanning.",
+                    tool="L4",
+                    layer="L4",
+                    language="python",
+                )
+            )
+
         passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
@@ -440,29 +468,33 @@ class PythonAdapter(BaseAdapter):
             logger.warning("deptry invocation failed: %s", exc)
             return []
 
-    def _run_mutmut(self, repo: Path, env: Mapping[str, str]) -> MutationStats:
-        """Invoke mutmut and return MutationStats."""
+    def _run_mutmut(self, repo: Path, env: Mapping[str, str]):
+        """Invoke mutmut and return (MutationStats, run_ok).
+
+        Returns a tuple of (MutationStats, bool) where run_ok is False
+        when the mutmut run failed or the tool is not found.
+        """
+        empty_stats = MutationStats(
+            total=0, killed=0, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+        )
         if shutil.which("mutmut") is None:
             logger.warning("mutmut not found on PATH, returning empty stats")
-            return MutationStats(
-                total=0, killed=0, survived=0, timed_out=0,
-                escaped=0, untested=0, msi=0.0, covered_msi=0.0,
-            )
+            return (empty_stats, False)
         try:
             # Execute the campaign first (parity with PHP's Infection);
             # ``mutmut results`` alone is empty on a fresh repo (bug H2).
             run_inv = self.mutmut.run(repo, env=dict(env) if env else {})
-            if run_inv.exitcode != 0:
+            run_ok = run_inv.exitcode == 0
+            if not run_ok:
                 logger.warning("mutmut run exited %d: %s",
                                run_inv.exitcode, run_inv.stderr.strip())
             inv = self.mutmut.invoke(repo, [], env=dict(env) if env else {})
-            return self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
+            stats = self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
+            return (stats, run_ok)
         except (OSError, RuntimeError) as exc:
             logger.warning("mutmut invocation failed: %s", exc)
-            return MutationStats(
-                total=0, killed=0, survived=0, timed_out=0,
-                escaped=0, untested=0, msi=0.0, covered_msi=0.0,
-            )
+            return (empty_stats, False)
 
     def _run_bandit(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke bandit and parse security findings."""

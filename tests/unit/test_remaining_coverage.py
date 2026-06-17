@@ -286,14 +286,14 @@ class TestPythonAdapter:
     def test_run_mutmut_not_found(self, tmp_path):
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
-            stats = a._run_mutmut(tmp_path, {})
+            stats = a._run_mutmut(tmp_path, {})[0]  # (stats, False) tuple → extract stats
         assert stats.total == 0
 
     def test_run_mutmut_oserror(self, tmp_path):
         a = self._adapter()
         with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/mutmut"):
             with patch.object(a.mutmut, "invoke", side_effect=OSError("broken")):
-                stats = a._run_mutmut(tmp_path, {})
+                stats = a._run_mutmut(tmp_path, {})[0]  # (stats, False) tuple → extract stats
         assert stats.total == 0
 
     def test_run_bandit_not_found(self, tmp_path):

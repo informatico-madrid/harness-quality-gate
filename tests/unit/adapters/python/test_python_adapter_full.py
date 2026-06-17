@@ -46,10 +46,12 @@ def _mock_subadapter(findings: list[Finding] | None = None) -> MagicMock:
 
     MagicMock.parse.return_value → findings list.
     MagicMock.invoke → ToolInvocation-like object.
+    MagicMock.run → ToolInvocation-like object.
     """
     mock = MagicMock()
     mock.parse.return_value = findings or []
     mock.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+    mock.run.return_value = MagicMock(stdout="", stderr="", exitcode=0)
     return mock
 
 
@@ -305,6 +307,18 @@ class TestRunL1:
     coverage in TestRunL1MutationGate.
     """
 
+    @pytest.fixture(autouse=True)
+    def _mutmut_on_path(self):
+        """Deterministic: the which("mutmut") guard in _run_mutmut must not
+        depend on mutmut being installed on the machine."""
+        with patch(
+            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
+            side_effect=lambda name: (
+                "/usr/bin/mutmut" if name == "mutmut" else None
+            ),
+        ):
+            yield
+
     def _adapter(self):
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         a = PythonAdapter()
@@ -369,7 +383,7 @@ class TestRunL1:
         assert isinstance(layer.passed, bool), "passed must be bool (kills mutmut_35-38)"
 
     def test_l1_pytest_raises_oserror(self, tmp_path: Path):
-        """Pytest.invoke raises OSError -> empty findings."""
+        """Pytest.invoke raises OSError → catch ignores it; mutmut mock returns clean stats → passed=True."""
         a = self._adapter()
         with patch.object(a.pytest, "invoke", side_effect=OSError("pytest failed")):
             layer = a.run_l1(tmp_path, {})
@@ -377,7 +391,7 @@ class TestRunL1:
             assert layer.findings == []
 
     def test_l1_pytest_raises_runtimeerror(self, tmp_path: Path):
-        """Pytest.invoke raises RuntimeError -> empty findings."""
+        """Pytest.invoke raises RuntimeError → mock mutmut returns clean → passed=True."""
         a = self._adapter()
         with patch.object(a.pytest, "invoke", side_effect=RuntimeError("boom")):
             layer = a.run_l1(tmp_path, {})
@@ -746,7 +760,7 @@ class TestRunL1MutationGate:
         assert ms.total == 0
 
     def test_l1mut_mutmut_not_on_path(self, tmp_path: Path, caplog):
-        """mutmut not found -> empty stats + exact warning message.
+        """mutmut not found -> empty stats tuple + layer fails (run_ok=False).
 
         Kills mutmut_5 (None), mutmut_6 (XX...XX), mutmut_7 (path→PATH),
         mutmut_8 (UPPERCASE), mutmut_13 (escaped=None), mutmut_14 (untested=None).
@@ -767,7 +781,7 @@ class TestRunL1MutationGate:
         assert ms.survived == ms.timed_out == 0  # confirms passed logic
         assert ms.escaped == 0  # kills mutmut_13: escaped=0 → None
         assert ms.untested == 0  # kills mutmut_14: untested=0 → None
-        assert layer.passed is True
+        assert layer.passed is False  # run_ok=False → gate fails when mutmut can't run
         # Exact log message kills string mutations 5,6,7,8
         assert "mutmut not found on PATH, returning empty stats" in caplog.text
         # Strict exact-message assertion — kills mutmut_6 (XX...XX prefix/suffix)
@@ -776,7 +790,7 @@ class TestRunL1MutationGate:
                 assert record.getMessage() == "mutmut not found on PATH, returning empty stats"
 
     def test_l1mut_mutmut_raises_oserror(self, tmp_path: Path):
-        """mutmut.invoke raises OSError -> empty fallback stats."""
+        """mutmut.invoke raises OSError -> (empty_stats, False) -> layer fails."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         with patch.object(a, "mutmut", mock_mutmut):
@@ -785,10 +799,10 @@ class TestRunL1MutationGate:
                     layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
-        assert layer.passed is True
+        assert layer.passed is False
 
     def test_l1mut_mutmut_raises_runtimeerror(self, tmp_path: Path):
-        """mutmut.invoke raises RuntimeError -> empty fallback stats."""
+        """mutmut.invoke raises RuntimeError -> (empty_stats, False) -> layer fails."""
         a = self._adapter()
         mock_mutmut = _mock_subadapter()
         with patch.object(a, "mutmut", mock_mutmut):
@@ -797,7 +811,7 @@ class TestRunL1MutationGate:
                     layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
         assert ms.total == 0
-        assert layer.passed is True
+        assert layer.passed is False
 
     def test_l1mut_mutmut_parse_return_full_stats(self, tmp_path: Path):
         """Parsed MutationStats contains all expected fields."""
@@ -853,9 +867,10 @@ class TestRunL1MutationGate:
         a = self._adapter()
         real_adapter = MutmutAdapter()
 
-        # Create a partial mock: mock invoke to return valid data, keep real parse
+        # Create a partial mock: mock invoke/run to return valid data, keep real parse
         mock_mutmut = MagicMock()
         mutation_payload = '{"total":5,"killed":5,"survived":0,"timeout":0,"escaped":0,"untested":0}'
+        mock_mutmut.run.return_value = MagicMock(stdout="", stderr="", exitcode=0)
         mock_mutmut.invoke.return_value = MagicMock(
             stdout=mutation_payload,
             stderr="",
@@ -2590,8 +2605,9 @@ class TestRunMutmutDirect:
                 with patch.object(a, "mutmut", mock_mutmut):
                     stats = a._run_mutmut(tmp_path, {})
 
-        # Type assertion: kills mutmut_40 (return None instead of MutationStats)
-        assert isinstance(stats, MutationStats), f"return must be MutationStats, got {type(stats)}"
+        # Type assertion: kills mutmut_40 (return None instead of tuple)
+        assert isinstance(stats, tuple) and len(stats) == 2, f"return must be tuple, got {type(stats)}"
+        stats = stats[0]  # extract MutationStats from (stats, False) tuple
         # Full zero-field assertion: kills mutmut_39 (any field mutated to non-zero)
         assert stats.total == 0
         assert stats.killed == 0
@@ -2622,8 +2638,9 @@ class TestRunMutmutDirect:
                 with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                     stats = a._run_mutmut(tmp_path, {})
 
-        # Type assertion: kills mutmut_44 (exception path returns None)
-        assert isinstance(stats, MutationStats), f"exception path must return MutationStats, got {type(stats)}"
+        # Type assertion: kills old return mutation (exception path returns None)
+        assert isinstance(stats, tuple) and len(stats) == 2, f"exception path must return tuple, got {type(stats)}"
+        stats = stats[0]
         assert stats.total == 0
         assert stats.killed == 0
         # Kill invoke-arg mutations (H1): assert invoke called with (repo, [])
@@ -2673,7 +2690,8 @@ class TestRunMutmutDirect:
                 stats = a._run_mutmut(tmp_path, {})
 
         # Assert kill mutmut_45: return value is not None, has correct stats
-        assert isinstance(stats, MutationStats), f"success path must return MutationStats, got {type(stats)}"
+        assert isinstance(stats, tuple) and len(stats) == 2, f"success path must return tuple, got {type(stats)}"
+        stats = stats[0]
         assert stats.total == 5
         assert stats.killed == 5
         assert stats.survived == 0
@@ -2703,7 +2721,8 @@ class TestRunMutmutDirect:
                 with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                     stats = a._run_mutmut(tmp_path, {})
 
-        assert isinstance(stats, MutationStats)
+        assert isinstance(stats, tuple) and len(stats) == 2
+        stats = stats[0]
         assert stats.total == 0
         assert stats.survived == 0
         assert stats.timed_out == 0
@@ -2798,7 +2817,13 @@ class TestPythonAdapterEdgeCases:
         """run_l1 receives env dict -> still works."""
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
-        layer = a.run_l1(tmp_path, {"PYTEST_ADDOPTS": "-q"})
+        a.mutmut = _mock_subadapter()
+        a.mutmut.parse.return_value = MutationStats(
+            total=0, killed=0, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+        )
+        with _all_tools_on_path({"mutmut": "/bin/mutmut", "python3": "/usr/bin/python3"}):
+            layer = a.run_l1(tmp_path, {"PYTEST_ADDOPTS": "-q"})
         assert layer.passed is True
 
     def test_l3b_with_env(self, tmp_path: Path):
@@ -2864,7 +2889,13 @@ class TestPythonAdapterEdgeCases:
         """LayerResult has all expected fields after run_l1."""
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
-        layer = a.run_l1(tmp_path, {})
+        a.mutmut = _mock_subadapter()
+        a.mutmut.parse.return_value = MutationStats(
+            total=0, killed=0, survived=0, timed_out=0,
+            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+        )
+        with _all_tools_on_path({"mutmut": "/bin/mutmut", "python3": "/usr/bin/python3"}):
+            layer = a.run_l1(tmp_path, {})
         assert layer.layer == "L1"
         assert layer.passed is True
 
@@ -2886,7 +2917,8 @@ class TestPythonAdapterEdgeCases:
         """Duration is always a numeric value."""
         a = self._adapter()
         a.pytest = _mock_subadapter(findings=[])
-        layer = a.run_l1(tmp_path, {})
+        with _all_tools_on_path({"mutmut": "/bin/mutmut", "python3": "/usr/bin/python3"}):
+            layer = a.run_l1(tmp_path, {})
         assert isinstance(layer.duration_sec, (int, float))
         assert layer.duration_sec >= 0
 
@@ -2975,7 +3007,8 @@ class TestRunMutmut:
         mock_mutmut.parse = call_tracker
 
         with patch.object(a, "mutmut", mock_mutmut):
-            stats = a._run_mutmut(tmp_path, {})
+            result = a._run_mutmut(tmp_path, {})
+        stats = result[0]  # (stats, run_ok) tuple
 
         # Verify parse parsed the payload correctly
         assert stats.total == 5
@@ -3017,7 +3050,8 @@ class TestRunMutmut:
         with patch.object(a, "mutmut", mock_mutmut):
             with caplog.at_level("WARNING",
                                  logger="harness_quality_gate.adapters.python.python_adapter"):
-                stats = a._run_mutmut(tmp_path, {})
+                result = a._run_mutmut(tmp_path, {})
+        stats = result[0]  # (stats, run_ok) tuple
 
         # Kill mutmut_48: exact log message assertion
         warns = [r for r in caplog.records
@@ -3223,8 +3257,9 @@ class TestPyAdapterSurvivorKillers:
         a = _pa_full_mock_adapter()
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
              patch(_PA_WHICH, return_value=None):
-            stats = a._run_mutmut(tmp_path, self.ENV)
-        assert stats == _zero_stats()
+            result = a._run_mutmut(tmp_path, self.ENV)
+        # result is (stats, False) — mutmut not found, run_ok=False
+        assert result == (_zero_stats(), False), "not found → (zero_stats, False)"
         a.mutmut.invoke.assert_not_called()
         assert _pa_messages(caplog) == ["mutmut not found on PATH, returning empty stats"]
 
@@ -3234,8 +3269,9 @@ class TestPyAdapterSurvivorKillers:
         a.mutmut.invoke.side_effect = RuntimeError("mm-boom")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
              patch(_PA_WHICH, return_value="/usr/bin/mutmut"):
-            stats = a._run_mutmut(tmp_path, self.ENV)
-        assert stats == _zero_stats()
+            result = a._run_mutmut(tmp_path, self.ENV)
+        # run_ok=False because invoke raised → (zero_stats, False)
+        assert result == (_zero_stats(), False), "failure → (zero_stats, False)"
         assert _pa_messages(caplog) == ["mutmut invocation failed: mm-boom"]
 
     def test_tool_versions_missing_marker_on_oserror(self):
@@ -3527,6 +3563,7 @@ class TestL1MutmutRunWiring:
         stats = MutationStats(total=4, killed=4, survived=0, timed_out=0,
                               escaped=0, untested=0, msi=100.0, covered_msi=100.0)
         a.mutmut = MagicMock()
+        a.mutmut.run.return_value = MagicMock(stdout="", stderr="", exitcode=0)
         a.mutmut.invoke.return_value = MagicMock(stdout="x", stderr="", exitcode=0)
         a.mutmut.parse.return_value = stats
         with patch("shutil.which", return_value="/usr/bin/x"):
@@ -3624,7 +3661,7 @@ class TestL1SeverityGate:
                               escaped=0, untested=0, msi=100.0, covered_msi=100.0)
         with (
             patch.object(PythonAdapter, "_run_pytest", return_value=findings),
-            patch.object(PythonAdapter, "_run_mutmut", return_value=stats),
+            patch.object(PythonAdapter, "_run_mutmut", return_value=(stats, True)),
         ):
             return a.run_l1(tmp_path, {})
 
@@ -3652,6 +3689,8 @@ class TestL4SeverityGate:
             patch.object(PythonAdapter, "_run_bandit", return_value=findings),
             patch.object(PythonAdapter, "_run_vulture", return_value=[]),
             patch.object(PythonAdapter, "_run_deptry", return_value=[]),
+            patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
+                  return_value="/usr/bin/x"),
         ):
             return a.run_l4(tmp_path, {})
 
