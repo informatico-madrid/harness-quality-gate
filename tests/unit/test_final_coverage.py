@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +460,8 @@ def test_python_adapter_tool_versions(tmp_path: Path) -> None:
 def test_python_adapter_check_tools_all_present(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
     a = PythonAdapter()
-    with patch("shutil.which", return_value="/usr/bin/tool"):
+    with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+               return_value=Path("/usr/bin/tool")):
         missing = a.check_tools()
     assert isinstance(missing, list)
 
@@ -834,8 +836,8 @@ def test_bandit_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """bandit_adapter line 49: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.bandit_adapter import BanditAdapter
     a = BanditAdapter()
-    with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-               return_value="/usr/bin/bandit"):
+    with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+               return_value=Path("/usr/bin/bandit")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("[]")):
             result = a.invoke(tmp_path, ["--extra-flag"])
     assert result.exitcode == 0
@@ -845,8 +847,8 @@ def test_ruff_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """ruff_adapter line 49: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.ruff_adapter import RuffAdapter
     a = RuffAdapter()
-    with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-               return_value="/usr/bin/ruff"):
+    with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+               return_value=Path("/usr/bin/ruff")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("[]")):
             result = a.invoke(tmp_path, ["--select=ALL"])
     assert result.exitcode == 0
@@ -856,8 +858,8 @@ def test_mutmut_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """mutmut_adapter line 49: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter
     a = MutmutAdapter()
-    with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which",
-               return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool",
+               return_value=Path("/usr/bin/mutmut")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("")):
             result = a.invoke(tmp_path, ["--help"])
     assert result.exitcode == 0
@@ -867,8 +869,8 @@ def test_pyright_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """pyright_adapter line 49: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.pyright_adapter import PyrightAdapter
     a = PyrightAdapter()
-    with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-               return_value="/usr/bin/pyright"):
+    with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+               return_value=Path("/usr/bin/pyright")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("{}")):
             result = a.invoke(tmp_path, ["--version"])
     assert result.exitcode == 0
@@ -878,8 +880,8 @@ def test_deptry_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """deptry_adapter line 50: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
     a = DeptryAdapter()
-    with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-               return_value="/usr/bin/deptry"):
+    with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+               return_value=Path("/usr/bin/deptry")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("{}")):
             result = a.invoke(tmp_path, ["--verbose"])
     assert result.exitcode == 0
@@ -889,8 +891,8 @@ def test_vulture_adapter_invoke_with_extra_args(tmp_path: Path) -> None:
     """vulture_adapter line 49: if args: cmd.extend(args)."""
     from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
     a = VultureAdapter()
-    with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
-               return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+               return_value=Path("/usr/bin/vulture")):
         with patch("subprocess.run", return_value=_fake_subprocess_result("[]")):
             result = a.invoke(tmp_path, ["--min-confidence=60"])
     assert result.exitcode == 0
@@ -1005,8 +1007,8 @@ def test_python_adapter_run_vulture_success(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.base import ToolInvocation as TI
     a = PythonAdapter()
     inv = TI(stdout="[]", stderr="", exitcode=0, duration_seconds=0.0)
-    with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
-               return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+               return_value=Path("/usr/bin/vulture")):
         with patch.object(a.vulture, "invoke", return_value=inv):
             with patch.object(a.vulture, "parse", return_value=[]):
                 findings = a._run_vulture(tmp_path, {})
@@ -1019,8 +1021,8 @@ def test_python_adapter_run_deptry_success(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.base import ToolInvocation as TI
     a = PythonAdapter()
     inv = TI(stdout="{}", stderr="", exitcode=0, duration_seconds=0.0)
-    with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
-               return_value="/usr/bin/deptry"):
+    with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+               return_value=Path("/usr/bin/deptry")):
         with patch.object(a.deptry, "invoke", return_value=inv):
             with patch.object(a.deptry, "parse", return_value=[]):
                 findings = a._run_deptry(tmp_path, {})
@@ -1033,8 +1035,8 @@ def test_python_adapter_run_bandit_success(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.base import ToolInvocation as TI
     a = PythonAdapter()
     inv = TI(stdout="[]", stderr="", exitcode=0, duration_seconds=0.0)
-    with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
-               return_value="/usr/bin/bandit"):
+    with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+               return_value=Path("/usr/bin/bandit")):
         with patch.object(a.bandit, "invoke", return_value=inv):
             with patch.object(a.bandit, "parse", return_value=[]):
                 findings = a._run_bandit(tmp_path, {})

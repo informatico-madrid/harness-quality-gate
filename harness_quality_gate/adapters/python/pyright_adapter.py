@@ -9,10 +9,10 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
@@ -33,9 +33,10 @@ class PyrightAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("pyright")
-        if binary is None:
-            raise RuntimeError("pyright not found on PATH")
+        try:
+            binary = str(resolve_tool("pyright", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("pyright not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip().split()[-1] if result.stdout else "unknown"
 
@@ -48,9 +49,10 @@ class PyrightAdapter(ToolAdapter):
         timeout: float = 300.0,
         python_path: Path | str | None = None,
     ) -> ToolInvocation:
-        binary = shutil.which("pyright")
-        if binary is None:
-            return ToolInvocation(stderr="pyright not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("pyright", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="pyright not found on PATH or .venv", exitcode=3)
         cmd = [binary, "--outputjson"]
         # Venv-aware python path: when pyright is installed globally but the
         # project has a .venv, --pythonpath ensures pyright resolves packages
@@ -123,7 +125,7 @@ class PyrightAdapter(ToolAdapter):
                     node=filename,
                     severity=severity_str,
                     message=detail or message or str(diag),
-                        tool="pyright",
+                    tool="pyright",
                     layer="L3A",
                     language="python",
                     rule_id=rule or None,

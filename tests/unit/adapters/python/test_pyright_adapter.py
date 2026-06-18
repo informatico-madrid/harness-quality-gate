@@ -14,6 +14,7 @@ import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.models import Finding
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.python.pyright_adapter import PyrightAdapter
 
 
@@ -263,7 +264,7 @@ class TestInvokeBinaryNotFound:
     when binary is None, or remove the _run() call entirely.
     """
 
-    @patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None)
+    @patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright"))
     def test_invoke_returns_exitcode_3_when_pyright_missing(self, mock_which, adapter):
         """Binary missing → ToolInvocation with exitcode=3, no subprocess call.
 
@@ -278,7 +279,7 @@ class TestInvokeBinaryNotFound:
         )
         assert isinstance(result, ToolInvocation)
         assert result.exitcode == 3
-        assert result.stderr == "pyright not found on PATH"
+        assert result.stderr == "pyright not found on PATH or .venv"
 
 
 # ── version ─────────────────────────────────────────────────────────────
@@ -304,8 +305,8 @@ class TestVersion:
         Kills mutations that remove the `if binary is None: raise` branch.
         """
         adapter = PyrightAdapter()
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="pyright not found on PATH"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright")):
+            with pytest.raises(RuntimeError, match="pyright not found on PATH or .venv"):
                 adapter.version(Path("/tmp"))
 
     def test_version_calls_run_with_correct_cmd(self):
@@ -322,7 +323,7 @@ class TestVersion:
         binary = "/usr/bin/mock_pyright"
         mock_result = MagicMock(stdout="pyright 1.1.265")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path(binary)):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 repo = Path("/repo/X")
                 result = adapter.version(repo)
@@ -340,7 +341,7 @@ class TestVersion:
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/bin/pyright")):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result):
                 result = adapter.version(Path("/tmp"))
         assert result == "unknown"
@@ -354,7 +355,7 @@ class TestVersion:
         binary = "/usr/bin/pyright"
         mock_result = MagicMock(stdout="pyright 1.1.265")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path(binary)): 
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 result = adapter.version(Path("/repo/X"), env={"PATH_OVERRIDE": "/usr/bin"})
         mock_run.assert_called_once()
@@ -369,26 +370,26 @@ class TestVersion:
         """
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="pyright 1.1.265")
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/usr/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/usr/bin/pyright")):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp"))
         assert mock_run.call_args.kwargs["env"] is None
 
     def test_version_asserts_shutil_which_arg_is_literal_pyright(self):
-        """Spy on shutil.which and assert the literal argument "pyright".
+        """Spy on resolve_tool and assert the literal tool name "pyright" + repo.
 
-        Kills mutmut_2: shutil.which("pyright") → shutil.which(None).
-        The mutant passes None, which breaks the assert_called_once_with("pyright").
+        Kills mutmut_2: resolve_tool("pyright") → resolve_tool(None, repo).
+        The mutant passes None, which breaks the assert_called_once_with("pyright", repo).
         """
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="pyright 1.1.265")
         with patch(
-            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-            return_value="/usr/bin/pyright",
-        ) as which_mock:
+            "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+            return_value=Path("/usr/bin/pyright"),
+        ) as resolve_mock:
             with patch.object(PyrightAdapter, "_run", return_value=mock_result):
                 adapter.version(Path("/repo/X"))
-        which_mock.assert_called_once_with("pyright")
+        resolve_mock.assert_called_once_with("pyright", Path("/repo/X"))
 
 
 class TestInvokeNormalPath:
@@ -401,11 +402,13 @@ class TestInvokeNormalPath:
     def _pyright_on_path(self):
         """Deterministic: these tests must not require pyright installed
         (CI runners don't have it — only mypy gates the repo there)."""
+        def _resolve(name, repo):
+            if name == "pyright":
+                return Path("/usr/bin/pyright")
+            raise ToolNotAvailable(name)
         with patch(
-            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-            side_effect=lambda name: (
-                "/usr/bin/pyright" if name == "pyright" else None
-            ),
+            "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+            side_effect=_resolve,
         ):
             yield
 

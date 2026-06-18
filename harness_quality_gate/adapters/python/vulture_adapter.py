@@ -17,10 +17,10 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import re
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, source_targets
 
@@ -39,9 +39,10 @@ class VultureAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("vulture")
-        if binary is None:
-            raise RuntimeError("vulture not found on PATH")
+        try:
+            binary = str(resolve_tool("vulture", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("vulture not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip() or "unknown"
 
@@ -53,9 +54,10 @@ class VultureAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        binary = shutil.which("vulture")
-        if binary is None:
-            return ToolInvocation(stderr="vulture not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("vulture", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="vulture not found on PATH or .venv", exitcode=3)
         # Scan the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
         targets = source_targets(repo, "src") or [str(repo)]
@@ -82,7 +84,8 @@ class VultureAdapter(ToolAdapter):
 
         for line in stdout.splitlines():
             # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
-            # Tipo C equivalent: lstrip also works because regex matches tail ws.
+            # Tipo C equivalente: lstrip anche funziona perche' il regex matcha
+            # lo spazio finale.
             m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
             if m is None:
                 continue

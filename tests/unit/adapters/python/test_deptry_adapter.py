@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
 from harness_quality_gate.models import Finding
 
@@ -407,7 +408,7 @@ class TestInvoke:
 
     def test_invoke_binary_not_found(self, adapter):
         """deptry not on PATH → ToolInvocation with error."""
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("deptry")):
             inv = adapter.invoke(Path("/tmp/empty"), [])
         assert inv.exitcode == 3
         assert "deptry not found on PATH" in inv.stderr
@@ -419,7 +420,7 @@ class TestInvoke:
         and the dependency gate was vacuous.
         """
         mock_result = MagicMock(stdout="", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
         mock_run.assert_called_once()
@@ -436,7 +437,7 @@ class TestInvoke:
     def test_invoke_with_extra_args(self, adapter):
         """Extra args appended to command."""
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), ["--extend-exclude", "tests/"])
         cmd = mock_run.call_args.args[0]
@@ -449,7 +450,7 @@ class TestInvoke:
     def test_invoke_args_empty(self, adapter):
         """Empty args → no extra flags appended."""
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
         cmd = mock_run.call_args.args[0]
@@ -462,7 +463,7 @@ class TestInvoke:
     def test_invoke_with_env(self, adapter):
         """env mapping passed to _run."""
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [], env={"FOO": "bar"})
         # Check env was passed
@@ -473,7 +474,7 @@ class TestInvoke:
     def test_invoke_with_timeout(self, adapter):
         """Custom timeout passed to _run."""
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [], timeout=120.0)
         mock_run.assert_called_once()
@@ -487,7 +488,7 @@ class TestInvoke:
         cwd→None, env→None. Uses §4.4 exact cmd list + kwargs §4.7.
         """
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(
                     Path("/tmp/deploy"),
@@ -515,7 +516,7 @@ class TestInvoke:
         Kills mutmut_2: timeout default mutation (300→301).
         """
         mock_result = MagicMock(stdout='{"errors":{}}', stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.invoke(Path("/tmp/empty"), [])
         assert mock_run.call_args.kwargs["timeout"] == 300.0
@@ -530,14 +531,14 @@ class TestVersion:
 
     def test_version_binary_not_found(self, adapter):
         """deptry not on PATH → RuntimeError."""
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("deptry")):
             with pytest.raises(RuntimeError, match="deptry not found on PATH"):
                 adapter.version(Path("/tmp/empty"))
 
     def test_version_returns_stdout(self, adapter):
         """version returns stripped stdout."""
         mock_result = MagicMock(stdout="deptry 0.12.0\n", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result):
                 ver = adapter.version(Path("/tmp/empty"))
         assert ver == "deptry 0.12.0"
@@ -545,7 +546,7 @@ class TestVersion:
     def test_version_empty_returns_unknown(self, adapter):
         """version empty stdout → 'unknown'."""
         mock_result = MagicMock(stdout="\n", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result):
                 ver = adapter.version(Path("/tmp/empty"))
         assert ver == "unknown"
@@ -553,7 +554,7 @@ class TestVersion:
     def test_version_no_newline(self, adapter):
         """Version without trailing newline still works."""
         mock_result = MagicMock(stdout="deptry 0.14.1", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result):
                 ver = adapter.version(Path("/tmp/empty"))
         assert ver == "deptry 0.14.1"
@@ -561,7 +562,7 @@ class TestVersion:
     def test_version_with_env(self, adapter):
         """Custom env passed to _run."""
         mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp/empty"), env={"FOO": "bar"})
         call_kwargs = mock_run.call_args.kwargs
@@ -574,7 +575,7 @@ class TestVersion:
         cwd→None, env→None on version call. Uses §4.4 spy.
         """
         mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp/empty"), env={"DEPTRY_ENV": "1"})
         mock_run.assert_called_once()
@@ -587,27 +588,27 @@ class TestVersion:
         Kills mutmut on env=env mutation: env=None → removed.
         """
         mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp/empty"))
         assert mock_run.call_args.kwargs["env"] is None
 
-    def test_version_shutil_which_called_with_deptry_literal(self, adapter):
-        """version() calls shutil.which('deptry') verbatim (kills mutmut_2: which(None)).
+    def test_version_resolve_tool_called_with_deptry_literal(self, adapter):
+        """version() calls resolve_tool('deptry', repo) verbatim (kills mutmut_2: resolve_tool(None, repo)).
 
-        Technique H2: spy on shutil.which and assert the exact call argument.
-        Under the mutant, shutil.which(None) is called → assert_called_once_with('deptry') fails.
+        Technique H2: spy on resolve_tool and assert the exact call.
+        Under the mutant, resolve_tool(None, repo) is called → assert_called_once_with fails.
         """
         mock_result = MagicMock(stdout="deptry 0.12.0", stderr="", exitcode=0)
         with (
             patch(
-                "harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                return_value="/bin/deptry",
-            ) as which_mock,
+                "harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                return_value=Path("/bin/deptry"),
+            ) as resolve_mock,
             patch.object(adapter, "_run", return_value=mock_result),
         ):
             adapter.version(Path("/tmp/empty"))
-        which_mock.assert_called_once_with("deptry")
+        resolve_mock.assert_called_once_with("deptry", Path("/tmp/empty"))
 
 
 # ---------------------------------------------------------------------------
@@ -700,8 +701,8 @@ class TestJsonTempFileContract:
             return ToolInvocation(stdout="terminal noise", stderr="deptry warn", exitcode=1,
                                   duration_seconds=0.2)
 
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                   return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                   return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", side_effect=fake_run) as mock_run:
                 inv = adapter.invoke(tmp_path, [])
         json_file = Path(mock_run.call_args.args[0][2])
@@ -717,8 +718,8 @@ class TestJsonTempFileContract:
             return ToolInvocation(stdout="", stderr="boom", exitcode=2,
                                   duration_seconds=0.1)
 
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                   return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                   return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", side_effect=fake_run):
                 inv = adapter.invoke(tmp_path, [])
         assert inv.stdout == ""
@@ -736,8 +737,8 @@ class TestJsonTempFileContract:
             return ToolInvocation(stdout='[]', stderr="", exitcode=0,
                                   duration_seconds=0.1)
 
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                   return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                   return_value=Path("/bin/deptry")):
             with patch.object(adapter, "_run", side_effect=fake_run) as mock_run:
                 adapter.invoke(tmp_path, [])
         json_file_name = Path(mock_run.call_args.args[0][2]).name

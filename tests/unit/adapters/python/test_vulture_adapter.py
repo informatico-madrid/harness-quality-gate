@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.models import Finding
 from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
 
@@ -49,8 +50,11 @@ def test_adapter_name() -> None:
 
 
 def test_version_binary_not_found_raises(tmp_path: Path) -> None:
-    """shutil.which returns None → RuntimeError with 'vulture' in message."""
-    with patch("shutil.which", return_value=None):
+    """resolve_tool raises ToolNotAvailable → RuntimeError."""
+    with patch(
+        "harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+        side_effect=ToolNotAvailable("vulture"),
+    ):
         with pytest.raises(RuntimeError, match="vulture") as exc_info:
             _adapter().version(tmp_path)
     assert "vulture" in exc_info.value.args[0]
@@ -58,19 +62,22 @@ def test_version_binary_not_found_raises(tmp_path: Path) -> None:
 
 
 def test_version_calls_shutil_which_with_literal_vulture(tmp_path: Path) -> None:
-    """version() must call shutil.which('vulture') verbatim (kills mutmut_2: which(None))."""
-    with patch("shutil.which", return_value="/usr/bin/vulture") as which_mock:
+    """resolve_tool('vulture', path) verbatim (kills mutmut_2: resolve(None, path))."""
+    with patch(
+        "harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+        return_value=Path("/usr/bin/vulture"),
+    ) as resolve_mock:
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="vulture 2.7", stderr="", exitcode=0, duration_seconds=0.1)
         ):
             _adapter().version(tmp_path)
-    which_mock.assert_called_once_with("vulture")
+    resolve_mock.assert_called_once_with("vulture", tmp_path)
 
 
 def test_version_calls_run_version_flag(tmp_path: Path) -> None:
     """Binary found → _run invoked with [binary, '--version']."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="2.11.0")
         ) as mock_run:
@@ -85,7 +92,7 @@ def test_version_calls_run_version_flag(tmp_path: Path) -> None:
 
 def test_version_empty_output_returns_unknown(tmp_path: Path) -> None:
     """stdout='' → returns 'unknown'."""
-    with patch("shutil.which", return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/usr/bin/vulture")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="")
         ) as mock_run:
@@ -95,7 +102,7 @@ def test_version_empty_output_returns_unknown(tmp_path: Path) -> None:
 
 def test_version_whitespace_only_returns_unknown(tmp_path: Path) -> None:
     """stdout='  \\n  ' → returns 'unknown' (strip leaves empty)."""
-    with patch("shutil.which", return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/usr/bin/vulture")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="  \n  ")
         ) as mock_run:
@@ -105,7 +112,7 @@ def test_version_whitespace_only_returns_unknown(tmp_path: Path) -> None:
 
 def test_version_returns_stripped_output(tmp_path: Path) -> None:
     """Output with surrounding whitespace is stripped."""
-    with patch("shutil.which", return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/usr/bin/vulture")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="  2.11.0  ")
         ) as mock_run:
@@ -116,7 +123,7 @@ def test_version_returns_stripped_output(tmp_path: Path) -> None:
 
 def test_version_forward_env(tmp_path: Path) -> None:
     """version() forwards env dict to _run."""
-    with patch("shutil.which", return_value="/usr/bin/vulture"):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/usr/bin/vulture")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="2.11.0")
         ) as mock_run:
@@ -130,8 +137,8 @@ def test_version_forward_env(tmp_path: Path) -> None:
 
 
 def test_invoke_binary_not_found(tmp_path: Path) -> None:
-    """shutil.which returns None → ToolInvocation(stderr='vulture not found...', exitcode=3)."""
-    with patch("shutil.which", return_value=None):
+    """resolve_tool raises ToolNotAvailable → ToolInvocation with stderr."""
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
         result = _adapter().invoke(tmp_path, [])
 
     assert result.exitcode == 3
@@ -142,15 +149,15 @@ def test_invoke_binary_not_found(tmp_path: Path) -> None:
 
 def test_invoke_binary_not_found_has_no_stderr_mutmut(tmp_path: Path) -> None:
     """invoke() stderr exactly 'vulture not found on PATH' (not mutated string)."""
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
         result = _adapter().invoke(tmp_path, [])
-    assert result.stderr == "vulture not found on PATH"
+    assert result.stderr == "vulture not found on PATH or .venv"
 
 
 def test_invoke_command_structure_no_extra_args(tmp_path: Path) -> None:
     """No extra args → cmd = [binary, str(repo)] (vulture has no JSON mode)."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=_ok_invocation()
         ) as mock_run:
@@ -165,7 +172,7 @@ def test_invoke_command_structure_no_extra_args(tmp_path: Path) -> None:
 def test_invoke_command_structure_with_extra_args(tmp_path: Path) -> None:
     """Extra args appended after base command."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=_ok_invocation()
         ) as mock_run:
@@ -179,7 +186,7 @@ def test_invoke_command_structure_with_extra_args(tmp_path: Path) -> None:
 def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
     """Empty args list → cmd has exactly 2 parts (binary + fallback target)."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=_ok_invocation()
         ) as mock_run:
@@ -192,7 +199,7 @@ def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
 def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
     """invoke() forwards cwd, env, and timeout to _run."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=_ok_invocation()
         ) as mock_run:
@@ -207,7 +214,7 @@ def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
 def test_invoke_default_timeout(tmp_path: Path) -> None:
     """Default timeout=300.0 forwarded to _run."""
     fake_bin = "/usr/bin/vulture"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=_ok_invocation()
         ) as mock_run:
@@ -219,7 +226,7 @@ def test_invoke_passes_through_result(tmp_path: Path) -> None:
     """invoke() returns whatever _run returns."""
     fake_bin = "/usr/bin/vulture"
     mock_out = _ok_invocation(stdout='[{"name": "x", "type": "unused"}]')
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter, "_run", return_value=mock_out
         ) as mock_run:
@@ -229,7 +236,7 @@ def test_invoke_passes_through_result(tmp_path: Path) -> None:
 
 def test_invoke_not_found_exitcode_is_3(tmp_path: Path) -> None:
     """Binary not found: exitcode is exactly 3 (not 0/1/2)."""
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
         result = _adapter().invoke(tmp_path, [])
     assert result.exitcode == 3
 

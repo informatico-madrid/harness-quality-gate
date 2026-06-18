@@ -9,10 +9,10 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
@@ -27,9 +27,10 @@ class RuffAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("ruff")
-        if binary is None:
-            raise RuntimeError("ruff not found on PATH")
+        try:
+            binary = str(resolve_tool("ruff", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("ruff not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip().split()[-1] if result.stdout else "unknown"
 
@@ -41,9 +42,10 @@ class RuffAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        binary = shutil.which("ruff")
-        if binary is None:
-            return ToolInvocation(stderr="ruff not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("ruff", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="ruff not found on PATH or .venv", exitcode=3)
         cmd = [binary, "check", "--output-format=json"]
         if args:
             cmd.extend(args)

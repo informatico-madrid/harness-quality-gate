@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable, resolve_tool
 from harness_quality_gate.models import MutationStats
 
 
@@ -206,7 +207,9 @@ class TestPythonAdapter:
 
     def test_tool_versions_all_missing(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        def _mock(resolve_name, repo):
+            raise ToolNotAvailable(resolve_name)
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_mock):
             with patch.object(a.ruff.__class__, "version", side_effect=RuntimeError("missing")):
                 with patch.object(a.pyright.__class__, "version", side_effect=RuntimeError("missing")):
                     versions = a.tool_versions()
@@ -214,97 +217,102 @@ class TestPythonAdapter:
 
     def test_check_tools_missing_ruff(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        def _mock(resolve_name, repo):
+            if resolve_name == "ruff":
+                raise ToolNotAvailable(resolve_name)
+            return Path("/mock/" + resolve_name)
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_mock):
             with pytest.raises(RuntimeError, match="Missing Python"):
                 a.check_tools()
 
     def test_check_tools_all_present(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/tool"):
+        def _mock(resolve_name, repo):
+            return Path("/mock/" + resolve_name)
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_mock):
             result = a.check_tools()
         assert "ruff" in result
 
     def test_run_ruff_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("ruff")):
             findings = a._run_ruff(tmp_path, {})
         assert findings == []
 
     def test_run_ruff_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/ruff"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/ruff")):
             with patch.object(a.ruff, "invoke", side_effect=OSError("broken")):
                 findings = a._run_ruff(tmp_path, {})
         assert findings == []
 
     def test_run_pyright_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright")):
             findings = a._run_pyright(tmp_path, {})
         assert findings == []
 
     def test_run_pyright_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/pyright")):
             with patch.object(a.pyright, "invoke", side_effect=OSError("broken")):
                 findings = a._run_pyright(tmp_path, {})
         assert findings == []
 
     def test_run_pytest_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/python3"):
-            with patch.object(a.pytest, "invoke", side_effect=OSError("broken")):
-                findings = a._run_pytest(tmp_path, {})
+        with patch.object(a.pytest, "invoke", side_effect=OSError("broken")):
+            findings = a._run_pytest(tmp_path, {})
         assert findings == []
 
     def test_run_vulture_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
             findings = a._run_vulture(tmp_path, {})
         assert findings == []
 
     def test_run_vulture_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/vulture"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/vulture")):
             with patch.object(a.vulture, "invoke", side_effect=OSError("broken")):
                 findings = a._run_vulture(tmp_path, {})
         assert findings == []
 
     def test_run_deptry_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("deptry")):
             findings = a._run_deptry(tmp_path, {})
         assert findings == []
 
     def test_run_deptry_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(a.deptry, "invoke", side_effect=OSError("broken")):
                 findings = a._run_deptry(tmp_path, {})
         assert findings == []
 
     def test_run_mutmut_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
             stats = a._run_mutmut(tmp_path, {})[0]  # (stats, False) tuple → extract stats
         assert stats.total == 0
 
     def test_run_mutmut_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/mutmut"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/mutmut")):
             with patch.object(a.mutmut, "invoke", side_effect=OSError("broken")):
                 stats = a._run_mutmut(tmp_path, {})[0]  # (stats, False) tuple → extract stats
         assert stats.total == 0
 
     def test_run_bandit_not_found(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("bandit")):
             findings = a._run_bandit(tmp_path, {})
         assert findings == []
 
     def test_run_bandit_oserror(self, tmp_path):
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/bin/bandit")):
             with patch.object(a.bandit, "invoke", side_effect=OSError("broken")):
                 findings = a._run_bandit(tmp_path, {})
         assert findings == []
@@ -628,12 +636,12 @@ class TestDeptryAdapter:
         assert self._adapter().name == "deptry"
 
     def test_version_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("deptry")):
             with pytest.raises(RuntimeError, match="deptry not found"):
                 self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("deptry")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
@@ -667,7 +675,7 @@ class TestMutmutAdapter:
         assert self._adapter().name == "mutmut"
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
@@ -685,12 +693,12 @@ class TestPyrightAdapter:
         assert self._adapter().name == "pyright"
 
     def test_version_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright")):
             with pytest.raises(RuntimeError, match="pyright not found"):
                 self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
@@ -722,7 +730,7 @@ class TestBanditAdapter:
         assert self._adapter().name == "bandit"
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", side_effect=ToolNotAvailable("bandit")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
@@ -740,7 +748,7 @@ class TestRuffAdapter:
         assert self._adapter().name == "ruff"
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", side_effect=ToolNotAvailable("ruff")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 
@@ -758,12 +766,12 @@ class TestVultureAdapter:
         assert self._adapter().name == "vulture"
 
     def test_version_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
             with pytest.raises(RuntimeError, match="vulture not found"):
                 self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("vulture")):
             inv = self._adapter().invoke(tmp_path, [])
         assert inv.exitcode == 3
 

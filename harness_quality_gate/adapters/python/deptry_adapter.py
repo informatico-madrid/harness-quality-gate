@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
@@ -33,9 +33,10 @@ class DeptryAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("deptry")
-        if binary is None:
-            raise RuntimeError("deptry not found on PATH")
+        try:
+            binary = str(resolve_tool("deptry", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("deptry not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip() or "unknown"
 
@@ -47,9 +48,10 @@ class DeptryAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        binary = shutil.which("deptry")
-        if binary is None:
-            return ToolInvocation(stderr="deptry not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("deptry", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="deptry not found on PATH or .venv", exitcode=3)
         # deptry only emits JSON via ``--json-output <file>`` (``--output``
         # does not exist — the usage error made this gate vacuous, F9).
         # Same temp-file pattern as the pytest JUnit report (H8).

@@ -12,6 +12,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from harness_quality_gate.adapters.python.bandit_adapter import BanditAdapter
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.models import Finding
 
 
@@ -472,7 +473,10 @@ class TestVersion:
 
     def test_version_binary_not_found(self):
         """Binary not found → RuntimeError."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("bandit"),
+        ):
             with pytest.raises(RuntimeError, match="bandit not found on PATH"):
                 _adapter().version(Path("/tmp"))
 
@@ -481,7 +485,10 @@ class TestVersion:
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         bandit_bin = "/usr/local/bin/bandit"
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=bandit_bin):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path(bandit_bin),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 ver = adapter.version(Path("/tmp"))
         assert ver == "bandit 1.7.5"
@@ -492,7 +499,10 @@ class TestVersion:
         """Empty stdout → 'unknown'."""
         mock_result = MagicMock(stdout="")
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/local/bin/bandit"):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/bandit"),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result):
                 ver = adapter.version(Path("/tmp"))
         assert ver == "unknown"
@@ -505,7 +515,10 @@ class TestVersion:
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         bandit_bin = "/usr/local/bin/bandit"
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=bandit_bin):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path(bandit_bin),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp/repo"), env={"BANDIT_ENV": "1"})
         mock_run.assert_called_once()
@@ -516,7 +529,10 @@ class TestVersion:
         """env=None passed to _run when not specified."""
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/local/bin/bandit"):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/bandit"),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp"))
         assert mock_run.call_args.kwargs["env"] is None
@@ -549,8 +565,10 @@ class TestInvokeQuietFlag:
         from unittest.mock import MagicMock, patch
         adapter = _adapter()
         with (
-            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                  return_value="/usr/bin/bandit"),
+            patch(
+                "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                return_value=Path("/usr/bin/bandit"),
+            ),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
