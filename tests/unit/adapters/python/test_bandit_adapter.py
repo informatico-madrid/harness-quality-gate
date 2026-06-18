@@ -592,3 +592,63 @@ class TestParseErrorFindingExact:
         assert f.layer == "L4"
         assert f.language == "python"
         assert f.rule_id == "parse-error"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_bandit_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, bandit uses detect_source_dir('src').
+
+    Phase 2 convergence: bandit detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+        return_value=Path("/usr/bin/bandit"),
+    ):
+        with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = BanditAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # bandit command: binary, -r, -q, --format, json, TARGET
+    assert "-r" in cmd
+    assert "-q" in cmd
+    assert "--format" in cmd
+    # src/ is a scan target, tests/ should NOT be (exclude_tests=True)
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_bandit_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, bandit falls back to repo root.
+
+    Phase 2 convergence: no source dir found → repo root as target.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+        return_value=Path("/usr/bin/bandit"),
+    ):
+        with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = BanditAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no sources, tmp_path root is the target
+    assert str(tmp_path) in cmd

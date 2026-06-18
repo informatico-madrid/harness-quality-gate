@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from ...bootstrap import resolve_tool, ToolNotAvailable
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
@@ -52,8 +52,10 @@ class RuffAdapter(ToolAdapter):
         # L3A scans production source only — test code quality is covered
         # by L2 (weak_test, etc.). Excluding tests prevents noise from
         # F841, F401, F811, F541 in test files that are false positives.
-        default_targets = source_targets(repo, "src", exclude_tests=True)
-        if not default_targets:
+        source_dir = detect_source_dir(repo)
+        if source_dir:
+            default_targets = source_targets(repo, source_dir, exclude_tests=True)
+        else:
             # No src/ — fall back to package dirs, excluding tests/
             default_targets = [
                 p if isinstance(p, str) else str(p)

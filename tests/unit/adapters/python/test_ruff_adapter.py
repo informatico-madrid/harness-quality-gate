@@ -732,3 +732,92 @@ class TestParseEdgeCases:
         assert f.layer == "L3A"
         assert f.language == "python"
         assert f.fix_hint is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_ruff_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, ruff uses detect_source_dir('src').
+
+    Phase 2 convergence: ruff detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # "check" "--output-format=json" "--select=..." ... src
+    assert "check" in cmd
+    assert "--output-format=json" in cmd
+    # src/ is a scan target, tests/ should NOT be (exclude_tests=True)
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_ruff_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, ruff falls back to repo root.
+
+    Phase 2 convergence: no source dir found → "." as target.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no sources, "." is the fallback
+    assert "." in cmd
+    assert "check" in cmd
+
+
+def test_ruff_package_fallback_excludes_tests(tmp_path: Path):
+    """When falling back to package_dirs, tests/ and test* dirs are excluded.
+
+    Phase 2 convergence: source detection must apply exclude_tests consistently.
+    """
+    # Create a package that looks like a test package
+    pkg = tmp_path / "testutils"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # "testutils" has "test" in name → should be excluded by exclude_tests
+    # This confirms the adapter properly excludes test packages
+    assert cmd[-1] == "."  # fallback to "." since testutils is excluded

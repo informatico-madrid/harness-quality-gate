@@ -332,7 +332,14 @@ class TestScanTargetsExcludeMutationArtifacts:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "src"]
+        cmd = run.call_args.args[0]
+        # vulture now uses detect_source_dir + --min-confidence
+        assert cmd[0] == "/usr/bin/vulture"
+        assert "--min-confidence" in cmd
+        assert "80" in cmd
+        assert "src" in cmd
+        # src should be the source target (last arg)
+        assert cmd[-1] == "src"
 
     def test_deptry_extends_excludes_with_mutation_artifacts(self, tmp_path: Path) -> None:
         adapter = DeptryAdapter()
@@ -456,7 +463,14 @@ class TestPackageAtRootLayout:
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "mypkg"]
+        cmd = run.call_args.args[0]
+        # vulture now uses detect_source_dir + --min-confidence
+        assert cmd[0] == "/usr/bin/vulture"
+        assert "--min-confidence" in cmd
+        assert "80" in cmd
+        # Package at root — no src/ → falls back to mypkg, not tests
+        assert "mypkg" in cmd
+        assert "tests" not in cmd
 
     def test_bandit_falls_back_to_repo_root_without_packages(self, tmp_path: Path) -> None:
         adapter = BanditAdapter()

@@ -490,3 +490,112 @@ class TestInvokeNormalPath:
         with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
             adapter.invoke(repo=Path("/tmp/repo"), args=[])
         assert mock_run.call_args[1]['timeout'] == 300.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_pyright_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, pyright uses detect_source_dir('src').
+
+    Phase 2 convergence: pyright detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    # Create a repo with src/
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # Should scan src/, not tests/
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_pyright_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, pyright falls back to repo root.
+
+    Phase 2 convergence: no source dir found → repo root as target.
+    """
+    # Empty tmp_path (no src/, no packages)
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no source dirs found, repo root is the target
+    assert str(tmp_path) in cmd
+    # Should exclude tests/ from scan
+    assert "tests" not in cmd
+
+
+def test_pyright_passes_pythonpath_when_python_path_given(tmp_path: Path):
+    """When python_path is provided, --pythonpath flag is included.
+
+    Phase 2 convergence: --pythonpath from python_adapter._run_pyright
+    ensures pyright resolves imports from .venv.
+    """
+    venv_py = Path("/tmp/repo/.venv/bin/python")
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [], python_path=venv_py)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--pythonpath" in cmd
+    idx = cmd.index("--pythonpath")
+    assert cmd[idx + 1] == str(venv_py)
+
+
+def test_pyright_no_pythonpath_when_none(tmp_path: Path):
+    """When python_path=None, --pythonpath flag is NOT included.
+
+    Verifies that the python_path conditional is respected.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [], python_path=None)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--pythonpath" not in cmd

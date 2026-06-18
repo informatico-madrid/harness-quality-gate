@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from ...bootstrap import resolve_tool, ToolNotAvailable
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
@@ -64,10 +64,17 @@ class PyrightAdapter(ToolAdapter):
             cmd.extend(args)
         # Default scan targets for type-checking — exclude_tests ensures
         # pyright never scans test code. L2/L1 handle test quality separately.
-        default_targets = source_targets(repo, "src", exclude_tests=True) or [
-            str(p) if isinstance(p, Path) else p
-            for p in package_dirs(repo) if "test" not in str(p).lower()
-        ] or [str(repo)]
+        source_dir = detect_source_dir(repo)
+        if source_dir:
+            default_targets = source_targets(repo, source_dir, exclude_tests=True)
+        else:
+            # No src/ — fall back to package dirs, excluding tests/
+            default_targets = [
+                str(p) if isinstance(p, Path) else p
+                for p in package_dirs(repo) if "test" not in str(p).lower()
+            ]
+        if not default_targets:
+            default_targets = [str(repo)]
         cmd.extend(default_targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 

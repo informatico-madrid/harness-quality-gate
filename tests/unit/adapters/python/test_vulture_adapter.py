@@ -184,7 +184,7 @@ def test_invoke_command_structure_with_extra_args(tmp_path: Path) -> None:
 
 
 def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
-    """Empty args list → cmd has exactly 2 parts (binary + fallback target)."""
+    """Empty args list — cmd includes --min-confidence 80 + fallback target."""
     fake_bin = "/usr/bin/vulture"
     with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
@@ -192,8 +192,12 @@ def test_invoke_empty_args_no_extend(tmp_path: Path) -> None:
         ) as mock_run:
             _adapter().invoke(tmp_path, [])
     cmd = mock_run.call_args[0][0]
-    # Should have exactly: binary, repo (empty tmp repo → root fallback)
-    assert cmd == [fake_bin, str(tmp_path)]
+    # vulture now includes --min-confidence 80, then falls back to repo
+    assert cmd[0] == fake_bin
+    assert "--min-confidence" in cmd
+    assert "80" in cmd
+    # Last part is the fallback target (empty repo → root)
+    assert cmd[-1] == str(tmp_path)
 
 
 def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
@@ -366,3 +370,84 @@ def test_parse_trailing_whitespace_stripped_before_match() -> None:
     assert len(findings) == 1
     assert findings[0].node == "src/app.py"
     assert findings[0].rule_id == "dead-code"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Vulture --min-confidence 80 default
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_includes_min_confidence_flag(tmp_path: Path) -> None:
+    """Invoke includes --min-confidence 80 by default.
+
+    Phase 2 convergence: all tool flags must be explicit, not relying on
+    vulture's default confidence threshold.
+    """
+    fake_bin = "/usr/bin/vulture"
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
+        with patch.object(
+            ToolAdapter, "_run", return_value=_ok_invocation()
+        ) as mock_run:
+            _adapter().invoke(tmp_path, [])
+    cmd = mock_run.call_args[0][0]
+    assert "--min-confidence" in cmd
+    idx = cmd.index("--min-confidence")
+    assert cmd[idx + 1] == "80"
+
+
+def test_invoke_custom_min_confidence(tmp_path: Path) -> None:
+    """Custom min_confidence overrides the default 80.
+
+    Phase 2 convergence: the parameter is configurable so callers can
+    tune the dead-code sensitivity per-repo.
+    """
+    fake_bin = "/usr/bin/vulture"
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
+        with patch.object(
+            ToolAdapter, "_run", return_value=_ok_invocation()
+        ) as mock_run:
+            _adapter().invoke(tmp_path, [], min_confidence=50)
+    cmd = mock_run.call_args[0][0]
+    assert "--min-confidence" in cmd
+    idx = cmd.index("--min-confidence")
+    assert cmd[idx + 1] == "50"
+
+
+def test_invoke_detect_source_dir_used(tmp_path: Path) -> None:
+    """Invoke uses detect_source_dir('src') when src/ exists.
+
+    Phase 2 convergence: adapters detect source dir instead of hardcoding 'src'.
+    """
+    fake_bin = "/usr/bin/vulture"
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
+        with patch.object(
+            ToolAdapter, "_run", return_value=_ok_invocation()
+        ) as mock_run:
+            _adapter().invoke(tmp_path, [])
+    cmd = mock_run.call_args[0][0]
+    # No src/ in tmp_path → detect_source_dir returns "" → fallback
+    assert "--min-confidence" in cmd
+    assert "80" in cmd
+
+
+def test_invoke_fallback_to_package_dirs(tmp_path: Path) -> None:
+    """When source_dir is '', falls back to package_dirs then repo root.
+
+    Phase 2 convergence: no src/ → package_dirs → repo root.
+    """
+    repo = tmp_path
+    # Create a package at root (no src/)
+    pkg = repo / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    fake_bin = "/usr/bin/vulture"
+    with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path(fake_bin)):
+        with patch.object(
+            ToolAdapter, "_run", return_value=_ok_invocation()
+        ) as mock_run:
+            _adapter().invoke(repo, [])
+    cmd = mock_run.call_args[0][0]
+    # With package_dirs finding mypkg, source_dir becomes "mypkg"
+    assert "--min-confidence" in cmd
+    assert "80" in cmd
+    assert "mypkg" in cmd

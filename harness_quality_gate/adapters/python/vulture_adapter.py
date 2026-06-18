@@ -20,9 +20,9 @@ import re
 from pathlib import Path
 from typing import Mapping
 
-from ...bootstrap import resolve_tool, ToolNotAvailable
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation, source_targets
+from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
 _LINE_RE = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+): (?P<desc>.+?) \(\d+% confidence\)\s*$"
@@ -53,6 +53,7 @@ class VultureAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        min_confidence: int = 80,
     ) -> ToolInvocation:
         try:
             binary = str(resolve_tool("vulture", repo))
@@ -60,8 +61,19 @@ class VultureAdapter(ToolAdapter):
             return ToolInvocation(stderr="vulture not found on PATH or .venv", exitcode=3)
         # Scan the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
-        targets = source_targets(repo, "src") or [str(repo)]
-        cmd = [binary]
+        source_dir = detect_source_dir(repo)
+        if source_dir:
+            targets = source_targets(repo, source_dir, exclude_tests=True) or [str(repo)]
+        else:
+            # No src/ — fall back to package dirs, excluding tests/
+            targets = [
+                p if isinstance(p, str) else str(p)
+                for p in package_dirs(repo)
+                if "test" not in str(p).lower()
+            ]
+            if not targets:
+                targets = [str(repo)]
+        cmd = [binary, "--min-confidence", str(min_confidence)]
         if args:
             cmd.extend(args)
         cmd.extend(targets)

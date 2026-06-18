@@ -282,6 +282,27 @@ class TestRunL3A:
         assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_15,29)"
         assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_15,29)"
 
+
+    def test_l3a_pyright_passes_python_path(self, tmp_path: Path):
+        """_run_pyright passes python_path=sys.executable to enable venv-aware resolution.
+
+        Phase 2 convergence: pyright must resolve imports from the project's .venv
+        to prevent false-positive import errors when pyright is installed globally.
+        """
+        import sys as _sys
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.pyright = _mock_subadapter(findings=[])
+        with _all_tools_on_path({"ruff": "/bin/ruff", "pyright": "/bin/pyright"}):
+            layer = a.run_l3a(tmp_path, {})
+        assert a.pyright.invoke.called
+        _, inv_kwargs = a.pyright.invoke.call_args
+        assert "python_path" in inv_kwargs, "python_path keyword arg must be passed"
+        assert inv_kwargs["python_path"] == _sys.executable, (
+            f"python_path must equal sys.executable ({_sys.executable}), "
+            f"got {inv_kwargs['python_path']}"
+        )
+
     def test_l3a_passed_type_when_fail(self, tmp_path: Path):
         """passed must be exact bool False when findings exist.
 
