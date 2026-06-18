@@ -130,6 +130,8 @@ class TestDetectSourceDir:
         config = tmp_path / "_quality-gate" / "quality-gate.yaml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text("source_dir: my_app\n", encoding="utf-8")
+        # Create the source dir so validation passes
+        (tmp_path / "my_app").mkdir()
 
         with patch("yaml.safe_load", return_value={"source_dir": "my_app"}):
             result = detect_source_dir(tmp_path)
@@ -252,6 +254,7 @@ class TestEnsureVenv:
             [sys.executable, "-m", "venv", str(venv_dir)],
             check=True,
             capture_output=True,
+            timeout=60,
         )
 
     def test_logs_creation_message(self, tmp_path: Path, caplog) -> None:
@@ -846,3 +849,113 @@ class TestEndToEndFlow:
         for r in results:
             assert r.available is True
             assert r.version == "0.0.0"
+
+
+# ===================================================================
+# New tests for fixes (timeout, PermissionError, logging, validation)
+# ===================================================================
+
+
+class TestEnsureVenvTimeout:
+    """ensure_venv handles TimeoutExpired gracefully."""
+
+    def test_timeout_expired_logs_warning_and_returns(self, tmp_path: Path, caplog) -> None:
+        """subprocess.TimeoutExpired should log a warning and still return venv_dir."""
+        venv_dir = tmp_path / ".venv"
+
+        with (
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["python", "-m", "venv"], timeout=60)),
+            caplog.at_level("WARNING"),
+        ):
+            result = ensure_venv(tmp_path)
+
+        assert result == venv_dir
+        assert any("timed out" in record.message for record in caplog.records)
+
+
+class TestEnsureVenvPermissionError:
+    """ensure_venv raises RuntimeError on PermissionError."""
+
+    def test_permission_error_raises_clear_runtime_error(self, tmp_path: Path) -> None:
+        """PermissionError from subprocess.run should raise RuntimeError with clear message."""
+        venv_dir = tmp_path / ".venv"
+
+        with patch("subprocess.run", side_effect=PermissionError("Permission denied")):
+            with pytest.raises(RuntimeError) as exc_info:
+                ensure_venv(tmp_path)
+
+        assert "Cannot create venv" in str(exc_info.value)
+        assert "writable" in str(exc_info.value).lower()
+
+
+class TestInstallToolsLogging:
+    """install_tools logs errors on individual failures."""
+
+    def test_logger_error_called_on_tool_failure(self, tmp_path: Path, caplog) -> None:
+        """When a tool install fails (non-zero returncode), logger.error is called."""
+        venv_dir = tmp_path / ".venv"
+        venv_dir.mkdir(exist_ok=True)
+
+        with (
+            patch("shutil.which", return_value="/fake/uv"),
+            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=1, stderr=b"no such package")),
+            caplog.at_level("ERROR"),
+        ):
+            results = install_tools(tmp_path)
+
+        # Results have failures, and logger.error was called for each tool
+        assert all(msg.startswith("failed:") for msg in results.values())
+        assert any("Failed to install" in record.message for record in caplog.records)
+
+
+class TestVerifyToolsLogging:
+    """verify_tools logs a summary at info level."""
+
+    def test_logger_info_calls_summary_on_verify(self, tmp_path: Path, caplog) -> None:
+        """verify_tools should log summary: 'Verified N tools: M available, K unavailable'."""
+        fake_path = Path("/bin/fake")
+
+        with (
+            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
+            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
+            caplog.at_level("INFO"),
+        ):
+            results = verify_tools(tmp_path)
+
+        assert any("Verified" in record.message for record in caplog.records)
+        assert any("available" in record.message for record in caplog.records)
+        assert any("unavailable" in record.message for record in caplog.records)
+
+
+class TestDetectSourceDirValidation:
+    """detect_source_dir validates YAML source_dir against repo root."""
+
+    def test_invalid_source_dir_returns_empty(self, tmp_path: Path, caplog) -> None:
+        """YAML source_dir that doesn't exist as directory should return '' and log a warning.
+        This catches the new validation logic: (repo / source_dir).is_dir() check."""
+        config = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("source_dir: nonexistent_pkg\n", encoding="utf-8")
+        # Do NOT create nonexistent_pkg/ directory
+
+        with (
+            patch("yaml.safe_load", return_value={"source_dir": "nonexistent_pkg"}),
+            caplog.at_level("WARNING"),
+        ):
+            result = detect_source_dir(tmp_path)
+
+        assert result == ""
+        assert any("does not exist as directory" in record.message for record in caplog.records)
+
+    def test_valid_source_dir_returns_name(self, tmp_path: Path) -> None:
+        """YAML source_dir that exists as directory should return its name."""
+        config = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("source_dir: my_app\n", encoding="utf-8")
+        (tmp_path / "my_app").mkdir()
+
+        with patch("yaml.safe_load", return_value={"source_dir": "my_app"}):
+            result = detect_source_dir(tmp_path)
+
+        assert result == "my_app"
+

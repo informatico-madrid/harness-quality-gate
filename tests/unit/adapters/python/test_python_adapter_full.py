@@ -3741,3 +3741,39 @@ class TestRunMutmutRunFailureLog:
         ), patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
             a._run_mutmut(tmp_path, {})
         assert "mutmut run exited 2: boom" in caplog.messages
+
+# ---------------------------------------------------------------------------
+# check_tools mutation killers
+# ---------------------------------------------------------------------------
+
+class TestCheckToolsMutationKills:
+    """These tests kill specific survivor mutations that mock-based tests miss."""
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_check_tools_return_list_element_types(self, tmp_path: Path):
+        """Verify each element in results is a proper string, not a mutation variant.
+        Kills mutations like 'ruff' -> 'Ruff' or 'ruff' in the list."""
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/tool")):
+            result = a.check_tools()
+        assert len(result) == 2, f"Expected 2 elements, got {len(result)}"
+        assert all(isinstance(s, str) for s in result), f"All elements must be strings: {result}"
+        assert all(s != "" for s in result), "No empty strings allowed"
+        assert all(s != "None" for s in result), "No 'None' strings allowed"
+        assert all(s != "UNKNOWN" for s in result), "No 'UNKNOWN' strings allowed"
+
+    def test_check_tools_error_message_detail(self, tmp_path: Path):
+        """The error message should list each missing tool exactly.
+        Kills mutations in the join format or missing list population."""
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
+            try:
+                a.check_tools()
+            except RuntimeError as e:
+                msg = str(e)
+                # Should contain the exact tool names
+                assert "ruff" in msg, f"'ruff' not in error: {msg}"
+                assert "pyright" in msg, f"'pyright' not in error: {msg}"

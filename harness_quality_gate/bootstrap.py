@@ -103,7 +103,14 @@ def detect_source_dir(repo: Path) -> str:
 
             raw = yaml.safe_load(project_config.read_text(encoding="utf-8")) or {}  # pragma: no mutate
             if isinstance(raw, dict) and "source_dir" in raw:  # pragma: no mutate
-                return str(raw["source_dir"])
+                source_dir_str = str(raw["source_dir"])
+                source_candidate = repo / source_dir_str
+                if source_candidate.is_dir():
+                    return source_dir_str
+                logger.warning(
+                    "YAML source_dir %r does not exist as directory in %s",
+                    source_dir_str, source_candidate,
+                )
         except Exception:
             logger.warning("Failed to read project config %s", project_config)  # pragma: no mutate
 
@@ -160,11 +167,25 @@ def ensure_venv(repo: Path) -> Path:
         return venv_dir
 
     logger.info("Creating .venv in %s", repo)  # pragma: no mutate
-    subprocess.run(
-        [sys.executable, "-m", "venv", str(venv_dir)],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except PermissionError as exc:
+        logger.error(
+            "Permission denied creating .venv at %s: %s", venv_dir, exc
+        )
+        raise RuntimeError(
+            f"Cannot create venv at {venv_dir}: check that the repository "
+            f"directory is writable"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "venv creation timed out after 60s at %s: %s", venv_dir, exc
+        )
     return venv_dir
 
 
@@ -196,12 +217,21 @@ def install_tools(repo: Path) -> dict[str, str]:
             if result.returncode == 0:
                 results[tool_name] = "installed"
             else:
+                logger.error(
+                    "Failed to install %s: %s", tool_name, result.stderr.strip()[:200]
+                )
                 results[tool_name] = (
                     f"failed: {result.stderr.strip()[:200]}"
                 )
         except Exception as exc:
             results[tool_name] = f"failed: {exc}"
 
+    installed_count = sum(1 for v in results.values() if v == "installed")
+    failed_count = sum(1 for v in results.values() if v.startswith("failed:"))
+    logger.info(
+        "install_tools complete: %d/%d tools installed, %d failed",
+        installed_count, len(results), failed_count,
+    )
     return results
 
 
@@ -239,6 +269,12 @@ def verify_tools(repo: Path) -> list[ToolCheckResult]:
                 )
             )
 
+    available = sum(1 for c in checks if c.available)
+    unavailable = sum(1 for c in checks if not c.available)
+    logger.info(
+        "Verified %d tools: %d available, %d unavailable",
+        len(checks), available, unavailable,
+    )
     return checks
 
 
