@@ -777,3 +777,17 @@ class TestDeepMerge:
 
         assert cfg.vulture_confidence == 60
         assert cfg.ruff_exclude == ["tests/", "examples/"]
+
+
+def test_merge_list_keys_noop() -> None:
+    """Verify _merge_list_keys is a no-op (backward compat)."""
+    # The function exists to preserve the call signature when old code
+    # passes arguments that are now handled by _deep_merge.
+    from harness_quality_gate.config import _merge_list_keys
+    merged = {"key": ["a"]}
+    defaults = {"other": ["b"]}
+    project = {"project": ["c"]}
+    _merge_list_keys(merged, defaults, project)
+    # The function is a no-op, so merged should be unchanged.
+    assert merged == {"key": ["a"]}
+

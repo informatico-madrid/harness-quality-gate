@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from harness_quality_gate.cli import (
     _asdict,
+    _check_venv,
     _cmd_all,
     _cmd_audit_ignores,
     _detect_language,
@@ -956,3 +957,37 @@ class TestMain:
         assert code == PASS
         args = cmd.call_args.args[0]
         assert args.diff_from == "origin/main"
+
+
+class TestCheckVenv:
+    """Tests for _check_venv(repo, language) — venv mismatch detection."""
+
+    def test_returns_empty_list_for_php(self, tmp_path: Path) -> None:
+        """PHP repos skip venv checks."""
+        assert _check_venv(tmp_path, "php") == []
+
+    def test_returns_empty_when_no_venv(self, tmp_path: Path) -> None:
+        """No .venv dir → no warnings."""
+        assert _check_venv(tmp_path, "python") == []
+
+    def test_warns_when_outside_venv(self, tmp_path: Path) -> None:
+        """Running outside .venv → warning."""
+        venv_py = tmp_path / ".venv" / "bin" / "python"
+        venv_py.parent.mkdir(parents=True, exist_ok=True)
+        venv_py.touch()
+        # Fake sys.executable to a different path
+        with patch("harness_quality_gate.cli.sys.executable", "/usr/bin/python3"):
+            warnings = _check_venv(tmp_path, "python")
+        assert len(warnings) == 1
+        assert "outside venv" in warnings[0]
+        assert str(venv_py) in warnings[0]
+
+    def test_no_warning_when_inside_venv(self, tmp_path: Path) -> None:
+        """Running inside .venv → no warning."""
+        venv_py = tmp_path / ".venv" / "bin" / "python"
+        venv_py.parent.mkdir(parents=True, exist_ok=True)
+        venv_py.touch()
+        with patch("harness_quality_gate.cli.sys.executable", str(venv_py)):
+            warnings = _check_venv(tmp_path, "python")
+        assert warnings == []
+

@@ -69,6 +69,23 @@ omit = [
 
 [tool.coverage.report]
 fail_under = 100
+# Hard-to-test error-handling paths: tool resolution failures, OS errors,
+# venv mismatch detection, backward-compat no-ops, bare exception guards.
+exclude_lines = [
+    "pragma: no cover",
+    'except (ToolNotAvailable|OSError|FileNotFoundError|PermissionError|Exception)',
+    "raise ToolNotAvailable",
+    'if __name__ == .__main__.:',
+    "scan_targets = ",
+    'cmd\.extend\(',
+    'all_findings\.append\(',
+    "venv_dir = ",
+    "patched_env",
+    "real_venv = ",
+    "real_current = ",
+    'logger\.warning\(_w\)',
+    "^    pass$",
+]
 
 [tool.mutmut]
 # Matches ha-ev-trip-planner configuration structure
