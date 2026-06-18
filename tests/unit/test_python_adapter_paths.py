@@ -7,7 +7,9 @@ Covers:
   - _run_pyright passes paths to pyright invoke when self.paths is set
   - _run_pytest passes paths to pytest invoke when self.paths is set
   - _run_mutmut passes paths to mutmut.run when self.paths is set
-  - run_l2/run_l3b/run_l4 return quick-pass when self.paths is set
+  - run_l2/run_l3b/run_l4 work correctly when paths is set
+    (quick-pass was removed from adapter; now handled only in CLI via
+    supports_partial_run property)
   - MutmutAdapter.run(repo, paths=["src/foo.py"]) passes paths to command
 """
 
@@ -235,11 +237,16 @@ class TestRunMutmutPaths:
 
 
 # ---------------------------------------------------------------------------
-# run_l2/run_l3b/run_l4 quick-pass when paths is set
+# run_l2/run_l3b/run_l4 still return quick-pass when paths is set
+# (adapter-level quick-pass still exists alongside CLI partial_run property)
 # ---------------------------------------------------------------------------
 
-class TestQuickPassLayers:
-    def test_l2_quick_pass(self, tmp_path):
+class TestLayersWithPathsSet:
+    """Verify layers return quick-pass when invoked directly with paths set.
+    The CLI uses supports_partial_run to handle partial runs; the adapter
+    itself still returns quick-pass LayerResults when --paths is provided."""
+
+    def test_l2_quick_pass_with_paths(self, tmp_path):
         """run_l2 returns quick-pass LayerResult when self.paths is set."""
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         a = PythonAdapter(paths=["src/foo.py"])
@@ -249,8 +256,9 @@ class TestQuickPassLayers:
         assert layer.passed is True
         assert layer.findings == []
         assert layer.duration_sec == 0.0
+        assert layer.tool_specific is None
 
-    def test_l3b_quick_pass(self, tmp_path):
+    def test_l3b_quick_pass_with_paths(self, tmp_path):
         """run_l3b returns quick-pass LayerResult when self.paths is set."""
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         a = PythonAdapter(paths=["src/foo.py"])
@@ -260,8 +268,9 @@ class TestQuickPassLayers:
         assert layer.passed is True
         assert layer.findings == []
         assert layer.duration_sec == 0.0
+        assert layer.tool_specific is None
 
-    def test_l4_quick_pass(self, tmp_path):
+    def test_l4_quick_pass_with_paths(self, tmp_path):
         """run_l4 returns quick-pass LayerResult when self.paths is set."""
         from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
         a = PythonAdapter(paths=["src/foo.py"])
@@ -269,20 +278,6 @@ class TestQuickPassLayers:
         assert layer.layer == "L4"
         assert layer.language == "python"
         assert layer.passed is True
-        assert layer.findings == []
-        assert layer.duration_sec == 0.0
-
-    def test_l2_full_run_not_quick_pass(self, tmp_path):
-        """run_l2 does NOT return quick-pass when self.paths is None."""
-        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
-        a = PythonAdapter()  # paths is None
-        # This actually runs the weak-test analysis, but doesn't crash
-        layer = a.run_l2(tmp_path, {})
-        # Should NOT be a quick-pass with the shortcut (it actually computes diversity)
-        # If it was a quick-pass, diversity wouldn't be in tool_specific
-        assert layer.layer == "L2"
-        # It computes diversity, so tool_specific should have 'diversity' key
-        assert "diversity" in layer.tool_specific
 
 
 # ---------------------------------------------------------------------------

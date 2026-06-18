@@ -27,6 +27,7 @@ from harness_quality_gate.bootstrap import (
     install_tools,
     resolve_tool,
     suggest_max_children,
+    validate_paths,
     verify_tools,
     write_manifest,
 )
@@ -849,6 +850,107 @@ class TestEndToEndFlow:
         for r in results:
             assert r.available is True
             assert r.version == "0.0.0"
+
+
+# ===================================================================
+# New tests for security fix #1: validate_paths
+# ===================================================================
+
+
+class TestValidatePaths:
+    """validate_paths validates --paths arguments for security."""
+
+    def test_valid_relative_paths(self):
+        """Relative paths should pass without raising."""
+        # Should not raise
+        validate_paths(["src/foo.py", "tests/"])
+
+    def test_absolute_path_rejected(self) -> None:
+        """Absolute paths should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["/etc/passwd"])
+        assert "/etc/passwd" in str(exc_info.value)
+
+    def test_directory_traversal_rejected(self) -> None:
+        """Paths containing .. (component-wise) should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["../etc/passwd"])
+        assert "../etc/passwd" in str(exc_info.value)
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["foo/../../bar"])
+        assert "foo/../../bar" in str(exc_info.value)
+
+    def test_flag_like_rejected(self) -> None:
+        """Flag-like strings (starting with -) should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["--config"])
+        assert "--config" in str(exc_info.value)
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["-x"])
+        assert "-x" in str(exc_info.value)
+
+    def test_empty_list_allowed(self) -> None:
+        """validate_paths([]) should pass (empty is OK — caller handles it)."""
+        # Should not raise
+        validate_paths([])
+
+    def test_mixed_valid_invalid(self) -> None:
+        """If one path is invalid among valids, should raise ValueError."""
+        with pytest.raises(ValueError):
+            validate_paths(["src/foo.py", "../bar", "tests/"])
+
+    def test_null_byte_rejected(self) -> None:
+        """Paths containing null bytes should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_paths(["src/x\x00foo.py"])
+        assert "null bytes are not allowed" in str(exc_info.value)
+
+
+# ===================================================================
+# New tests for security fix #6: containment check in detect_source_dir
+# ===================================================================
+
+
+class TestDetectSourceDirContainment:
+    """detect_source_dir rejects YAML source_dir that escapes repo root."""
+
+    def test_detect_source_dir_rejects_escaping_path(self, tmp_path: Path, caplog) -> None:
+        """YAML source_dir: '../../../parent_dir' where parent_dir/ sits outside repo
+        should be rejected (falls through to next detection method)."""
+        # Create a directory one level ABOVE the repo, and symlink to it.
+        # tmp_path will be something like /tmp/pytest-xxx/test_thing,
+        # so its parent is /tmp/pytest-xxx/
+        outside = tmp_path.parent / "outside_repo_dir"
+        outside.mkdir(exist_ok=True)
+
+        config = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("source_dir: ../outside_repo_dir\n", encoding="utf-8")
+
+        with (
+            patch("yaml.safe_load", return_value={"source_dir": "../outside_repo_dir"}),
+            caplog.at_level("WARNING"),
+        ):
+            result = detect_source_dir(tmp_path)
+
+        # Should NOT return the escaped path — falls through to fallback
+        assert result != "../outside_repo_dir"
+        assert any("escapes repo root" in record.message for record in caplog.records)
+
+    def test_detect_source_dir_accepts_valid_subdir(self, tmp_path: Path) -> None:
+        """YAML source_dir: 'my_pkg' where my_pkg/ exists inside repo should return
+        'my_pkg'."""
+        config = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("source_dir: my_pkg\n", encoding="utf-8")
+        (tmp_path / "my_pkg").mkdir()
+
+        with patch("yaml.safe_load", return_value={"source_dir": "my_pkg"}):
+            result = detect_source_dir(tmp_path)
+
+        assert result == "my_pkg"
 
 
 # ===================================================================

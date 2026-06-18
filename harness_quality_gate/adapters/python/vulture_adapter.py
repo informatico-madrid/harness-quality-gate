@@ -96,8 +96,6 @@ class VultureAdapter(ToolAdapter):
 
         for line in stdout.splitlines():
             # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
-            # Tipo C equivalente: lstrip anche funziona perche' il regex matcha
-            # lo spazio finale.
             m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
             if m is None:
                 continue

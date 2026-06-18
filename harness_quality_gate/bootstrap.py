@@ -81,6 +81,39 @@ def resolve_tool(name: str, repo: Path) -> Path:
     raise ToolNotAvailable(name)
 
 
+def validate_paths(paths: list[str]) -> None:
+    """Validate ``--paths`` arguments for security.
+
+    Rejects:
+    - Absolute paths (e.g. ``/etc/passwd``)
+    - Paths containing ``..`` (directory traversal)
+    - Flag-like strings (e.g. ``--config``, ``-x``)
+
+    Args:
+        paths: List of path strings from the CLI ``--paths`` argument.
+
+    Raises:
+        ValueError: If any path is invalid.
+    """
+    for p in paths:
+        if "\x00" in p:
+            raise ValueError(
+                f"Invalid --paths argument {p!r}: null bytes are not allowed"
+            )
+        if p.startswith("/"):
+            raise ValueError(
+                f"Invalid --paths argument {p!r}: absolute paths are not allowed"
+            )
+        if ".." in p.split("/"):
+            raise ValueError(
+                f"Invalid --paths argument {p!r}: directory traversal is not allowed"
+            )
+        if p.startswith("-"):
+            raise ValueError(
+                f"Invalid --paths argument {p!r}: flag-like strings are not allowed"
+            )
+
+
 def detect_source_dir(repo: Path) -> str:
     """Detect the production source directory for a repo.
 
@@ -105,12 +138,27 @@ def detect_source_dir(repo: Path) -> str:
             if isinstance(raw, dict) and "source_dir" in raw:  # pragma: no mutate
                 source_dir_str = str(raw["source_dir"])
                 source_candidate = repo / source_dir_str
-                if source_candidate.is_dir():
-                    return source_dir_str
-                logger.warning(
-                    "YAML source_dir %r does not exist as directory in %s",
-                    source_dir_str, source_candidate,
-                )
+                # Safety: reject source_dir that escapes the repo root.
+                try:
+                    resolved = source_candidate.resolve(strict=False)
+                    repo_resolved = repo.resolve(strict=False)
+                    if not str(resolved).startswith(str(repo_resolved) + "/") and resolved != repo_resolved:  # pragma: no mutate
+                        logger.warning(
+                            "YAML source_dir %r escapes repo root %s — ignored",
+                            source_dir_str, repo,
+                        )
+                    elif source_candidate.is_dir():
+                        return source_dir_str
+                    else:
+                        logger.warning(
+                            "YAML source_dir %r does not exist as directory in %s",
+                            source_dir_str, source_candidate,
+                        )
+                except OSError:
+                    logger.warning(
+                        "YAML source_dir %r could not be resolved — ignored",
+                        source_dir_str,
+                    )
         except Exception:
             logger.warning("Failed to read project config %s", project_config)  # pragma: no mutate
 

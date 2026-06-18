@@ -165,6 +165,28 @@ def _cmd_all(args: argparse.Namespace) -> int:
 
     language = _detect_language(repo)
 
+    # --paths with no values is ambiguous: reject it (security fix #5)
+    if args.paths is not None and len(args.paths) == 0:
+        return _exit_with(
+            CONFIG_INVALID,
+            {"error": "--paths requires at least one path argument; "
+                      "use without --paths for a full run",
+             "exit_code": CONFIG_INVALID},
+            quiet=args.quiet,
+        )
+
+    # Validate --paths arguments for security
+    if args.paths is not None and len(args.paths) > 0:
+        try:
+            from .bootstrap import validate_paths
+            validate_paths(args.paths)
+        except ValueError as exc:
+            return _exit_with(
+                CONFIG_INVALID,
+                {"error": str(exc), "exit_code": CONFIG_INVALID},
+                quiet=args.quiet,
+            )
+
     # Self-diagnostic: warn if running outside venv for a Python project
     _diag_warnings = _check_venv(repo, language)
     for _w in _diag_warnings:

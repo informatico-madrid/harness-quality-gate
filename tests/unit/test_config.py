@@ -21,6 +21,7 @@ from harness_quality_gate.config import (
     load,
     load_with_defaults,
     validate,
+    _deep_merge,
 )
 
 # ---------------------------------------------------------------------------
@@ -541,3 +542,238 @@ def test_load_with_defaults_no_bundled_no_project(tmp_path: Path) -> None:
     project_path.mkdir()
     with pytest.raises(FileNotFoundError):
         load_with_defaults(project_path, skill_dir=tmp_path / "nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# _deep_merge function tests
+# ---------------------------------------------------------------------------
+
+
+def test_deep_merge_dict_simple() -> None:
+    """Non-overlapping keys from override are added."""
+    result = _deep_merge({"a": 1}, {"b": 2})
+    assert result == {"a": 1, "b": 2}
+
+
+def test_deep_merge_dict_overwrite() -> None:
+    """Scalar override replaces base value."""
+    result = _deep_merge({"a": 1}, {"a": 2})
+    assert result == {"a": 2}
+
+
+def test_deep_merge_list_replacement() -> None:
+    """List override replaces (not merges) with base."""
+    result = _deep_merge({"a": [1, 2]}, {"a": [3]})
+    assert result == {"a": [3]}
+
+
+def test_deep_merge_nested_dict_merge() -> None:
+    """Nested dicts are merged, not replaced."""
+    result = _deep_merge(
+        {"x": {"a": 1, "b": 2}},
+        {"x": {"b": 3, "c": 4}},
+    )
+    assert result == {"x": {"a": 1, "b": 3, "c": 4}}
+
+
+# ---------------------------------------------------------------------------
+# TestBoundsValidation — security fixes #2 and #7 bounds checks
+# ---------------------------------------------------------------------------
+
+
+class TestBoundsValidation:
+    """Validate bounds checks for configurable parameters."""
+
+    # ── vulture_confidence ────────────────────────────────────────────
+
+    def test_vulture_confidence_negative_raises(self) -> None:
+        """vulture_confidence: -1 → ConfigInvalid."""
+        cfg = _make_v2_config({"vulture_confidence": -1})
+        with pytest.raises(ConfigInvalid, match="vulture_confidence must be between 0 and 100"):
+            validate(cfg)
+
+    def test_vulture_confidence_101_raises(self) -> None:
+        """vulture_confidence: 101 → ConfigInvalid."""
+        cfg = _make_v2_config({"vulture_confidence": 101})
+        with pytest.raises(ConfigInvalid, match="vulture_confidence must be between 0 and 100"):
+            validate(cfg)
+
+    def test_vulture_confidence_0_ok(self) -> None:
+        """vulture_confidence: 0 is accepted (within bounds, no ConfigInvalid)."""
+        cfg = _make_v2_config({"vulture_confidence": 0})
+        config = validate(cfg)
+        # 0 is within bounds so validation passes.
+        # (it maps to the configured default 80 via `or 80` pattern — separate from bounds check)
+        assert config.vulture_confidence == 80
+
+    def test_vulture_confidence_100_ok(self) -> None:
+        """vulture_confidence: 100 is accepted at boundary."""
+        cfg = _make_v2_config({"vulture_confidence": 100})
+        config = validate(cfg)
+        assert config.vulture_confidence == 100
+
+    def test_vulture_confidence_float_non_integer_raises(self) -> None:
+        """vulture_confidence: 50.5 → ConfigInvalid."""
+        cfg = _make_v2_config({"vulture_confidence": 50.5})
+        with pytest.raises(ConfigInvalid, match="must be an integer, got float"):
+            validate(cfg)
+
+    def test_vulture_confidence_bool_true_raises(self) -> None:
+        """vulture_confidence: True (YAML `true`) → ConfigInvalid."""
+        cfg = _make_v2_config({"vulture_confidence": True})
+        with pytest.raises(ConfigInvalid, match="must be an integer, got bool"):
+            validate(cfg)
+
+    def test_vulture_confidence_default_80_ok(self) -> None:
+        """Default vulture_confidence (80) is accepted."""
+        config = validate(_make_v2_config())
+        assert config.vulture_confidence == 80
+
+    # ── mutation_threshold ────────────────────────────────────────────
+
+    def test_mutation_threshold_negative_raises(self) -> None:
+        """mutation_threshold: -1 → ConfigInvalid."""
+        cfg = _make_v2_config({"mutation_threshold": -1})
+        with pytest.raises(ConfigInvalid, match="mutation_threshold must be between 0 and 100"):
+            validate(cfg)
+
+    def test_mutation_threshold_101_raises(self) -> None:
+        """mutation_threshold: 101 → ConfigInvalid."""
+        cfg = _make_v2_config({"mutation_threshold": 101})
+        with pytest.raises(ConfigInvalid, match="mutation_threshold must be between 0 and 100"):
+            validate(cfg)
+
+    def test_mutation_threshold_0_ok(self) -> None:
+        """mutation_threshold: 0 is accepted (within bounds, no ConfigInvalid)."""
+        cfg = _make_v2_config({"mutation_threshold": 0})
+        config = validate(cfg)
+        # 0 is within bounds so validation passes.
+        # (it maps to the configured default 100.0 via `or 100.0` pattern)
+        assert config.mutation_threshold == 100.0
+
+    def test_mutation_threshold_100_ok(self) -> None:
+        """mutation_threshold: 100 is accepted at boundary."""
+        cfg = _make_v2_config({"mutation_threshold": 100})
+        config = validate(cfg)
+        assert config.mutation_threshold == 100.0
+
+    # ── coverage_threshold ────────────────────────────────────────────
+
+    def test_coverage_threshold_negative_raises(self) -> None:
+        """coverage_threshold: -1 → ConfigInvalid."""
+        cfg = _make_v2_config({"coverage_threshold": -1})
+        with pytest.raises(ConfigInvalid, match="coverage_threshold must be between 0 and 100"):
+            validate(cfg)
+
+    def test_coverage_threshold_101_raises(self) -> None:
+        """coverage_threshold: 101 → ConfigInvalid."""
+        cfg = _make_v2_config({"coverage_threshold": 101})
+        with pytest.raises(ConfigInvalid, match="coverage_threshold must be between 0 and 100"):
+            validate(cfg)
+
+    def test_coverage_threshold_0_ok(self) -> None:
+        """coverage_threshold: 0 is accepted (within bounds, no ConfigInvalid)."""
+        cfg = _make_v2_config({"coverage_threshold": 0})
+        config = validate(cfg)
+        # 0 is within bounds so validation passes.
+        # (it maps to the configured default 100.0 via `or 100.0` pattern)
+        assert config.coverage_threshold == 100.0
+
+    def test_coverage_threshold_100_ok(self) -> None:
+        """coverage_threshold: 100 is accepted at boundary."""
+        cfg = _make_v2_config({"coverage_threshold": 100})
+        config = validate(cfg)
+        assert config.coverage_threshold == 100.0
+
+    # ── mutmut_max_children ───────────────────────────────────────────
+
+    def test_mutmut_max_children_exceeds_cpu_limit_raises(self) -> None:
+        """mutmut_max_children > cpu_count * 2 → ConfigInvalid."""
+        cpu = os.cpu_count() or 1
+        bad_value = cpu * 2 + 1
+        cfg = _make_v2_config({"mutmut_max_children": bad_value})
+        with pytest.raises(ConfigInvalid, match="mutmut_max_children.*exceeds safe maximum"):
+            validate(cfg)
+
+    def test_mutmut_max_children_none_ok(self) -> None:
+        """mutmut_max_children: None (no override) is accepted."""
+        cfg = _make_v2_config({"mutmut_max_children": None})
+        config = validate(cfg)
+        assert config.mutmut_max_children is None
+
+    def test_mutmut_max_children_within_limit_ok(self) -> None:
+        """mutmut_max_children within cpu_count * 2 is accepted."""
+        cpu = os.cpu_count() or 1
+        safe_value = max(1, (cpu * 2) // 2)  # half the limit
+        cfg = _make_v2_config({"mutmut_max_children": safe_value})
+        config = validate(cfg)
+        assert config.mutmut_max_children == safe_value
+
+    def test_mutmut_max_children_at_limit_ok(self) -> None:
+        """mutmut_max_children exactly at cpu_count * 2 is accepted."""
+        cpu = os.cpu_count() or 1
+        at_limit = cpu * 2
+        cfg = _make_v2_config({"mutmut_max_children": at_limit})
+        config = validate(cfg)
+        assert config.mutmut_max_children == at_limit
+
+
+# ---------------------------------------------------------------------------
+# TestDeepMerge — integration tests for load_with_defaults merging
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge in load_with_defaults."""
+
+    def test_deep_merge_nested_dicts(self, tmp_path: Path) -> None:
+        """Project override merges into (not replaces) nested layer4 dict."""
+        bundled = tmp_path / "bundled"
+        bundled.mkdir()
+        bundled_cfg = bundled / "config" / "quality-gate.yaml"
+        bundled_cfg.parent.mkdir(parents=True, exist_ok=True)
+        bundled_cfg.write_text(yaml.dump({
+            "schema_version": 2,
+            "layer4": {
+                "tools": {"bandit": {"priority": "required"}},
+                "safety": {"fallback": True},
+            },
+        }), encoding="utf-8")
+
+        project_cfg_path = tmp_path / "project" / "_quality-gate" / "quality-gate.yaml"
+        project_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        project_cfg_path.write_text(yaml.dump({
+            "schema_version": 2,
+            "layer4": {
+                "safety": {"fallback": False},
+            },
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"CLAUDE_SKILL_DIR": str(bundled)}):
+            cfg = load_with_defaults(tmp_path / "project")
+
+        # bandit priority from defaults preserved, safety fallback from project used
+        assert cfg.layer4["tools"]["bandit"]["priority"] == "required"
+        assert cfg.layer4["safety"]["fallback"] is False
+
+    def test_deep_merge_empty_project_config(self, tmp_path: Path) -> None:
+        """Empty project config ({}) should use bundled defaults as-is."""
+        bundled = tmp_path / "bundled"
+        bundled.mkdir()
+        bundled_cfg = bundled / "config" / "quality-gate.yaml"
+        bundled_cfg.parent.mkdir(parents=True, exist_ok=True)
+        bundled_cfg.write_text(yaml.dump({
+            "schema_version": 2,
+            "vulture_confidence": 60,
+            "ruff_exclude": ["tests/", "examples/"],
+        }), encoding="utf-8")
+
+        project_cfg_path = tmp_path / "project" / "_quality-gate" / "quality-gate.yaml"
+        project_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        project_cfg_path.write_text(yaml.dump({"schema_version": 2}), encoding="utf-8")
+
+        with patch.dict(os.environ, {"CLAUDE_SKILL_DIR": str(bundled)}):
+            cfg = load_with_defaults(tmp_path / "project")
+
+        assert cfg.vulture_confidence == 60
+        assert cfg.ruff_exclude == ["tests/", "examples/"]

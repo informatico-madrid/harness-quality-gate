@@ -129,13 +129,28 @@ def _str_or_none(val: Any) -> str | None:
     return str(val)
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into *base* (in place on a copy of base).
+
+    Dict values are merged recursively; all other values (including lists)
+    from *override* replace the corresponding value in *base*.
+    """
+    merged: dict[str, Any] = {**base}
+    for key, val in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = val
+    return merged
+
+
 def _merge_list_keys(merged: dict, defaults: dict, project: dict) -> None:
-    """Merge top-level list keys: project value replaces default (not combined)."""
-    list_keys = ("ruff_exclude",)
-    for key in list_keys:
-        if key in project and isinstance(project[key], list):
-            merged[key] = project[key]
-        # else: keep the value already set from defaults
+    """Backward-compat no-op.
+
+    Now superseded by :func:`_deep_merge` which handles list keys correctly
+    (override replaces base list).
+    """
+    pass
 
 
 def validate(raw: dict) -> Config:
@@ -190,6 +205,45 @@ def validate(raw: dict) -> Config:
         max_workers_ci=int(concurrency_raw.get("max_workers_ci", 1)),
     )
 
+    # ── Bounds validation (security fixes #2, #7) ──
+    _vc_raw = raw.get("vulture_confidence")
+    if _vc_raw is not None:
+        if isinstance(_vc_raw, bool):
+            raise ConfigInvalid(
+                f"vulture_confidence must be an integer, got bool {_vc_raw!r}"
+            )
+        if isinstance(_vc_raw, float) and not _vc_raw.is_integer():
+            raise ConfigInvalid(
+                f"vulture_confidence must be an integer, got float {_vc_raw!r}"
+            )
+    vulture_confidence_val = int(_vc_raw or 80)
+    if not 0 <= vulture_confidence_val <= 100:
+        raise ConfigInvalid(
+            f"vulture_confidence must be between 0 and 100, got {vulture_confidence_val}"
+        )
+
+    mutmut_max_children_val = _int_or_none(raw.get("mutmut_max_children"))
+    if mutmut_max_children_val is not None:
+        cpu_count = os.cpu_count() or 1
+        max_safe = cpu_count * 2
+        if mutmut_max_children_val > max_safe:
+            raise ConfigInvalid(
+                f"mutmut_max_children={mutmut_max_children_val} exceeds "
+                f"safe maximum of {max_safe} (cpu_count * 2)"
+            )
+
+    mutation_threshold_val = float(raw.get("mutation_threshold") or 100.0)
+    if not 0 <= mutation_threshold_val <= 100:
+        raise ConfigInvalid(
+            f"mutation_threshold must be between 0 and 100, got {mutation_threshold_val}"
+        )
+
+    coverage_threshold_val = float(raw.get("coverage_threshold") or 100.0)
+    if not 0 <= coverage_threshold_val <= 100:
+        raise ConfigInvalid(
+            f"coverage_threshold must be between 0 and 100, got {coverage_threshold_val}"
+        )
+
     # reason: passthrough fields detection/gates/language_profiles/shared_tools/layer4
     # raw.get() key mutations are equivalent for keys absent in config (return {}
     # regardless of key string). Presence-with-value is tested by test_validate_passthrough_fields.
@@ -207,11 +261,11 @@ def validate(raw: dict) -> Config:
         layer4=raw.get("layer4") or {},  # pragma: no mutate
         # ── Convergence Phase 5 top-level keys ──
         source_dir=_str_or_none(raw.get("source_dir")),
-        vulture_confidence=int(raw.get("vulture_confidence") or 80),
+        vulture_confidence=vulture_confidence_val,
         ruff_exclude=list(raw.get("ruff_exclude") or ["tests/"]),
-        mutmut_max_children=_int_or_none(raw.get("mutmut_max_children")),
-        mutation_threshold=float(raw.get("mutation_threshold") or 100.0),
-        coverage_threshold=float(raw.get("coverage_threshold") or 100.0),
+        mutmut_max_children=mutmut_max_children_val,
+        mutation_threshold=mutation_threshold_val,
+        coverage_threshold=coverage_threshold_val,
     )
 
 
@@ -295,11 +349,9 @@ def load_with_defaults(
         except FileNotFoundError:
             pass
 
-        # Merge: project overrides on top of defaults.
+        # Merge: project overrides on top of defaults (deep merge for dict nesting).
         if defaults and project_raw:
-            merged: dict[str, Any] = {**defaults, **project_raw}
-            # Lists are replaced (not combined) at the top level.
-            _merge_list_keys(merged, defaults, project_raw)
+            merged: dict[str, Any] = _deep_merge(defaults, project_raw)
         elif project_raw:
             merged = project_raw
         elif defaults:

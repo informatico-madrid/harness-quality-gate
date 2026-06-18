@@ -6,6 +6,8 @@ Covers:
   - When --paths is not set, all 5 layers run
   - CLI dispatches PythonAdapter(paths=args.paths)
   - Quick-pass LayerResults are created for L2, L3B, L4
+  - Empty --paths is CONFIG_INVALID (security fix #5)
+  - Invalid --paths is CONFIG_INVALID (security fix #5)
 """
 
 from __future__ import annotations
@@ -21,7 +23,12 @@ from harness_quality_gate.cli import (
     _cmd_all,
     main,
 )
-from harness_quality_gate.exit_codes import PASS, UNSUPPORTED, FAIL
+from harness_quality_gate.exit_codes import (
+    CONFIG_INVALID,
+    PASS,
+    UNSUPPORTED,
+    FAIL,
+)
 from harness_quality_gate.models import LayerResult
 
 
@@ -97,7 +104,7 @@ class TestCmdAllPathsAdapter:
         args = _make_args(repo=str(tmp_path), paths=["src/foo.py", "tests/"])
         received_paths = []
 
-        def capture_adapter(paths=None):
+        def capture_adapter(paths=None, **kwargs):
             received_paths.append(paths)
             adapter = MagicMock()
             adapter.paths = paths  # match the paths arg so partial_run is correct
@@ -119,7 +126,7 @@ class TestCmdAllPathsAdapter:
         args = _make_args(repo=str(tmp_path))
         received_paths = []
 
-        def capture_adapter(paths=None):
+        def capture_adapter(paths=None, **kwargs):
             received_paths.append(paths)
             adapter = MagicMock()
             adapter.paths = paths  # match the paths arg so partial_run is correct
@@ -291,7 +298,7 @@ class TestCmdAllFullRun:
     def test_full_run_calls_all_layers(self, tmp_path):
         """When --paths is NOT set, all 5 layers are invoked."""
         adapter = MagicMock()
-        adapter.paths = None  # full run — no partial_run
+        adapter.supports_partial_run = False  # full run — no partial_run
         lr = _make_layer(passed=True)
         for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
             getattr(adapter, method).return_value = lr
@@ -315,10 +322,10 @@ class TestCmdAllFullRun:
         """Full run passes paths=None to PythonAdapter."""
         received_paths = []
 
-        def capture_adapter(paths=None):
+        def capture_adapter(paths=None, **kwargs):
             received_paths.append(paths)
             adapter = MagicMock()
-            adapter.paths = paths  # match the paths arg so partial_run is correct
+            adapter.supports_partial_run = False  # full run
             lr = _make_layer(passed=True)
             for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
                 getattr(adapter, method).return_value = lr
@@ -346,7 +353,8 @@ class TestPathsPhpRepo:
         """PHP repos ignore --paths; all 5 layers still run via PhpAdapter."""
         (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
         adapter = MagicMock()
-        adapter.paths = None  # disable partial_run — PHP always runs all 5 layers
+        adapter.supports_partial_run = False  # Python would use paths for partial
+        adapter.paths = None  # PHP ignores --paths; prevent partial_run detection
         lr_php = _make_layer(passed=True, language="php", layer="L3A")
         for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
             getattr(adapter, method).return_value = lr_php
@@ -367,3 +375,86 @@ class TestPathsPhpRepo:
         assert adapter.run_l2.called
         assert adapter.run_l3b.called
         assert adapter.run_l4.called
+
+
+# ---------------------------------------------------------------------------
+# Security fix #5: Empty --paths is CONFIG_INVALID
+# ---------------------------------------------------------------------------
+
+class TestEmptyPathsConfigInvalid:
+    """Test that empty or invalid --paths returns CONFIG_INVALID exit code."""
+
+    def test_empty_paths_returns_config_invalid(self, tmp_path):
+        """args with paths=[] should return CONFIG_INVALID exit code.
+        Catches security fix #5: empty --paths must not proceed to adapter creation."""
+        # Setup a minimal Python project so _cmd_all doesn't fail early on language detection
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        adapter_mock = MagicMock()
+        adapter_mock.supports_partial_run = False
+        lr = _make_layer(passed=True)
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter_mock, method).return_value = lr
+
+        args = _make_args(repo=str(tmp_path), paths=[])
+
+        with patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter_mock):
+            code = _cmd_all(args)
+
+        assert code == CONFIG_INVALID
+
+    def test_empty_paths_json_includes_error(self, tmp_path, capfd):
+        """Empty paths should return JSON with error message containing
+        'at least one path' - validated by inspecting _exit_with parameters."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        adapter_mock = MagicMock()
+        adapter_mock.supports_partial_run = False
+        lr = _make_layer(passed=True)
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter_mock, method).return_value = lr
+
+        args = _make_args(repo=str(tmp_path), paths=[])
+
+        exit_calls = []
+
+        def capture_exit(code, data, *, quiet):
+            exit_calls.append((code, data, quiet))
+            print(json.dumps({"error": str(data.get("error", "")), "exit_code": code}, indent=2))
+            return code
+
+        with patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter_mock):
+            with patch("harness_quality_gate.cli._exit_with", side_effect=capture_exit):
+                _cmd_all(args)
+
+        assert len(exit_calls) == 1
+        code, data, quiet = exit_calls[0]
+        assert code == CONFIG_INVALID
+        err_msg = str(data.get("error", ""))
+        assert "at least one path" in err_msg
+        assert quiet is False
+
+        # Verify JSON printed via print() includes the error message
+        out, err = capfd.readouterr()
+        assert "at least one path" in out
+
+    def test_invalid_path_returns_config_invalid(self, tmp_path):
+        """paths=['--evil'] should return CONFIG_INVALID (validate_paths rejects it)."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        adapter_mock = MagicMock()
+        adapter_mock.supports_partial_run = False
+        lr = _make_layer(passed=True)
+        for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):
+            getattr(adapter_mock, method).return_value = lr
+
+        args = _make_args(repo=str(tmp_path), paths=["--evil"])
+
+        with patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter_mock):
+            code = _cmd_all(args)
+
+        assert code == CONFIG_INVALID
+
