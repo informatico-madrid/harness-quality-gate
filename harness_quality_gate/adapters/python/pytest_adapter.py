@@ -11,10 +11,10 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Mapping
 
+import defusedxml.ElementTree as DET
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
@@ -58,8 +58,15 @@ class PytestAdapter(ToolAdapter):
         fd, junit_name = tempfile.mkstemp(prefix="hqg-junit-", suffix=".xml")
         os.close(fd)
         junit_path = Path(junit_name)
-        cmd = [python, "-m", "pytest", "--junitxml", str(junit_path),
-               "-o", "junit_suite_name=pytest"]
+        cmd = [
+            python,
+            "-m",
+            "pytest",
+            "--junitxml",
+            str(junit_path),
+            "-o",
+            "junit_suite_name=pytest",
+        ]
         if args:
             cmd.extend(args)
         # When explicit paths are provided (partial run), use them as
@@ -116,8 +123,8 @@ class PytestAdapter(ToolAdapter):
             return findings
 
         try:
-            root = ET.fromstring(stdout)
-        except ET.ParseError:
+            root = DET.fromstring(stdout)
+        except DET.ParseError:
             if exitcode != 0:
                 findings.append(self._unparseable_finding(exitcode))
             return findings
@@ -218,7 +225,7 @@ class PytestAdapter(ToolAdapter):
                         severity="error",
                         message="pytest collected no tests (exit code 5)",
                         fix_hint="Add tests under tests/ — L1 validates test "
-                                 "execution and cannot pass without tests.",
+                        "execution and cannot pass without tests.",
                         tool="pytest",
                         layer="L1",
                         language="python",
@@ -257,7 +264,7 @@ class PytestAdapter(ToolAdapter):
                 "parseable JUnit XML report"
             ),
             fix_hint="Run pytest manually in the repo to inspect the failure "
-                     "(collection error, crash or misconfiguration).",
+            "(collection error, crash or misconfiguration).",
             tool="pytest",
             layer="L1",
             language="python",

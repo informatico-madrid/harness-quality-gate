@@ -43,7 +43,9 @@ class DeadCodeAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        raise NotImplementedError("dead-code-detector version detection not implemented (POC)")
+        raise NotImplementedError(
+            "dead-code-detector version detection not implemented (POC)"
+        )
 
     def invoke(
         self,
@@ -95,7 +97,9 @@ class DeadCodeAdapter(ToolAdapter):
                             Finding(
                                 node=ref.get("file", ""),
                                 severity="warning",
-                                message=ref.get("message") or ref.get("tip") or "Dead code reference",
+                                message=ref.get("message")
+                                or ref.get("tip")
+                                or "Dead code reference",
                                 fix_hint=ref.get("tip"),
                                 tool=self._name,
                                 layer="L4",

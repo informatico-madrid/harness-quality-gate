@@ -45,14 +45,18 @@ class BanditAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("bandit", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="bandit not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="bandit not found on PATH or .venv", exitcode=3
+            )
         # Recurse the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
         # -q keeps bandit 1.9's progress bar out of stdout — it corrupts
         # the JSON report otherwise (self-eval F7).
         source_dir = detect_source_dir(repo)
         if source_dir:
-            targets = source_targets(repo, source_dir, exclude_tests=True) or [str(repo)]
+            targets = source_targets(repo, source_dir, exclude_tests=True) or [
+                str(repo)
+            ]
         else:
             # No src/ — fall back to package dirs, excluding tests/
             targets = [
@@ -88,7 +92,7 @@ class BanditAdapter(ToolAdapter):
                     severity="error",
                     message="bandit produced unparseable JSON output",
                     fix_hint="Run bandit manually in the repo to inspect "
-                             "the output (progress noise or crash).",
+                    "the output (progress noise or crash).",
                     tool="bandit",
                     layer="L4",
                     language="python",

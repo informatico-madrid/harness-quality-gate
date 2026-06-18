@@ -18,6 +18,7 @@ license = {text = "MIT"}
 dependencies = [
     "PyYAML",
     "jsonschema",
+    "defusedxml",
 ]
 
 [project.optional-dependencies]
@@ -138,6 +139,14 @@ also_copy = [
 ]
 # Type synonyms for libcst compatibility
 dict_synonyms = ["Dict", "Optional"]
+
+# Bandit skips: this IS a quality-gate that runs subprocesses.
+# B404  = import subprocess (intentional — gate runs external scanners)
+# B603  = subprocess call without shell (intentional — safe list of args)
+# B607  = partial executable path (intentional — resolved via PATH/vendor/bin)
+[tool.bandit]
+exclude_dirs = ["tests/fixtures", ".venv", "mutants", ".mutmut"]
+skips = ["B404", "B603", "B607"]
 
 [tool.setuptools.packages.find]
 include = ["harness_quality_gate*"]

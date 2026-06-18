@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Mapping
 
+import defusedxml.ElementTree as DET
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
@@ -142,8 +142,8 @@ class PhpUnitAdapter(ToolAdapter):
         """Parse a JUnit XML file and return findings for each test result."""
         findings: list[Finding] = []
         try:
-            tree = ET.parse(str(path))
-        except (ET.ParseError, OSError):
+            tree = DET.parse(str(path))
+        except (DET.ParseError, OSError):
             return [
                 Finding(
                     node=str(path),
@@ -155,6 +155,7 @@ class PhpUnitAdapter(ToolAdapter):
             ]
 
         root = tree.getroot()
+        assert root is not None, "DET.parse succeeded but getroot returned None"
 
         # Collect test-suite level attributes (total, errors, failures, etc.)
         total = int(root.get("tests", "0"))

@@ -87,91 +87,124 @@ class WeakTestVisitor(ast.NodeVisitor):
         # mocks or calls are testing something — only flag pure assertions)
         # Tests with 0 asserts that have setup/teardown are infrastructure
         # helpers and should not be penalised (F11).
-        if t["assertions"] == 0 and not t["mocks"] and not t["has_setup"] and not t["has_teardown"]:
-            violations.append({
-                "rule": "A1",
-                "description": "zero assertions and no mocks/fixtures -- empty test body",
-                "severity": "ERROR",
-            })
-        elif t["assertions"] == 1 and not t["mocks"] and not t["has_setup"] and not t["has_teardown"]:
+        if (
+            t["assertions"] == 0
+            and not t["mocks"]
+            and not t["has_setup"]
+            and not t["has_teardown"]
+        ):
+            violations.append(
+                {
+                    "rule": "A1",
+                    "description": "zero assertions and no mocks/fixtures -- empty test body",
+                    "severity": "ERROR",
+                }
+            )
+        elif (
+            t["assertions"] == 1
+            and not t["mocks"]
+            and not t["has_setup"]
+            and not t["has_teardown"]
+        ):
             # Single assertion without any supporting structure is suspicious (F12).
-            violations.append({
-                "rule": "A1",
-                "description": "only 1 assertion with no supporting structure -- suspicious",
-                "severity": "WARNING",
-            })
+            violations.append(
+                {
+                    "rule": "A1",
+                    "description": "only 1 assertion with no supporting structure -- suspicious",
+                    "severity": "WARNING",
+                }
+            )
 
         # A2: <3 assertions = WARNING
         if t["assertions"] < 3:
-            violations.append({
-                "rule": "A2",
-                "description": f"only {t['assertions']} assertion(s) -- insufficient coverage",
-                "severity": "WARNING",
-            })
+            violations.append(
+                {
+                    "rule": "A2",
+                    "description": f"only {t['assertions']} assertion(s) -- insufficient coverage",
+                    "severity": "WARNING",
+                }
+            )
 
         # A3: no parametrization + single case = WARNING (relaxed: only flag
         # tests with >= 2 assertions — single-assert tests aren't worth
         # parametrising)
         if t["parametrize_count"] == 0 and t["assertions"] >= 2:
-            violations.append({
-                "rule": "A3",
-                "description": "no parametrization detected -- hardcoded single-input test",
-                "severity": "WARNING",
-            })
+            violations.append(
+                {
+                    "rule": "A3",
+                    "description": "no parametrization detected -- hardcoded single-input test",
+                    "severity": "WARNING",
+                }
+            )
 
         # A4: mock ratio > 80% = ERROR
         total_activity = t["assertions"] + t["mocks"] + t["calls"]
         if total_activity > 0:
             mock_ratio = t["mocks"] / total_activity
             if mock_ratio > 0.8:
-                violations.append({
-                    "rule": "A4",
-                    "description": f"mock ratio {mock_ratio:.0%} > 80% -- not testing real code",
-                    "severity": "ERROR",
-                })
+                violations.append(
+                    {
+                        "rule": "A4",
+                        "description": f"mock ratio {mock_ratio:.0%} > 80% -- not testing real code",
+                        "severity": "ERROR",
+                    }
+                )
 
         # A5: no setup/teardown/fixtures = WARNING (relaxed: allow tests
         # with >= 2 assertions since they may use direct construction)
-        if not (t["has_setup"] or t["has_teardown"] or t["has_fixture_ref"]) and t["assertions"] < 2:
-            violations.append({
-                "rule": "A5",
-                "description": "no setup/teardown/fixtures -- stateless test",
-                "severity": "WARNING",
-            })
+        if (
+            not (t["has_setup"] or t["has_teardown"] or t["has_fixture_ref"])
+            and t["assertions"] < 2
+        ):
+            violations.append(
+                {
+                    "rule": "A5",
+                    "description": "no setup/teardown/fixtures -- stateless test",
+                    "severity": "WARNING",
+                }
+            )
 
         # A6: time.sleep = ERROR
         if t["has_sleep"]:
-            violations.append({
-                "rule": "A6",
-                "description": "time.sleep detected -- flaky test by design",
-                "severity": "ERROR",
-            })
+            violations.append(
+                {
+                    "rule": "A6",
+                    "description": "time.sleep detected -- flaky test by design",
+                    "severity": "ERROR",
+                }
+            )
 
         # A7: empty raises = ERROR
         if t["has_empty_raises"]:
-            violations.append({
-                "rule": "A7",
-                "description": "empty pytest.raises() -- no actual validation",
-                "severity": "ERROR",
-            })
+            violations.append(
+                {
+                    "rule": "A7",
+                    "description": "empty pytest.raises() -- no actual validation",
+                    "severity": "ERROR",
+                }
+            )
 
         # A8: always-true assertion = ERROR
         if t["has_always_true"]:
-            violations.append({
-                "rule": "A8",
-                "description": "always-true assertion -- trivial assertion",
-                "severity": "ERROR",
-            })
+            violations.append(
+                {
+                    "rule": "A8",
+                    "description": "always-true assertion -- trivial assertion",
+                    "severity": "ERROR",
+                }
+            )
 
         # A9: mock where fixture is needed
         mock_count = t.get("mocks") or 0
         has_fixture = t.get("has_fixture_ref") or False
         if mock_count >= 3 and not has_fixture:
-            violations.append({
-                "rule": "A9",
-                "description": f"{mock_count} mocks without fixtures -- replace with pytest fixtures/factories",
-                "severity": "WARNING",
-            })
+            violations.append(
+                {
+                    "rule": "A9",
+                    "description": f"{mock_count} mocks without fixtures -- replace with pytest fixtures/factories",
+                    "severity": "WARNING",
+                }
+            )
 
         return violations
 
@@ -199,13 +232,18 @@ class WeakTestVisitor(ast.NodeVisitor):
         if self.current_test is not None:
             self.current_test["assertions"] += 1
 
-            if isinstance(node.test, (ast.NameConstant, ast.Constant)) and node.test.value is True:
+            if (
+                isinstance(node.test, (ast.NameConstant, ast.Constant))
+                and node.test.value is True
+            ):
                 self.current_test["has_always_true"] = True
 
             if isinstance(node.test, ast.Compare):
-                if (isinstance(node.test.left, ast.Constant) and
-                    isinstance(node.test.comparators[0], ast.Constant) and
-                    node.test.left.value == node.test.comparators[0].value):
+                if (
+                    isinstance(node.test.left, ast.Constant)
+                    and isinstance(node.test.comparators[0], ast.Constant)
+                    and node.test.left.value == node.test.comparators[0].value
+                ):
                     self.current_test["has_always_true"] = True
 
         self.generic_visit(node)
@@ -232,8 +270,10 @@ class WeakTestVisitor(ast.NodeVisitor):
                 if isinstance(item.context_expr, ast.Call):
                     func = item.context_expr.func
                     name = (
-                        func.attr if isinstance(func, ast.Attribute)
-                        else func.id if isinstance(func, ast.Name)
+                        func.attr
+                        if isinstance(func, ast.Attribute)
+                        else func.id
+                        if isinstance(func, ast.Name)
                         else ""
                     )
                     if name in ("raises", "warns"):
@@ -301,12 +341,14 @@ def run_weak_test_analysis(tests_dir: str, src_dir: str) -> dict[str, Any]:
             continue
 
         estimated_tests += sum(
-            1 for node in ast.walk(tree)
+            1
+            for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
         )
 
     error_count = sum(
-        1 for w in all_weak_tests
+        1
+        for w in all_weak_tests
         if any(v["severity"] == "ERROR" for v in w["violations"])
     )
     warning_count = len(all_weak_tests) - error_count
@@ -318,7 +360,13 @@ def run_weak_test_analysis(tests_dir: str, src_dir: str) -> dict[str, Any]:
             "weak_test_count": len(all_weak_tests),
             "error_count": error_count,
             "warning_count": warning_count,
-            "pass_rate": round(max(0.0, (estimated_tests - len(all_weak_tests)) / max(1, estimated_tests)), 3),
+            "pass_rate": round(
+                max(
+                    0.0,
+                    (estimated_tests - len(all_weak_tests)) / max(1, estimated_tests),
+                ),
+                3,
+            ),
         },
     }
 

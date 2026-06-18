@@ -33,6 +33,7 @@ INFECTION_LOG = re.compile(r"infection-log\.json$")
 @dataclass
 class ModuleMutStats:
     """Mutation stats for a single module."""
+
     module: str
     total: int = 0
     killed: int = 0
@@ -51,6 +52,7 @@ class ModuleMutStats:
 @dataclass
 class SurvivedMutant:
     """A single survived or timeout mutant with actionable detail."""
+
     mutant_id: str
     module: str
     file_path: str
@@ -102,19 +104,21 @@ def parse_survivors(repo: Path) -> list[SurvivedMutant]:
         # full_key = "harness_quality_gate.adapters.base.x_source_targets__mutmut_8"
         # We know module = "harness_quality_gate.adapters.base"
         # mutant_id is the part after module + "."
-        suffix = full_key[len(module):].lstrip(".")
+        suffix = full_key[len(module) :].lstrip(".")
         # suffix could be like "base.x_source_targets__mutmut_8"
         # The last component after the last dot is the mutant function name
         func_name = suffix.rsplit(".", 1)[-1]  # e.g. "x_source_targets__mutmut_8"
 
         module_path = module.replace(".", "/") + ".py"
 
-        survivors.append(SurvivedMutant(
-            mutant_id=func_name,
-            module=module,
-            file_path=module_path,
-            status=status,
-        ))
+        survivors.append(
+            SurvivedMutant(
+                mutant_id=func_name,
+                module=module,
+                file_path=module_path,
+                status=status,
+            )
+        )
 
     survivors.sort(key=lambda s: (s.file_path, s.mutant_id))
     return survivors
@@ -166,7 +170,9 @@ def parse_mutmut(
             continue
 
         stats[module] = _update_mutmut_stats(
-            stats.get(module), status, module_name=module,
+            stats.get(module),
+            status,
+            module_name=module,
         )
 
     return stats
@@ -218,21 +224,18 @@ def parse_infection(repo: Path) -> dict[str, ModuleMutStats]:
             module = Path(file_path).stem
             module_counts = counts.setdefault(
                 module,
-                {"total": 0, "killed": 0, "survived": 0,
-                 "timeout": 0, "skipped": 0},
+                {"total": 0, "killed": 0, "survived": 0, "timeout": 0, "skipped": 0},
             )
             module_counts["total"] += 1
             module_counts[field_name] += 1
 
-    return {
-        module: ModuleMutStats(module=module, **c)
-        for module, c in counts.items()
-    }
+    return {module: ModuleMutStats(module=module, **c) for module, c in counts.items()}
 
 
 @dataclass
 class MutationStats:
     """Unified mutation stats for a project."""
+
     tool: str
     modules: dict[str, ModuleMutStats] = field(default_factory=dict)
 
@@ -304,33 +307,49 @@ def _update_mutmut_stats(
     """Add one mutant to stats, returning the updated stats."""
     if existing is None:
         existing = ModuleMutStats(
-            module=module_name, total=0, killed=0,
-            survived=0, timeout=0, skipped=0,
+            module=module_name,
+            total=0,
+            killed=0,
+            survived=0,
+            timeout=0,
+            skipped=0,
         )
 
     if status == "killed":
         existing = ModuleMutStats(
-            module=existing.module, total=existing.total + 1,
-            killed=existing.killed + 1, survived=existing.survived,
-            timeout=existing.timeout, skipped=existing.skipped,
+            module=existing.module,
+            total=existing.total + 1,
+            killed=existing.killed + 1,
+            survived=existing.survived,
+            timeout=existing.timeout,
+            skipped=existing.skipped,
         )
     elif status == "survived":
         existing = ModuleMutStats(
-            module=existing.module, total=existing.total + 1,
-            killed=existing.killed, survived=existing.survived + 1,
-            timeout=existing.timeout, skipped=existing.skipped,
+            module=existing.module,
+            total=existing.total + 1,
+            killed=existing.killed,
+            survived=existing.survived + 1,
+            timeout=existing.timeout,
+            skipped=existing.skipped,
         )
     elif status == "timeout":
         existing = ModuleMutStats(
-            module=existing.module, total=existing.total + 1,
-            killed=existing.killed, survived=existing.survived,
-            timeout=existing.timeout + 1, skipped=existing.skipped,
+            module=existing.module,
+            total=existing.total + 1,
+            killed=existing.killed,
+            survived=existing.survived,
+            timeout=existing.timeout + 1,
+            skipped=existing.skipped,
         )
     elif status == "skipped":
         existing = ModuleMutStats(
-            module=existing.module, total=existing.total + 1,
-            killed=existing.killed, survived=existing.survived,
-            timeout=existing.timeout, skipped=existing.skipped + 1,
+            module=existing.module,
+            total=existing.total + 1,
+            killed=existing.killed,
+            survived=existing.survived,
+            timeout=existing.timeout,
+            skipped=existing.skipped + 1,
         )
     return existing
 
@@ -363,7 +382,7 @@ def main(argv: list[str]) -> int:
     if "--tool" in args:
         idx = args.index("--tool")
         tool = args[idx + 1]
-        del args[idx:idx + 2]
+        del args[idx : idx + 2]
     if len(args) != 1:
         print(
             "Usage: mutation_analyzer <repo> [--gate] [--tool mutmut|infection]",
@@ -381,9 +400,7 @@ def main(argv: list[str]) -> int:
         "overall_kill_rate": round(stats.kill_rate, 3),
     }
     if gate:
-        ok = all(
-            m.survived == 0 and m.timeout == 0 for m in stats.modules.values()
-        )
+        ok = all(m.survived == 0 and m.timeout == 0 for m in stats.modules.values())
         payload["gate"] = "OK" if ok else "NOK"
         print(json.dumps(payload, indent=2))
         return 0 if ok else 1

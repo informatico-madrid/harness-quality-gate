@@ -18,7 +18,12 @@ from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
 
-_SEVERITY_MAP = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "info"}
+_SEVERITY_MAP = {
+    "CRITICAL": "error",
+    "HIGH": "error",
+    "MEDIUM": "warning",
+    "LOW": "info",
+}
 
 
 class CheckovAdapter(ToolAdapter):
@@ -48,14 +53,28 @@ class CheckovAdapter(ToolAdapter):
     ) -> ToolInvocation:
         python = sys.executable
         cmd = [
-            python, "-m", "checkov",
-            "-d", str(repo),
-            "--framework", "dockerfile", "yaml", "json",
-            "--output", "json",
+            python,
+            "-m",
+            "checkov",
+            "-d",
+            str(repo),
+            "--framework",
+            "dockerfile",
+            "yaml",
+            "json",
+            "--output",
+            "json",
             "--compact",
             "--quiet",
         ]
-        skip_dirs = [".git", "__pycache__", "node_modules", ".venv", ".mypy_cache", "_bmad-output"]
+        skip_dirs = [
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".venv",
+            ".mypy_cache",
+            "_bmad-output",
+        ]
         cmd.extend(["--skip-path", ",".join(skip_dirs)])
         if args:
             cmd.extend(args)

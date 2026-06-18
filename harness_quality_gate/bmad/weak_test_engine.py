@@ -31,6 +31,7 @@ class DetectionResult:
         description: Human-readable description of the violation
         severity: "ERROR" or "WARNING"
     """
+
     rule: str
     description: str
     severity: str = "WARNING"

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)  # pragma: no mutate
 # PhpCsFixerAdapter
 # ---------------------------------------------------------------------------
 
+
 class PhpCsFixerAdapter(ToolAdapter):
     """Wraps PHP CS Fixer for L3A code-quality checks (@PER-CS2.0).
 
@@ -50,9 +51,7 @@ class PhpCsFixerAdapter(ToolAdapter):
         """Return version string like ``'3.65.0'``."""
         cmd = self._cs_fixer_binary(repo)
         if cmd is None:
-            raise RuntimeError(
-                "php-cs-fixer not found on PATH or in vendor/bin"
-            )
+            raise RuntimeError("php-cs-fixer not found on PATH or in vendor/bin")
         result = subprocess.run(
             [*cmd, "--version"],
             cwd=str(repo),
@@ -89,9 +88,7 @@ class PhpCsFixerAdapter(ToolAdapter):
     ) -> ToolInvocation:
         cmd = self._cs_fixer_binary(repo)
         if cmd is None:
-            raise RuntimeError(
-                "php-cs-fixer not found on PATH or in vendor/bin"
-            )
+            raise RuntimeError("php-cs-fixer not found on PATH or in vendor/bin")
         return self._run(
             [*cmd, *args],
             cwd=repo,

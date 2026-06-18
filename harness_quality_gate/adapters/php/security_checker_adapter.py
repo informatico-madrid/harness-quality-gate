@@ -72,9 +72,7 @@ class SecurityCheckerAdapter(ToolAdapter):
         if checker is None:
             checker = shutil.which("php-security-checker")
         if checker is None:
-            raise RuntimeError(
-                "local-php-security-checker not found on PATH"
-            )
+            raise RuntimeError("local-php-security-checker not found on PATH")
         cmd = [checker, "--format=json"]
         if args:
             cmd.extend(args)
@@ -88,9 +86,7 @@ class SecurityCheckerAdapter(ToolAdapter):
                 text=True,
                 timeout=timeout,
             )
-            duration = (
-                datetime.now(timezone.utc) - start
-            ).total_seconds()
+            duration = (datetime.now(timezone.utc) - start).total_seconds()
             return ToolInvocation(
                 stdout=result.stdout,
                 stderr=result.stderr,
@@ -98,9 +94,7 @@ class SecurityCheckerAdapter(ToolAdapter):
                 duration_seconds=round(duration, 3),
             )
         except subprocess.TimeoutExpired as exc:
-            duration = (
-                datetime.now(timezone.utc) - start
-            ).total_seconds()
+            duration = (datetime.now(timezone.utc) - start).total_seconds()
             return ToolInvocation(
                 stdout=(
                     exc.stdout
@@ -201,6 +195,4 @@ class SecurityCheckerAdapter(ToolAdapter):
             # reason: Tipo C — el valor de relleno es gemelo falsy: cualquier string
             # fuera del _severity_map produce el mismo fallback "warning". # audited: 2026-06-11
             severity = ""  # pragma: no mutate
-        return SecurityCheckerAdapter._severity_map.get(
-            severity.lower(), "warning"
-        )
+        return SecurityCheckerAdapter._severity_map.get(severity.lower(), "warning")

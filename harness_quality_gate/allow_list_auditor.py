@@ -127,16 +127,18 @@ _LANGUAGE_SELECTORS: dict[str, _LangSelector] = {
 #: Directories whose contents are third-party or generated copies (composer
 #: vendor, npm, virtualenvs, mutmut workspace/cache). Their suppression
 #: annotations are not ours to justify, so the audit must not scan them.
-_EXCLUDED_DIRS = frozenset({
-    "vendor",
-    "node_modules",
-    ".venv",
-    "venv",
-    "mutants",
-    ".mutmut",
-    ".git",
-    "__pycache__",
-})
+_EXCLUDED_DIRS = frozenset(
+    {
+        "vendor",
+        "node_modules",
+        ".venv",
+        "venv",
+        "mutants",
+        ".mutmut",
+        ".git",
+        "__pycache__",
+    }
+)
 
 
 @dataclass
@@ -195,7 +197,9 @@ class AllowListAuditor:
             # reason: encoding="utf-8"/errors="replace" string mutations are equivalent
             # for ASCII test files — error handler not invoked; "UTF-8" case-insensitive.
             # audited: 2026-06-04
-            lines = src_file.read_text(encoding="utf-8", errors="replace").splitlines()  # pragma: no mutate
+            lines = src_file.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()  # pragma: no mutate
             for i, line in enumerate(lines):
                 if selector.marker_re.search(line):
                     # Check preceding lines for required metadata.
@@ -221,8 +225,7 @@ class AllowListAuditor:
                                 # assert exact line numbers in justified messages.
                                 # audited: 2026-06-04
                                 message=(
-                                    f"Justified {selector.marker_label} "
-                                    f"at line {i + 1}"
+                                    f"Justified {selector.marker_label} at line {i + 1}"
                                 ),
                             )
                         )
@@ -255,8 +258,7 @@ class AllowListAuditor:
             parts.append(f"{len(result.ignored)} justified ignore(s)")
         if result.unjustified:
             parts.append(
-                f"{len(result.unjustified)} unjustified ignore(s) "
-                f"(see details below)"
+                f"{len(result.unjustified)} unjustified ignore(s) (see details below)"
             )
         if not parts:
             summary = f"No {selector.marker_label} annotations found"

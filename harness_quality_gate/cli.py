@@ -27,17 +27,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .adapters.base import BaseAdapter
 from .adapters.php.php_adapter import PhpAdapter
-from .adapters.python.python_adapter import (
-    PythonAdapter as _PYTHON_ADAPTER_CLASS,
-)
 from .adapters.python.python_adapter import PythonAdapter
 from .allow_list_auditor import AllowListAuditor, AuditReport
 from .checkpoint import build as build_checkpoint
 from .checkpoint import write as write_checkpoint
 from .config import ConfigInvalid
 from .config import load_with_defaults
-from .exit_codes import CONFIG_INVALID, FAIL, INFRA_INCOMPLETE, INTERNAL_ERROR, PASS, UNSUPPORTED
+from .exit_codes import (
+    CONFIG_INVALID,
+    FAIL,
+    INFRA_INCOMPLETE,
+    INTERNAL_ERROR,
+    PASS,
+    UNSUPPORTED,
+)
 from .messages_es import t
 from .models import LayerResult
 
@@ -47,6 +52,7 @@ logger = logging.getLogger("harness_quality_gate.cli")
 # ---------------------------------------------------------------------------
 # venv self-diagnostic (FR-26/27 — Python)
 # ---------------------------------------------------------------------------
+
 
 def _check_venv(repo: Path, language: str) -> list[str]:
     """Return warnings if the current interpreter is not inside a project venv.
@@ -82,6 +88,7 @@ def _check_venv(repo: Path, language: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Language detection (5 lines — no 419-LOC detector module needed)
 # ---------------------------------------------------------------------------
+
 
 def _detect_language(repo: Path) -> str:
     """Return 'php' if composer.json is present, else 'python'."""
@@ -122,9 +129,11 @@ def _missing_php_tools(repo: Path) -> list[str]:
 # Output helpers
 # ---------------------------------------------------------------------------
 
+
 def _asdict(obj: Any) -> Any:
     """Convert a frozen dataclass or plain object to a JSON-serialisable value."""
     import dataclasses
+
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)  # type: ignore[arg-type]
     if isinstance(obj, dict):
@@ -153,6 +162,7 @@ def _exit_with(code: int, data: Any, *, quiet: bool) -> int:
 # _cmd_all
 # ---------------------------------------------------------------------------
 
+
 def _cmd_all(args: argparse.Namespace) -> int:
     """Run the full quality gate against *args.repo*."""
     repo = Path(args.repo).resolve()
@@ -169,9 +179,11 @@ def _cmd_all(args: argparse.Namespace) -> int:
     if args.paths is not None and len(args.paths) == 0:
         return _exit_with(
             CONFIG_INVALID,
-            {"error": "--paths requires at least one path argument; "
-                      "use without --paths for a full run",
-             "exit_code": CONFIG_INVALID},
+            {
+                "error": "--paths requires at least one path argument; "
+                "use without --paths for a full run",
+                "exit_code": CONFIG_INVALID,
+            },
             quiet=args.quiet,
         )
 
@@ -179,6 +191,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
     if args.paths is not None and len(args.paths) > 0:
         try:
             from .bootstrap import validate_paths
+
             validate_paths(args.paths)
         except ValueError as exc:
             return _exit_with(
@@ -196,7 +209,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
     # a hard error; a missing config file simply means defaults.
     # Use load_with_defaults() for bundled defaults + project overrides.
     try:
-        cfg = load_with_defaults(repo)
+        load_with_defaults(repo)
     except ConfigInvalid as exc:
         return _exit_with(
             CONFIG_INVALID,
@@ -227,13 +240,16 @@ def _cmd_all(args: argparse.Namespace) -> int:
 
     try:
         if language == "php":
-            adapter = PhpAdapter()
+            adapter: BaseAdapter = PhpAdapter()
         else:
             adapter = PythonAdapter(paths=args.paths)
     except Exception as exc:  # noqa: BLE001
         return _exit_with(
             INTERNAL_ERROR,
-            {"error": f"failed to load adapter for {language!r}: {exc}", "exit_code": INTERNAL_ERROR},
+            {
+                "error": f"failed to load adapter for {language!r}: {exc}",
+                "exit_code": INTERNAL_ERROR,
+            },
             quiet=args.quiet,
         )
 
@@ -243,25 +259,30 @@ def _cmd_all(args: argparse.Namespace) -> int:
     # When --paths is provided for Python repos, run only Tier 1 (L3A + L1)
     # for fast agent feedback. L2, L3B, L4 are skipped.
     # --paths is Python-only; PHP repos ignore it and always run all 5 layers.
-    partial_run = (
-        args.paths is not None
-        and getattr(adapter, "paths", None) is not None
-    )
+    partial_run = args.paths is not None and getattr(adapter, "paths", None) is not None
     layer_names = ("L3A", "L1", "L2", "L3B", "L4")
 
     try:
         for idx, run_layer in enumerate(
-            (adapter.run_l3a, adapter.run_l1, adapter.run_l2, adapter.run_l3b, adapter.run_l4)
+            (
+                adapter.run_l3a,
+                adapter.run_l1,
+                adapter.run_l2,
+                adapter.run_l3b,
+                adapter.run_l4,
+            )
         ):
             if partial_run and idx >= 2:
                 # Quick-pass: record layer as passed for partial runs.
-                layer_results.append(LayerResult(
-                    layer=layer_names[idx],
-                    language=language,
-                    passed=True,
-                    findings=[],
-                    duration_sec=0.0,
-                ))
+                layer_results.append(
+                    LayerResult(
+                        layer=layer_names[idx],
+                        language=language,
+                        passed=True,
+                        findings=[],
+                        duration_sec=0.0,
+                    )
+                )
             else:
                 layer_results.append(run_layer(repo, env))
     except Exception as exc:  # noqa: BLE001
@@ -287,6 +308,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
             ld["tool_specific"] = _asdict(lr.tool_specific)
         layer_dicts.append(ld)
     import platform
+
     runtime: dict[str, Any] = {
         "python_version": platform.python_version(),
         "venv_path": os.path.realpath(sys.executable),
@@ -317,17 +339,25 @@ def _cmd_all(args: argparse.Namespace) -> int:
         write_checkpoint(output_path, checkpoint_dict)
     except Exception:  # noqa: BLE001
         # reason: log message text mutation is observability-only; tests don't check log text. # audited: 2026-06-04
-        logger.warning("Failed to write timestamped checkpoint", exc_info=True)  # pragma: no mutate
+        logger.warning(
+            "Failed to write timestamped checkpoint", exc_info=True
+        )  # pragma: no mutate
     # reason: latest filename alias "quality-gate-latest.json" is a well-known external-tool convention. # audited: 2026-06-04
-    latest_path = repo / "_quality-gate" / "quality-gate-latest.json"  # pragma: no mutate
+    latest_path = (
+        repo / "_quality-gate" / "quality-gate-latest.json"
+    )  # pragma: no mutate
     try:
         # reason: mkdir parents=True/exist_ok=True are filesystem resilience flags; mutating only affects error handling on pre-existing dirs. # audited: 2026-06-04
         latest_path.parent.mkdir(parents=True, exist_ok=True)  # pragma: no mutate
         # reason: write_text encoding="utf-8" is equivalent for ASCII JSON; json.dumps indent/default-str mutations don't change parsed output. # audited: 2026-06-04
-        latest_path.write_text(json.dumps(checkpoint_dict, indent=2, default=str), encoding="utf-8")  # pragma: no mutate
+        latest_path.write_text(
+            json.dumps(checkpoint_dict, indent=2, default=str), encoding="utf-8"
+        )  # pragma: no mutate
     except Exception:  # noqa: BLE001
         # reason: log message text mutation is observability-only. # audited: 2026-06-04
-        logger.warning("Failed to write latest checkpoint", exc_info=True)  # pragma: no mutate
+        logger.warning(
+            "Failed to write latest checkpoint", exc_info=True
+        )  # pragma: no mutate
 
     return _exit_with(code, checkpoint_dict, quiet=args.quiet)
 
@@ -335,6 +365,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # _cmd_audit_ignores
 # ---------------------------------------------------------------------------
+
 
 def _cmd_audit_ignores(args: argparse.Namespace) -> int:
     """Scan *args.repo* for unjustified suppression annotations.
@@ -370,6 +401,7 @@ def _cmd_audit_ignores(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
+
 
 def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("repo", nargs="?", default=".", help="Path to repository root")

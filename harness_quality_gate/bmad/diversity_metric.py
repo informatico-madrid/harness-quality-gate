@@ -23,7 +23,11 @@ def get_test_body_text(test_node: ast.FunctionDef, source: str) -> str:
     """Extract the body of a test function as normalized text."""
     lines = source.split("\n")
     start = test_node.lineno - 1
-    end = test_node.end_lineno if hasattr(test_node, "end_lineno") and test_node.end_lineno else start + 20
+    end = (
+        test_node.end_lineno
+        if hasattr(test_node, "end_lineno") and test_node.end_lineno
+        else start + 20
+    )
     return " ".join(lines[start:end])
 
 
@@ -85,12 +89,14 @@ def _extract_tests_python(filepath: Path) -> list[dict[str, Any]]:
         if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
             body_text = get_test_body_text(node, content)
             normalized = " ".join(body_text.split())
-            tests.append({
-                "name": node.name,
-                "lineno": node.lineno,
-                "body_text": normalized,
-                "body_length": len(normalized),
-            })
+            tests.append(
+                {
+                    "name": node.name,
+                    "lineno": node.lineno,
+                    "body_text": normalized,
+                    "body_length": len(normalized),
+                }
+            )
     return tests
 
 
@@ -108,7 +114,10 @@ def _extract_tests_php(filepath: Path) -> list[dict[str, Any]]:
     tests = []
     lines = content.split("\n")
     import re
-    pattern = re.compile(r"^\s*public\s+(?:function|async\s+function)\s+(test\w*)\s*\(", re.IGNORECASE)
+
+    pattern = re.compile(
+        r"^\s*public\s+(?:function|async\s+function)\s+(test\w*)\s*\(", re.IGNORECASE
+    )
     for i, line in enumerate(lines):
         m = pattern.match(line)
         if m:
@@ -117,12 +126,14 @@ def _extract_tests_php(filepath: Path) -> list[dict[str, Any]]:
             end = min(i + 30, len(lines))
             body_text = " ".join(lines[start:end])
             normalized = " ".join(body_text.split())
-            tests.append({
-                "name": test_name,
-                "lineno": i + 1,
-                "body_text": normalized,
-                "body_length": len(normalized),
-            })
+            tests.append(
+                {
+                    "name": test_name,
+                    "lineno": i + 1,
+                    "body_text": normalized,
+                    "body_length": len(normalized),
+                }
+            )
     return tests
 
 
@@ -139,7 +150,7 @@ def _compute_diversity(all_tests: list[dict[str, Any]]) -> dict[str, Any]:
 
     for file_tests in tests_by_file.values():
         for i, t1 in enumerate(file_tests):
-            for t2 in file_tests[i + 1:]:
+            for t2 in file_tests[i + 1 :]:
                 if t1["body_length"] < 20 or t2["body_length"] < 20:
                     continue
 
@@ -154,27 +165,33 @@ def _compute_diversity(all_tests: list[dict[str, Any]]) -> dict[str, Any]:
                 max_distance = max(max_distance, dist)
 
                 if similarity > 0.8:
-                    similar_pairs.append({
-                        "file": t1["file"],
-                        "test1": t1["name"],
-                        "test2": t2["name"],
-                        "edit_distance": dist,
-                        "similarity": round(similarity, 3),
-                    })
+                    similar_pairs.append(
+                        {
+                            "file": t1["file"],
+                            "test1": t1["name"],
+                            "test2": t2["name"],
+                            "edit_distance": dist,
+                            "similarity": round(similarity, 3),
+                        }
+                    )
 
     if min_distance == float("inf"):
         min_distance = 0
         max_distance = 0
         diversity_score = 1.0
     else:
-        diversity_score = round(max(0.0, 1.0 - len(similar_pairs) / max(len(all_tests), 1)), 3)
+        diversity_score = round(
+            max(0.0, 1.0 - len(similar_pairs) / max(len(all_tests), 1)), 3
+        )
 
     return {
         "total_tests": len(all_tests),
         "diversity_score": diversity_score,
         "min_edit_distance": min_distance,
         "max_edit_distance": max_distance,
-        "similar_pairs": sorted(similar_pairs, key=lambda x: x["similarity"], reverse=True)[:10],
+        "similar_pairs": sorted(
+            similar_pairs, key=lambda x: x["similarity"], reverse=True
+        )[:10],
         "summary": {
             "high_diversity": diversity_score >= 0.7,
             "low_diversity": diversity_score < 0.3,

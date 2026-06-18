@@ -29,14 +29,14 @@ logger = logging.getLogger(__name__)  # pragma: no mutate
 
 # Weak-test visitor names (matches weak_test_a{1..8}.php in visitors/)
 _WEAK_TEST_VISITORS = [
-    "weak_test_a1",   # A1 — zero-assertion
-    "weak_test_a2",   # A2-PHP — mocks-only (TD-13)
-    "weak_test_a3",   # A3 — SUT-mocked
-    "weak_test_a4",   # A4 — overly-broad expectException
-    "weak_test_a5",   # A5 — markTestSkipped/Incomplete
-    "weak_test_a6",   # A6 — @codeCoverageIgnore spam
-    "weak_test_a7",   # A7 — only constructor + instanceof
-    "weak_test_a8",   # A8 — assertion on tautology
+    "weak_test_a1",  # A1 — zero-assertion
+    "weak_test_a2",  # A2-PHP — mocks-only (TD-13)
+    "weak_test_a3",  # A3 — SUT-mocked
+    "weak_test_a4",  # A4 — overly-broad expectException
+    "weak_test_a5",  # A5 — markTestSkipped/Incomplete
+    "weak_test_a6",  # A6 — @codeCoverageIgnore spam
+    "weak_test_a7",  # A7 — only constructor + instanceof
+    "weak_test_a8",  # A8 — assertion on tautology
 ]
 
 # Map visitor names to rule_id for Finding layer tagging
@@ -140,8 +140,12 @@ class PhpWeakTestAdapter(ToolAdapter):
                         f"visitor={visitor_name} file={php_file} exit={result.returncode}: "
                         f"{result.stderr.strip()}"
                     )
-                    logger.debug("Weak-test visitor %s failed on %s: %s",
-                                 visitor_name, php_file, result.stderr.strip())
+                    logger.debug(
+                        "Weak-test visitor %s failed on %s: %s",
+                        visitor_name,
+                        php_file,
+                        result.stderr.strip(),
+                    )
                     continue
 
                 parsed = self._parse_single_output(result.stdout)
@@ -155,7 +159,9 @@ class PhpWeakTestAdapter(ToolAdapter):
         duration = time.monotonic() - t0
         # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
         # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
-        merged_stdout = json.dumps(all_findings, ensure_ascii=False)  # pragma: no mutate
+        merged_stdout = json.dumps(
+            all_findings, ensure_ascii=False
+        )  # pragma: no mutate
         merged_stderr = "\n".join(stderr_parts) if stderr_parts else ""
 
         return ToolInvocation(
@@ -262,7 +268,7 @@ class PhpWeakTestAdapter(ToolAdapter):
         # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
         if start >= 0 and end > start:  # pragma: no mutate
             try:
-                return json.loads(text[start:end + 1])
+                return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 pass
 
@@ -273,6 +279,7 @@ class PhpWeakTestAdapter(ToolAdapter):
 # ---------------------------------------------------------------------------
 # PhpWeakTestAdapter for layer orchestration (used by PhpAdapter.run_l3b)
 # ---------------------------------------------------------------------------
+
 
 class PhpWeakTestLayerAdapter:
     """Thin wrapper providing run_l2 for use by PhpAdapter.
@@ -299,9 +306,7 @@ class PhpWeakTestLayerAdapter:
             A :class:`LayerResult` with ``layer="L2"`` and merged findings.
         """
         t0 = time.monotonic()
-        invocation = self._adapter.invoke(
-            repo, [], env=env, timeout=300.0
-        )
+        invocation = self._adapter.invoke(repo, [], env=env, timeout=300.0)
         findings = self._adapter.parse(
             invocation.stdout, invocation.stderr, invocation.exitcode
         )

@@ -47,10 +47,14 @@ class GitleaksAdapter(ToolAdapter):
         report_path = repo / "_bmad-output" / "quality-gate" / "gitleaks-report.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
-            binary, "detect",
-            "--source", str(repo),
-            "--report-format", "json",
-            "--report-path", str(report_path),
+            binary,
+            "detect",
+            "--source",
+            str(repo),
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report_path),
             "--no-banner",
         ]
         if args:
@@ -68,7 +72,12 @@ class GitleaksAdapter(ToolAdapter):
             pass
         # Return the report file content as stdout
         if findings_raw:
-            return ToolInvocation(stdout=findings_raw, stderr=result.stderr, exitcode=result.exitcode, duration_seconds=result.duration_seconds)
+            return ToolInvocation(
+                stdout=findings_raw,
+                stderr=result.stderr,
+                exitcode=result.exitcode,
+                duration_seconds=result.duration_seconds,
+            )
         return result
 
     def parse(

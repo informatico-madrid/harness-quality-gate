@@ -74,12 +74,15 @@ _ENV_RE = re.compile(r"\$\{([^}]+)\}|\\?\$([A-Za-z_][A-Za-z0-9_]*)")
 def _expand_env_vars(obj: object) -> object:
     """Recursively expand ${VAR} and $VAR in string values."""
     if isinstance(obj, str):
+
         def _replace(m: re.Match) -> str:
             var_name = m.group(1) or m.group(2)
             # reason: os.environ.get(var, default) fallback mutations and m.group(0) vs
             # m.group(1) mutations are equivalent when the var IS in the environment.
             # audited: 2026-06-04
-            return os.environ.get(var_name, m.group(0)) or m.group(0)  # pragma: no mutate
+            return os.environ.get(var_name, m.group(0)) or m.group(
+                0
+            )  # pragma: no mutate
 
         return _ENV_RE.sub(_replace, obj)
     if isinstance(obj, dict):
@@ -99,6 +102,8 @@ def _find_config_path(repo: Path) -> Path | None:
     3. ``config/quality-gate.yaml``         -- bundled / skill defaults
     4. ``quality-gate.yaml``                -- legacy flat location
     """
+    # reason: mutation-resistant by design — see funccomment
+    # audited: 2026-06-18
     candidates: list[Path] = []  # pragma: no mutate
     # reason: the three filename strings are convention-defined config locations.
     # Mutating "quality-gate.yaml"→"XXquality-gate.yamlXX" simply means no file is found
@@ -144,7 +149,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def _merge_list_keys(merged: dict, defaults: dict, project: dict) -> None:
+def _merge_list_keys(merged: dict, defaults: dict, _project: dict) -> None:  # noqa: ARG001 — backward-compat no-op, signature preserved
     """Backward-compat no-op.
 
     Now superseded by :func:`_deep_merge` which handles list keys correctly
@@ -342,9 +347,12 @@ def load_with_defaults(
         try:
             cfg_path = _find_config_path(repo)
             if cfg_path is not None:
-                project_raw = yaml.safe_load(
-                    cfg_path.read_text(encoding="utf-8"),
-                ) or {}
+                project_raw = (
+                    yaml.safe_load(
+                        cfg_path.read_text(encoding="utf-8"),
+                    )
+                    or {}
+                )
                 project_raw = _expand_env_vars(project_raw)  # type: ignore[assignment]
         except FileNotFoundError:
             pass

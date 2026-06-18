@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)  # pragma: no mutate
 # PhpStanAdapter
 # ---------------------------------------------------------------------------
 
+
 class PhpStanAdapter(ToolAdapter):
     """Wraps PHPStan for L3A static analysis (Tier A).
 
@@ -146,7 +147,9 @@ class PhpStanAdapter(ToolAdapter):
                         Finding(
                             node=filepath,
                             severity="error",
-                            message=f"{err.get('message', '')} ({err.get('tip', '')})".rstrip(" ()"),
+                            message=f"{err.get('message', '')} ({err.get('tip', '')})".rstrip(
+                                " ()"
+                            ),
                             fix_hint=err.get("tip"),
                             tool=self._name,
                             layer="L3A",

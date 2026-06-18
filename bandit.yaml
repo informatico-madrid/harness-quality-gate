@@ -1,0 +1,26 @@
+# Bandit configuration for harness-quality-gate
+# This IS a quality-gate tool that runs subprocesses to invoke external scanners.
+# B404  = import subprocess (intentional — gate invokes external tools)
+# B603  = subprocess call without shell (intentional — safe parameterized calls)
+# B607  = partial executable path (intentional — tools resolved via PATH/bin-dir)
+# B101  = assert used in static analysis (PHP analyzer code expects it)
+# B105  = 'False' detected as hardcoded password, intentional flag usage
+# B108  = temp files used for test analysis (cleaned up immediately)
+# B110  = try/except/pass in bootstrap for graceful tool fallback
+skips:
+  - B404
+  - B603
+  - B607
+  - B101
+  - B105
+  - B108
+  - B110
+
+targets:
+  - harness_quality_gate
+
+exclude_dirs:
+  - tests/fixtures
+  - .venv
+  - mutants
+  - .mutmut

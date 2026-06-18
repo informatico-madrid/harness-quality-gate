@@ -53,7 +53,9 @@ class PyrightAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("pyright", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="pyright not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="pyright not found on PATH or .venv", exitcode=3
+            )
         cmd = [binary, "--outputjson"]
         # Venv-aware python path: when pyright is installed globally but the
         # project has a .venv, --pythonpath ensures pyright resolves packages
@@ -77,7 +79,8 @@ class PyrightAdapter(ToolAdapter):
                 # No src/ — fall back to package dirs, excluding tests/
                 default_targets = [
                     str(p) if isinstance(p, Path) else p
-                    for p in package_dirs(repo) if "test" not in str(p).lower()
+                    for p in package_dirs(repo)
+                    if "test" not in str(p).lower()
                 ]
             scan_targets = default_targets if default_targets else [str(repo)]
         cmd.extend(scan_targets)
@@ -88,8 +91,9 @@ class PyrightAdapter(ToolAdapter):
         """Map pyright severity string to internal severity string."""
         return _SEV_MAP.get(severity, "warning")
 
-    def _build_detail(self, filename: str, message: str, rule: str,
-                      line: int, char: int) -> str:
+    def _build_detail(
+        self, filename: str, message: str, rule: str, line: int, char: int
+    ) -> str:
         """Build the diagnostic detail string."""
         detail = message
         if line:

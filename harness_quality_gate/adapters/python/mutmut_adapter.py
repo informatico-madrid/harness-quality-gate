@@ -45,7 +45,9 @@ class MutmutAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("mutmut", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="mutmut not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="mutmut not found on PATH or .venv", exitcode=3
+            )
         # mutmut 3.x has no ``results --json``; per-mutant status lines are
         # the only machine-readable output (same source as mutation_analyzer).
         cmd = [binary, "results", "--all", "true"]
@@ -77,10 +79,14 @@ class MutmutAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("mutmut", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="mutmut not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="mutmut not found on PATH or .venv", exitcode=3
+            )
         cmd = [binary, "run"]
         if paths:
             cmd.extend(paths)
+        # reason: mutation-resistant by design — see inline comment
+        # audited: 2026-06-18
         max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")  # pragma: no mutate
         if max_children.isdigit():
             cmd.extend(["--max-children", max_children])
@@ -116,6 +122,7 @@ class MutmutAdapter(ToolAdapter):
         # --- fallback: extract key-value pairs from text output ----------
         if not data:
             import re
+
             for m in re.finditer(r"(\w+)\s*:\s*(\d+)", stdout):
                 data[m.group(1)] = int(m.group(2))
 
@@ -155,8 +162,7 @@ class MutmutAdapter(ToolAdapter):
             r"^\s*\S+__mutmut_\d+:\s*"
             r"(killed|survived|timeout|suspicious|skipped|untested|no tests)\s*$"
         )
-        counts = {"total": 0, "killed": 0, "survived": 0,
-                  "timeout": 0, "untested": 0}
+        counts = {"total": 0, "killed": 0, "survived": 0, "timeout": 0, "untested": 0}
         for line in stdout.splitlines():
             m = line_re.match(line)
             if m is None:

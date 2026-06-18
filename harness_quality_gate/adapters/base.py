@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # ToolInvocation dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ToolInvocation:
     """Captures the result of a single tool invocation."""
@@ -67,7 +68,9 @@ def package_dirs(repo: Path) -> list[str]:
     )
 
 
-def source_targets(repo: Path, *candidates: str, exclude_tests: bool = False) -> list[str]:
+def source_targets(
+    repo: Path, *candidates: str, exclude_tests: bool = False
+) -> list[str]:
     """Return the repo-relative scan targets among *candidates* that exist.
 
     The skill contract prefers ``src/`` and ``tests/`` in the target repo;
@@ -91,6 +94,7 @@ def source_targets(repo: Path, *candidates: str, exclude_tests: bool = False) ->
 # ---------------------------------------------------------------------------
 # BaseAdapter — layer orchestrator
 # ---------------------------------------------------------------------------
+
 
 class BaseAdapter(ABC):
     """Base class all language adapters must inherit from.
@@ -154,6 +158,7 @@ class BaseAdapter(ABC):
 # ---------------------------------------------------------------------------
 # ToolAdapter — individual tool wrapper
 # ---------------------------------------------------------------------------
+
 
 class ToolAdapter(ABC):
     """Base class for adapters that wrap a single static-analysis / test tool.
@@ -248,8 +253,16 @@ class ToolAdapter(ABC):
         except subprocess.TimeoutExpired as exc:
             duration = (datetime.now(timezone.utc) - start).total_seconds()
             return ToolInvocation(
-                stdout=(exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode()) if exc.stdout else "",
-                stderr=(exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode()) if exc.stderr else "TIMEOUT",
+                stdout=(
+                    exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode()
+                )
+                if exc.stdout
+                else "",
+                stderr=(
+                    exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode()
+                )
+                if exc.stderr
+                else "TIMEOUT",
                 exitcode=-1,
                 duration_seconds=round(duration, 3),
             )

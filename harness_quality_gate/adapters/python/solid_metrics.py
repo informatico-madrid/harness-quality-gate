@@ -30,6 +30,7 @@ from typing import Any
 # Optional: radon for cyclomatic complexity metrics
 try:
     from radon.complexity import cc_visit  # noqa: F401 # pyright: ignore[reportMissingImports]
+
     HAS_RADON = True
 except ImportError:
     HAS_RADON = False
@@ -238,9 +239,7 @@ def analyze_solid(src_dir: Path) -> dict[str, Any]:
         file_violations: list[str] = []
 
         if cls["public_methods"] > 7:
-            file_violations.append(
-                f"public_methods={cls['public_methods']} > 7 (SRP)"
-            )
+            file_violations.append(f"public_methods={cls['public_methods']} > 7 (SRP)")
 
         # S violations: method-level complexity via AST (basic threshold)
         max_arity = cls.get("max_arity") or 0
@@ -248,12 +247,14 @@ def analyze_solid(src_dir: Path) -> dict[str, Any]:
             file_violations.append(f"max_arity={max_arity} > 5 (high CC proxy)")
 
         if file_violations:
-            violations["S"].append({
-                "file": str(src_dir),
-                "class": cls["name"],
-                "lineno": cls["lineno"],
-                "issues": file_violations,
-            })
+            violations["S"].append(
+                {
+                    "file": str(src_dir),
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issues": file_violations,
+                }
+            )
 
     abc_count = sum(1 for c in collector.classes if c["is_abc"])
     protocol_count = sum(1 for c in collector.classes if c["is_protocol"])
@@ -263,9 +264,11 @@ def analyze_solid(src_dir: Path) -> dict[str, Any]:
     abstractness = (abc_count + protocol_count) / max(1, total_classes)
 
     if abstractness < 0.1 and total_classes > 0:
-        violations["O"].append({
-            "issue": f"abstractness={abstractness:.1%} < 10% (need ABC/Protocol for OCP)"
-        })
+        violations["O"].append(
+            {
+                "issue": f"abstractness={abstractness:.1%} < 10% (need ABC/Protocol for OCP)"
+            }
+        )
 
     # LSP: Check for abstract method override violations
     for cls in collector.classes:
@@ -280,24 +283,21 @@ def analyze_solid(src_dir: Path) -> dict[str, Any]:
         type_hint_coverage = hinted / total
 
     if type_hint_coverage < 0.9 and len(collector.classes) > 0:
-        violations["L"].append({
-            "issue": f"type_hint_coverage={type_hint_coverage:.1%} < 90%"
-        })
+        violations["L"].append(
+            {"issue": f"type_hint_coverage={type_hint_coverage:.1%} < 90%"}
+        )
 
     cycles = graph_builder.find_cycles()
     if cycles:
-        violations["D"].append({
-            "type": "CYCLE",
-            "modules": [str(c) for c in cycles[:3]]
-        })
+        violations["D"].append(
+            {"type": "CYCLE", "modules": [str(c) for c in cycles[:3]]}
+        )
 
     max_depth = graph_builder.max_import_depth()
     if max_depth > 3:
-        violations["D"].append({
-            "type": "DEPTH",
-            "max_depth": max_depth,
-            "threshold": 3
-        })
+        violations["D"].append(
+            {"type": "DEPTH", "max_depth": max_depth, "threshold": 3}
+        )
 
     return {
         "S": {

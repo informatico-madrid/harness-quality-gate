@@ -39,6 +39,7 @@ def build(
     dict
         CheckpointV2-shaped dict ready for schema validation + serialization.
     """
+
     def _to_dict(obj: Any) -> Any:
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
             # Strip None-valued fields so the JSON schema's string-typed
@@ -90,7 +91,9 @@ def validate(data: dict[str, Any]) -> None:
     jsonschema.ValidationError
         If the data does not conform to the schema.
     """
-    schema_path = Path(__file__).resolve().parent.parent / "references" / "verdict-schema.json"
+    schema_path = (
+        Path(__file__).resolve().parent.parent / "references" / "verdict-schema.json"
+    )
     with schema_path.open("r", encoding="utf-8") as fh:
         schema = json.load(fh)
     jsonschema.validate(instance=data, schema=schema)
@@ -129,7 +132,9 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
 
     # Atomic write: write to temp file in same directory, then rename
     # only the temp filename, not the final written content or file location.
-    fd, tmp_path = tempfile.mkstemp(dir=str(output_path.parent), prefix=".quality-gate-", suffix=".tmp")
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(output_path.parent), prefix=".quality-gate-", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)

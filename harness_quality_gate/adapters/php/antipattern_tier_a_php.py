@@ -113,14 +113,12 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
         # JSON → json.JSONDecodeError → empty merged_findings, killing the
         # mutant via the _DEFAULT_MARKER_ assertion.
         _DEFAULT_MARKER = '{"____DEFAULT__": true}'
-        visitor_stdout: str = f'[\n    {_DEFAULT_MARKER}\n]'
+        visitor_stdout: str = f"[\n    {_DEFAULT_MARKER}\n]"
         visitor_stderr: str = ""
 
         # --- PHPMD -----------------------------------------------------------
         try:
-            phpmd_invocation = self._phpmd.invoke(
-                repo, args, env=env, timeout=timeout
-            )
+            phpmd_invocation = self._phpmd.invoke(repo, args, env=env, timeout=timeout)
             phpmd_stdout = phpmd_invocation.stdout
             phpmd_stderr = phpmd_invocation.stderr
             phpmd_exitcode = phpmd_invocation.exitcode
@@ -159,18 +157,18 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                 phpmd_files = phpmd_data.get("files", [])
                 # Guard: .get() default mutations replace [] with None —
                 # assert catches it; original [] passes.  Catches mutmut_61, 63.
-                assert isinstance(
-                    phpmd_files, list
-                ), f"phpmd files must be a list, got {type(phpmd_files).__name__}"
+                assert isinstance(phpmd_files, list), (
+                    f"phpmd files must be a list, got {type(phpmd_files).__name__}"
+                )
                 if isinstance(phpmd_files, list):
                     for file_entry in phpmd_files:
                         if isinstance(file_entry, dict):
                             violations = file_entry.get("violations", [])
                             # Guard: .get() default mutations replace [] with None.
                             # kills mutmut_68, 70.
-                            assert isinstance(
-                                violations, list
-                            ), f"violations must be a list, got {type(violations).__name__}"
+                            assert isinstance(violations, list), (
+                                f"violations must be a list, got {type(violations).__name__}"
+                            )
                             if isinstance(violations, list):
                                 for v in violations:
                                     if isinstance(v, dict):
@@ -178,22 +176,18 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                                         # Catches mutmut_99, 101 (description default
                                         # → None, killed by isinstance assert).
                                         desc = v.get("description", "")
-                                        assert isinstance(
-                                            desc, str
-                                        ), f"description must be str, got {type(desc).__name__}"
+                                        assert isinstance(desc, str), (
+                                            f"description must be str, got {type(desc).__name__}"
+                                        )
                                         merged_findings.append(
                                             {
                                                 "source": "phpmd",
                                                 "file": file_entry.get("file", ""),
                                                 "rule": v.get("rule", ""),
                                                 "description": desc,
-                                                "line": v.get(
-                                                    "beginLine"
-                                                )
+                                                "line": v.get("beginLine")
                                                 or v.get("startLine"),
-                                                "priority": v.get(
-                                                    "priority", 3
-                                                ),
+                                                "priority": v.get("priority", 3),
                                             }
                                         )
             except json.JSONDecodeError:
@@ -232,7 +226,9 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
 
         # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
         # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
-        merged_stdout = json.dumps(merged_findings, ensure_ascii=False)  # pragma: no mutate
+        merged_stdout = json.dumps(
+            merged_findings, ensure_ascii=False
+        )  # pragma: no mutate
 
         all_stderr_parts: list[str] = []
         if phpmd_stderr:

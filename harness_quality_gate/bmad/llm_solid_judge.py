@@ -40,8 +40,8 @@ def extract_classes_from_dir(src_dir: Path) -> list[dict[str, Any]]:
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                class_lines = content.split('\n')[node.lineno - 1:node.end_lineno]
-                class_source = '\n'.join(class_lines)
+                class_lines = content.split("\n")[node.lineno - 1 : node.end_lineno]
+                class_source = "\n".join(class_lines)
 
                 bases = []
                 for b in node.bases:
@@ -53,25 +53,31 @@ def extract_classes_from_dir(src_dir: Path) -> list[dict[str, Any]]:
                 methods = []
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        is_public = not item.name.startswith('_')
+                        is_public = not item.name.startswith("_")
                         arity = len(item.args.args)
                         has_return = item.returns is not None
-                        methods.append({
-                            "name": item.name,
-                            "is_public": is_public,
-                            "arity": arity,
-                            "has_return_type": has_return,
-                        })
+                        methods.append(
+                            {
+                                "name": item.name,
+                                "is_public": is_public,
+                                "arity": arity,
+                                "has_return_type": has_return,
+                            }
+                        )
 
-                classes.append({
-                    "name": node.name,
-                    "file": str(py_file),
-                    "bases": bases,
-                    "lineno": node.lineno,
-                    "methods": methods,
-                    "public_method_count": sum(1 for m in methods if m["is_public"]),
-                    "source": class_source[:2000],
-                })
+                classes.append(
+                    {
+                        "name": node.name,
+                        "file": str(py_file),
+                        "bases": bases,
+                        "lineno": node.lineno,
+                        "methods": methods,
+                        "public_method_count": sum(
+                            1 for m in methods if m["is_public"]
+                        ),
+                        "source": class_source[:2000],
+                    }
+                )
 
     return classes
 
@@ -91,14 +97,26 @@ def generate_solid_review_context(classes: list[dict[str, Any]]) -> str:
         lines.append("-" * 50)
         lines.append("Class #" + str(i + 1) + ": " + cls["name"])
         lines.append("File: " + cls["file"] + ":" + str(cls["lineno"]))
-        lines.append("Base classes: " + (", ".join(cls["bases"]) if cls["bases"] else "None"))
+        lines.append(
+            "Base classes: " + (", ".join(cls["bases"]) if cls["bases"] else "None")
+        )
         lines.append("Public methods: " + str(cls["public_method_count"]))
         lines.append("")
 
         for m in cls["methods"]:
             visibility = "PUBLIC" if m["is_public"] else "private"
             ret = "+return" if m["has_return_type"] else "NO-return"
-            lines.append("  [" + visibility + "] " + m["name"] + "(arity=" + str(m["arity"]) + ", " + ret + ")")
+            lines.append(
+                "  ["
+                + visibility
+                + "] "
+                + m["name"]
+                + "(arity="
+                + str(m["arity"])
+                + ", "
+                + ret
+                + ")"
+            )
 
         lines.append("")
         lines.append("Source preview:")
@@ -106,26 +124,34 @@ def generate_solid_review_context(classes: list[dict[str, Any]]) -> str:
         lines.append("")
 
     if len(classes) > 30:
-        lines.append("... and " + str(len(classes) - 30) + " more classes omitted for brevity")
+        lines.append(
+            "... and " + str(len(classes) - 30) + " more classes omitted for brevity"
+        )
 
     lines.append("")
     lines.append("=" * 70)
     lines.append("SOLID EVALUATION CRITERIA")
     lines.append("=" * 70)
     lines.append("")
-    lines.append("S - Single Responsibility: Does each class have ONE reason to change?")
+    lines.append(
+        "S - Single Responsibility: Does each class have ONE reason to change?"
+    )
     lines.append("    Red flags: >7 public methods, handles multiple concerns")
     lines.append("")
     lines.append("O - Open/Closed: Can behavior be extended without modifying source?")
     lines.append("    Red flags: no ABC/Protocol, no inheritance hierarchy")
     lines.append("")
-    lines.append("L - Liskov Substitution: Can subclasses replace parents transparently?")
+    lines.append(
+        "L - Liskov Substitution: Can subclasses replace parents transparently?"
+    )
     lines.append("    Red flags: narrowed return types, strengthened preconditions")
     lines.append("")
     lines.append("I - Interface Segregation: Are interfaces small and focused?")
     lines.append("    Red flags: fat interfaces, unused methods")
     lines.append("")
-    lines.append("D - Dependency Inversion: Do high-level modules depend on abstractions?")
+    lines.append(
+        "D - Dependency Inversion: Do high-level modules depend on abstractions?"
+    )
     lines.append("    Red flags: concrete imports, no dependency injection")
     lines.append("")
     lines.append("=" * 70)
@@ -161,12 +187,16 @@ def main(src_dir: str) -> None:
         "review_needed": True,
         "review_context": context,
         "classes_with_many_methods": [
-            {"name": c["name"], "file": c["file"], "public_methods": c["public_method_count"]}
-            for c in classes if c["public_method_count"] > 7
+            {
+                "name": c["name"],
+                "file": c["file"],
+                "public_methods": c["public_method_count"],
+            }
+            for c in classes
+            if c["public_method_count"] > 7
         ],
         "classes_without_bases": [
-            {"name": c["name"], "file": c["file"]}
-            for c in classes if not c["bases"]
+            {"name": c["name"], "file": c["file"]} for c in classes if not c["bases"]
         ],
     }
     print(json.dumps(result, indent=2))
@@ -182,6 +212,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Importable wrapper (for spec task verify commands)
 # ---------------------------------------------------------------------------
+
 
 def judge_solid(language: str, **kw: dict[str, Any]) -> dict[str, Any]:
     """Generate SOLID review context for *language*.

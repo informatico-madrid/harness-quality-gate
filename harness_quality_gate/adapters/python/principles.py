@@ -38,22 +38,26 @@ class PrinciplesVisitor(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name_used = alias.asname if alias.asname else alias.name.split(".")[0]
-            self.imports.append({
-                "module": alias.name,
-                "alias": name_used,
-                "lineno": node.lineno,
-            })
+            self.imports.append(
+                {
+                    "module": alias.name,
+                    "alias": name_used,
+                    "lineno": node.lineno,
+                }
+            )
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
-            for alias in (node.names or []):
+            for alias in node.names or []:
                 name_used = alias.asname if alias.asname else alias.name.split(".")[0]
-                self.imports.append({
-                    "module": node.module + "." + alias.name,
-                    "alias": name_used,
-                    "lineno": node.lineno,
-                })
+                self.imports.append(
+                    {
+                        "module": node.module + "." + alias.name,
+                        "alias": name_used,
+                        "lineno": node.lineno,
+                    }
+                )
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
@@ -100,7 +104,8 @@ class PrinciplesVisitor(ast.NodeVisitor):
             "lineno": node.lineno,
             "bases": base_names,
             "methods_count": sum(
-                1 for item in node.body
+                1
+                for item in node.body
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
             ),
         }
@@ -153,10 +158,14 @@ def check_dry(src_dir: Path) -> dict[str, Any]:
             content = py_file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        lines = [line.rstrip() for line in content.split("\n") if line.strip() and not line.strip().startswith("#")]  # noqa: E741
+        lines = [
+            line.rstrip()
+            for line in content.split("\n")
+            if line.strip() and not line.strip().startswith("#")
+        ]  # noqa: E741
         blocks = []
         for i in range(len(lines) - block_size + 1):
-            block = "\n".join(lines[i:i + block_size])
+            block = "\n".join(lines[i : i + block_size])
             if len(block) > 40:
                 blocks.append((i + 1, block))
         file_blocks[str(py_file.relative_to(src_dir))] = blocks
@@ -169,13 +178,15 @@ def check_dry(src_dir: Path) -> dict[str, Any]:
             if block in seen:
                 other_file, other_line = seen[block]
                 if other_file != filepath:
-                    duplicates.append({
-                        "block_preview": block[:80],
-                        "file1": other_file,
-                        "line1": other_line,
-                        "file2": filepath,
-                        "line2": line_no,
-                    })
+                    duplicates.append(
+                        {
+                            "block_preview": block[:80],
+                            "file1": other_file,
+                            "line1": other_line,
+                            "file2": filepath,
+                            "line2": line_no,
+                        }
+                    )
             else:
                 seen[block] = (filepath, line_no)
 
@@ -203,26 +214,32 @@ def check_kiss(src_dir: Path) -> dict[str, Any]:
 
     for func in visitor.functions:
         if func["complexity"] > 10:
-            violations.append({
-                "file": "src/",
-                "function": func["name"],
-                "lineno": func["lineno"],
-                "issue": "complexity=" + str(func["complexity"]) + " > 10",
-            })
+            violations.append(
+                {
+                    "file": "src/",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "complexity=" + str(func["complexity"]) + " > 10",
+                }
+            )
         if func["max_nesting"] > 4:
-            violations.append({
-                "file": "src/",
-                "function": func["name"],
-                "lineno": func["lineno"],
-                "issue": "nesting=" + str(func["max_nesting"]) + " > 4",
-            })
+            violations.append(
+                {
+                    "file": "src/",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "nesting=" + str(func["max_nesting"]) + " > 4",
+                }
+            )
         if func["arity"] > 5:
-            violations.append({
-                "file": "src/",
-                "function": func["name"],
-                "lineno": func["lineno"],
-                "issue": "arity=" + str(func["arity"]) + " > 5",
-            })
+            violations.append(
+                {
+                    "file": "src/",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "arity=" + str(func["arity"]) + " > 5",
+                }
+            )
 
     return {
         "status": "PASS" if len(violations) == 0 else "FAIL",
@@ -272,11 +289,13 @@ def check_lod(src_dir: Path) -> dict[str, Any]:
             if isinstance(node, ast.Attribute):
                 chain_length = _count_attribute_chain(node)
                 if chain_length > 3:
-                    violations.append({
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": node.lineno,
-                        "chain_length": chain_length,
-                    })
+                    violations.append(
+                        {
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": node.lineno,
+                            "chain_length": chain_length,
+                        }
+                    )
 
     return {
         "status": "PASS" if len(violations) == 0 else "FAIL",
@@ -325,13 +344,15 @@ def check_coi(src_dir: Path) -> dict[str, Any]:
     for cls in visitor.classes:
         depth = get_depth(cls["name"], set())
         if depth > max_allowed:
-            violations.append({
-                "file": "src/",
-                "class": cls["name"],
-                "lineno": cls["lineno"],
-                "inheritance_depth": depth,
-                "bases": cls["bases"],
-            })
+            violations.append(
+                {
+                    "file": "src/",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "inheritance_depth": depth,
+                    "bases": cls["bases"],
+                }
+            )
 
     return {
         "status": "PASS" if len(violations) == 0 else "FAIL",

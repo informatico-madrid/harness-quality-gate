@@ -55,8 +55,11 @@ class SemgrepAdapter(ToolAdapter):
         python = sys.executable
         configs = ["p/security-audit", "p/owasp-top-ten"]
         cmd = [
-            python, "-m", "semgrep",
-            "--config", ",".join(configs),
+            python,
+            "-m",
+            "semgrep",
+            "--config",
+            ",".join(configs),
             "--json",
             "--quiet",
             str(repo),

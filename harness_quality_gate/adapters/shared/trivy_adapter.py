@@ -17,7 +17,12 @@ from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
 
-_SEVERITY_MAP = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "info"}
+_SEVERITY_MAP = {
+    "CRITICAL": "error",
+    "HIGH": "error",
+    "MEDIUM": "warning",
+    "LOW": "info",
+}
 
 
 class TrivyAdapter(ToolAdapter):

@@ -22,6 +22,7 @@ from ..base import ToolAdapter, ToolInvocation
 # DeptracResult — returned from parse()
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class DeptracResult:
     """Architecture violation data extracted from deptrac JSON output."""
@@ -33,6 +34,7 @@ class DeptracResult:
 # ---------------------------------------------------------------------------
 # DeptracAdapter
 # ---------------------------------------------------------------------------
+
 
 class DeptracAdapter(ToolAdapter):
     """Parses Deptrac architecture-violation JSON output into :class:`DeptracResult`.
@@ -53,9 +55,7 @@ class DeptracAdapter(ToolAdapter):
         repo: Path,
         env: Mapping[str, str] | None = None,
     ) -> str:
-        raise NotImplementedError(
-            "deptrac version detection not implemented (POC)"
-        )
+        raise NotImplementedError("deptrac version detection not implemented (POC)")
 
     def invoke(
         self,
@@ -85,9 +85,7 @@ class DeptracAdapter(ToolAdapter):
         """
         deptrac_bin = repo / "vendor" / "bin" / "deptrac"
         if not deptrac_bin.is_file():
-            raise RuntimeError(
-                "deptrac not found at vendor/bin/deptrac"
-            )
+            raise RuntimeError("deptrac not found at vendor/bin/deptrac")
         cmd = [str(deptrac_bin), "analyse", "--formatter=json"]
         return self._run(
             [*cmd, *args],

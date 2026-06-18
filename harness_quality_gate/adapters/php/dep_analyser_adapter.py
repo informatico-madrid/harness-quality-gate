@@ -64,8 +64,7 @@ class DepAnalyserAdapter(ToolAdapter):
         cmd = self._binary(repo)
         if cmd is None:
             logger.warning(
-                "composer-dependency-analyser not found; "
-                "returning INFRA_INCOMPLETE"
+                "composer-dependency-analyser not found; returning INFRA_INCOMPLETE"
             )
             # stdout/duration_seconds keep their dataclass defaults
             return ToolInvocation(

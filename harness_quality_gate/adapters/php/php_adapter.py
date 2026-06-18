@@ -107,9 +107,7 @@ class PhpAdapter(BaseAdapter):
             except (OSError, RuntimeError):
                 missing.append(tool.name)
         if missing:
-            raise RuntimeError(
-                f"Missing PHP tool(s): {', '.join(missing)}"
-            )
+            raise RuntimeError(f"Missing PHP tool(s): {', '.join(missing)}")
         return [t.name for t in (self._phpstan, self._phpmd, self._cs_fixer)]
 
     # -- framework-conditional packs (FR-22) -------------------------------
@@ -305,7 +303,9 @@ class PhpAdapter(BaseAdapter):
         if stats.msi < _INFECTION_MIN_MSI:
             issues.append(f"MSI {stats.msi:.1f}% < {_INFECTION_MIN_MSI}%")
         if stats.covered_msi < _INFECTION_MIN_COVERED_MSI:
-            issues.append(f"covered MSI {stats.covered_msi:.1f}% < {_INFECTION_MIN_COVERED_MSI}%")
+            issues.append(
+                f"covered MSI {stats.covered_msi:.1f}% < {_INFECTION_MIN_COVERED_MSI}%"
+            )
         return {
             "skill": "mutation-testing-guide",
             "guide": "MUTANT_KILLING_GUIDE_PHP.md",
@@ -387,9 +387,7 @@ class PhpAdapter(BaseAdapter):
                 "--no-progress",
                 str(repo),
             ]
-            invocation = self._cs_fixer.invoke(
-                repo, args, env=env, timeout=300.0
-            )
+            invocation = self._cs_fixer.invoke(repo, args, env=env, timeout=300.0)
             cs_findings = self._cs_fixer.parse(
                 invocation.stdout, invocation.stderr, invocation.exitcode
             )
@@ -520,9 +518,7 @@ class PhpAdapter(BaseAdapter):
                 logger.info("L1 mutation skipped (TD-6): %s", mutation_skipped)
             else:
                 # Run Infection with strict thresholds (FR-13, FR-14)
-                mutation_stats = self._run_infection(
-                    repo, env, is_pest_project
-                )
+                mutation_stats = self._run_infection(repo, env, is_pest_project)
 
                 # Hard-gate: if env flag set and Infection unavailable, fail hard
                 if mutation_stats is None and env.get("HARNESS_INFECTION_REQUIRED"):
@@ -549,7 +545,9 @@ class PhpAdapter(BaseAdapter):
                     gate_findings = self._validate_infection_stats(mutation_stats)
                     all_findings.extend(gate_findings)
                     if gate_findings:
-                        mutation_remediation = self._mutation_remediation(mutation_stats)
+                        mutation_remediation = self._mutation_remediation(
+                            mutation_stats
+                        )
                     logger.info(
                         "L1 Infection MSI=%.1f coveredMsi=%.1f escaped=%d",
                         mutation_stats.msi,
@@ -612,10 +610,7 @@ class PhpAdapter(BaseAdapter):
 
         # If PCOV is already loaded by PHP, no extra flag needed.
         try:
-            result = _sp.run(
-                ["php", "-m"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = _sp.run(["php", "-m"], capture_output=True, text=True, timeout=5)
             if "pcov" in result.stdout.lower():
                 return ""
         except (OSError, _sp.TimeoutExpired):
@@ -633,15 +628,12 @@ class PhpAdapter(BaseAdapter):
 
         return ""
 
-    def _run_phpunit_tests(
-        self, repo: Path, env: Mapping[str, str]
-    ) -> list[Finding]:
+    def _run_phpunit_tests(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Run PHPUnit tests and parse JUnit XML output."""
         findings: list[Finding] = []
         try:
             invocation = self._phpunit.invoke(
-                repo, ["--log-junit", "junit.xml"],
-                env=env, timeout=300.0
+                repo, ["--log-junit", "junit.xml"], env=env, timeout=300.0
             )
             # Parse JUnit XML
             findings = self._phpunit.parse(
@@ -652,15 +644,12 @@ class PhpAdapter(BaseAdapter):
             pass
         return findings
 
-    def _run_pest_tests(
-        self, repo: Path, env: Mapping[str, str]
-    ) -> list[Finding]:
+    def _run_pest_tests(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Run Pest tests and return test findings."""
         findings: list[Finding] = []
         try:
             invocation = self._pest.invoke(
-                repo, ["--no-output"],
-                env=env, timeout=300.0
+                repo, ["--no-output"], env=env, timeout=300.0
             )
             # Pest parse returns empty list (it's a test runner, not analysis)
             # Findings are derived from exit code
@@ -718,9 +707,7 @@ class PhpAdapter(BaseAdapter):
             if is_pest_project:
                 args.append("--test-framework=pest")
 
-            invocation = self._infection.invoke(
-                repo, args, env=env, timeout=600.0
-            )
+            invocation = self._infection.invoke(repo, args, env=env, timeout=600.0)
 
             # Binary missing: invoke() returns exitcode=3 with empty stdout.
             if invocation.exitcode == 3 and not invocation.stdout.strip():
@@ -733,7 +720,11 @@ class PhpAdapter(BaseAdapter):
             # An infra error (no PCOV, invalid flags) produces error text with NO stats.
             has_stats = any(
                 marker in (invocation.stdout + invocation.stderr)
-                for marker in ("Mutation Score Indicator", "mutations were generated", "mutants were killed")
+                for marker in (
+                    "Mutation Score Indicator",
+                    "mutations were generated",
+                    "mutants were killed",
+                )
             )
             if not has_stats and invocation.exitcode != 0:
                 logger.warning(
@@ -744,7 +735,9 @@ class PhpAdapter(BaseAdapter):
                 return None
 
             # Parse JSON log → MutationStats
-            stats = self._infection.parse(invocation.stdout, invocation.stderr, invocation.exitcode)
+            stats = self._infection.parse(
+                invocation.stdout, invocation.stderr, invocation.exitcode
+            )
             return stats
 
         except (OSError, RuntimeError) as exc:
@@ -797,9 +790,7 @@ class PhpAdapter(BaseAdapter):
 
         try:
             # Invoke antipattern tier-A (PHPMD + visitors)
-            invocation = self._antipattern.invoke(
-                repo, [], env=env, timeout=300.0
-            )
+            invocation = self._antipattern.invoke(repo, [], env=env, timeout=300.0)
             findings = self._antipattern.parse(invocation.stdout)
             all_findings.extend(findings)
             logger.info("L3B antipattern-tier-A: %d findings", len(findings))
@@ -896,7 +887,8 @@ class PhpAdapter(BaseAdapter):
         # --- local-php-security-checker (FR-21) ------------------------
         try:
             checker_invocation = self._security_checker.invoke(
-                repo, ["--format=json"],
+                repo,
+                ["--format=json"],
                 env=env,
                 timeout=300.0,
             )

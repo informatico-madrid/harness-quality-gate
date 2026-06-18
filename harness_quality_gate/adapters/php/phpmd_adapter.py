@@ -218,9 +218,7 @@ class PhpMdAdapter(ToolAdapter):
             "json",
             rulesets,
         ]
-        invocation = self.invoke(
-            repo, analysis_args, env=env, timeout=timeout
-        )
+        invocation = self.invoke(repo, analysis_args, env=env, timeout=timeout)
         logger.info(
             "PHPMD exit=%d stdout=%dchars stderr=%dchars duration=%.1fs",
             invocation.exitcode,

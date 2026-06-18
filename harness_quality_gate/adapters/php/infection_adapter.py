@@ -141,10 +141,15 @@ class InfectionAdapter(ToolAdapter):
                 covered_msi = data.get("covered_msi")
                 return MutationStats(
                     total=killed + survived + timed_out + escaped + untested,
-                    killed=killed, survived=survived, timed_out=timed_out,
-                    escaped=escaped, untested=untested,
+                    killed=killed,
+                    survived=survived,
+                    timed_out=timed_out,
+                    escaped=escaped,
+                    untested=untested,
                     msi=round(msi, 4),
-                    covered_msi=round(covered_msi, 4) if covered_msi is not None else 0.0,
+                    covered_msi=round(covered_msi, 4)
+                    if covered_msi is not None
+                    else 0.0,
                 )
         except (json.JSONDecodeError, ValueError):
             pass

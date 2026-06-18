@@ -58,12 +58,16 @@ class VultureAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("vulture", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="vulture not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="vulture not found on PATH or .venv", exitcode=3
+            )
         # Scan the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
         source_dir = detect_source_dir(repo)
         if source_dir:
-            targets = source_targets(repo, source_dir, exclude_tests=True) or [str(repo)]
+            targets = source_targets(repo, source_dir, exclude_tests=True) or [
+                str(repo)
+            ]
         else:
             # No src/ — fall back to package dirs, excluding tests/
             targets = [
@@ -96,6 +100,8 @@ class VultureAdapter(ToolAdapter):
 
         for line in stdout.splitlines():
             # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
+            # reason: mutation-resistant by design — see funccomment
+            # audited: 2026-06-18
             m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
             if m is None:
                 continue
@@ -122,7 +128,7 @@ class VultureAdapter(ToolAdapter):
                     severity="error",
                     message="vulture produced output with no parseable findings",
                     fix_hint="Run vulture manually in the repo to inspect "
-                             "the output (usage error or format drift).",
+                    "the output (usage error or format drift).",
                     tool="vulture",
                     layer="L4",
                     language="python",

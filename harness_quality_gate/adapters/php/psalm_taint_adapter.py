@@ -58,9 +58,10 @@ TAINT_RULE_TYPES = {
 }
 
 
-    # ---------------------------------------------------------------------------
-    # PsalmTaintAdapter
-    # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# PsalmTaintAdapter
+# ---------------------------------------------------------------------------
+
 
 class PsalmTaintAdapter(ToolAdapter):
     """Wraps Psalm for L4 taint analysis.
@@ -138,7 +139,7 @@ class PsalmTaintAdapter(ToolAdapter):
             return (None, True)  # missing key — treated as taint so mutation observable
         if raw_type in TAINT_RULE_TYPES:
             return (raw_type, True)  # known taint type → process
-        return (raw_type, False)   # non-taint/empty → skip silently
+        return (raw_type, False)  # non-taint/empty → skip silently
 
     def invoke(
         self,

@@ -141,7 +141,10 @@ class AntipatternVisitor(ast.NodeVisitor):
             func_loc = node.end_lineno - node.lineno + 1
 
         is_public = not node.name.startswith("_") or node.name in (
-            "__init__", "__call__", "__str__", "__repr__"
+            "__init__",
+            "__call__",
+            "__str__",
+            "__repr__",
         )
 
         # Detect decorators
@@ -167,7 +170,12 @@ class AntipatternVisitor(ast.NodeVisitor):
             if annotation is None:
                 primitive_args += 1  # No type hint = assume primitive
             elif isinstance(annotation, ast.Name) and annotation.id in (
-                "int", "float", "str", "bool", "bytes", "None"
+                "int",
+                "float",
+                "str",
+                "bool",
+                "bytes",
+                "None",
             ):
                 primitive_args += 1
 
@@ -193,7 +201,9 @@ class AntipatternVisitor(ast.NodeVisitor):
         # Check if function body is just pass or ...
         if node.body:
             first_stmt = node.body[0]
-            if isinstance(first_stmt, ast.Expr) and isinstance(first_stmt.value, ast.Constant):
+            if isinstance(first_stmt, ast.Expr) and isinstance(
+                first_stmt.value, ast.Constant
+            ):
                 if first_stmt.value.value is ...:
                     func_data["body_is_pass_or_ellipsis"] = True
             elif isinstance(first_stmt, ast.Pass):
@@ -222,15 +232,17 @@ class AntipatternVisitor(ast.NodeVisitor):
             if not is_property and func_data["has_body"]:
                 cls["has_only_properties"] = False
                 cls["has_behavior"] = True
-            cls["methods_detail"].append({
-                "name": node.name,
-                "is_static": is_static,
-                "is_classmethod": is_classmethod,
-                "is_property": is_property,
-                "delegates": func_data.get("delegates") or False,
-                "foreign_calls": func_data.get("foreign_calls") or 0,
-                "self_calls": func_data.get("self_calls") or 0,
-            })
+            cls["methods_detail"].append(
+                {
+                    "name": node.name,
+                    "is_static": is_static,
+                    "is_classmethod": is_classmethod,
+                    "is_property": is_property,
+                    "delegates": func_data.get("delegates") or False,
+                    "foreign_calls": func_data.get("foreign_calls") or 0,
+                    "self_calls": func_data.get("self_calls") or 0,
+                }
+            )
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self.visit_FunctionDef(node)  # type: ignore[arg-type]
@@ -257,7 +269,10 @@ class AntipatternVisitor(ast.NodeVisitor):
                 func["calls"].append(node.func.attr)
                 # Track delegation for Middle Man (AP13)
                 if self._class_stack:
-                    if isinstance(node.func.value, ast.Name) and node.func.value.id != "self":
+                    if (
+                        isinstance(node.func.value, ast.Name)
+                        and node.func.value.id != "self"
+                    ):
                         func["delegates"] = True
                         self._class_stack[-1]["delegates_to"] += 1
             elif isinstance(node.func, ast.Name):
@@ -379,11 +394,13 @@ class ImportGraphBuilder:
         hubs = []
         for module, importers in self.reverse_graph.items():
             if len(importers) > max_incoming:
-                hubs.append({
-                    "module": module,
-                    "imported_by": len(importers),
-                    "importers": sorted(importers)[:5],
-                })
+                hubs.append(
+                    {
+                        "module": module,
+                        "imported_by": len(importers),
+                        "importers": sorted(importers)[:5],
+                    }
+                )
         return hubs
 
 
@@ -391,21 +408,31 @@ class ImportGraphBuilder:
 # Tier A Detection Functions (AST-based, deterministic)
 # ---------------------------------------------------------------------------
 
+
 def detect_ap01(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
     """AP01: God Class — >500 LOC or >20 public methods."""
     t = THRESHOLDS["AP01"]
     for cls in visitor.classes:
         issues = []
         if cls["public_methods"] > t["max_public_methods"]:
-            issues.append("public_methods=" + str(cls["public_methods"]) + " > " + str(t["max_public_methods"]))
+            issues.append(
+                "public_methods="
+                + str(cls["public_methods"])
+                + " > "
+                + str(t["max_public_methods"])
+            )
         if cls["loc"] > t["max_loc"]:
             issues.append("loc=" + str(cls["loc"]) + " > " + str(t["max_loc"]))
         if issues:
-            violations.append({
-                "id": "AP01", "name": "God Class",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "; ".join(issues),
-            })
+            violations.append(
+                {
+                    "id": "AP01",
+                    "name": "God Class",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "; ".join(issues),
+                }
+            )
 
 
 def detect_ap02(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -415,11 +442,17 @@ def detect_ap02(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
             continue
         non_static = cls["all_methods"] - cls["static_methods"] - cls["class_methods"]
         if non_static == 0 and cls["all_methods"] >= 3:
-            violations.append({
-                "id": "AP02", "name": "Functional Decomposition",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "all " + str(cls["all_methods"]) + " methods are static/class methods, no instance state",
-            })
+            violations.append(
+                {
+                    "id": "AP02",
+                    "name": "Functional Decomposition",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "all "
+                    + str(cls["all_methods"])
+                    + " methods are static/class methods, no instance state",
+                }
+            )
 
 
 def detect_ap03(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -428,27 +461,59 @@ def detect_ap03(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     for cls in visitor.classes:
         if cls["loc"] <= max_loc and cls["attributes"] == 0 and not cls["is_abc"]:
             if cls["all_methods"] >= 1 and not cls["has_behavior"]:
-                violations.append({
-                    "id": "AP03", "name": "Poltergeist",
-                    "class": cls["name"], "lineno": cls["lineno"],
-                    "issue": "short controller class (loc=" + str(cls["loc"]) + ") with no state and no behavior",
-                })
+                violations.append(
+                    {
+                        "id": "AP03",
+                        "name": "Poltergeist",
+                        "class": cls["name"],
+                        "lineno": cls["lineno"],
+                        "issue": "short controller class (loc="
+                        + str(cls["loc"])
+                        + ") with no state and no behavior",
+                    }
+                )
 
 
 def detect_ap04(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
     """AP04: Spaghetti Code — high cyclomatic complexity + deep nesting."""
     for func in visitor.functions:
         if func["max_nesting"] >= 6 and func["loc"] > 50:
-            violations.append({
-                "id": "AP04", "name": "Spaghetti Code",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "nesting=" + str(func["max_nesting"]) + " + loc=" + str(func["loc"]),
-            })
+            violations.append(
+                {
+                    "id": "AP04",
+                    "name": "Spaghetti Code",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "nesting="
+                    + str(func["max_nesting"])
+                    + " + loc="
+                    + str(func["loc"]),
+                }
+            )
 
 
 def detect_ap05(violations: list[dict[str, Any]], src_dir: Path) -> None:
     """AP05: Magic Numbers — hardcoded numeric literals without named constants."""
-    whitelist = {0, 1, -1, 2, 10, 100, 1000, 0.0, 1.0, 0.5, -1.0, 2.0, 10.0, 100.0, 255, 256, 360, 1024}
+    whitelist = {
+        0,
+        1,
+        -1,
+        2,
+        10,
+        100,
+        1000,
+        0.0,
+        1.0,
+        0.5,
+        -1.0,
+        2.0,
+        10.0,
+        100.0,
+        255,
+        256,
+        360,
+        1024,
+    }
     for py_file in src_dir.rglob("*.py"):
         if "__pycache__" in str(py_file):
             continue
@@ -459,12 +524,15 @@ def detect_ap05(violations: list[dict[str, Any]], src_dir: Path) -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
                 if node.value not in whitelist and abs(node.value) > 1:
-                    violations.append({
-                        "id": "AP05", "name": "Magic Numbers",
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": node.lineno,
-                        "issue": "hardcoded value " + str(node.value),
-                    })
+                    violations.append(
+                        {
+                            "id": "AP05",
+                            "name": "Magic Numbers",
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": node.lineno,
+                            "issue": "hardcoded value " + str(node.value),
+                        }
+                    )
 
 
 def detect_ap06(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -472,11 +540,15 @@ def detect_ap06(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     max_lines = THRESHOLDS["AP06"]["max_lines"]
     for func in visitor.functions:
         if func["loc"] > max_lines:
-            violations.append({
-                "id": "AP06", "name": "Long Method",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "loc=" + str(func["loc"]) + " > " + str(max_lines),
-            })
+            violations.append(
+                {
+                    "id": "AP06",
+                    "name": "Long Method",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "loc=" + str(func["loc"]) + " > " + str(max_lines),
+                }
+            )
 
 
 def detect_ap07(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -484,11 +556,18 @@ def detect_ap07(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     max_attrs = THRESHOLDS["AP07"]["max_attributes"]
     for cls in visitor.classes:
         if cls["attributes"] > max_attrs:
-            violations.append({
-                "id": "AP07", "name": "Large Class",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "attributes=" + str(cls["attributes"]) + " > " + str(max_attrs),
-            })
+            violations.append(
+                {
+                    "id": "AP07",
+                    "name": "Large Class",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "attributes="
+                    + str(cls["attributes"])
+                    + " > "
+                    + str(max_attrs),
+                }
+            )
 
 
 def detect_ap08(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -496,11 +575,15 @@ def detect_ap08(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     max_arity = THRESHOLDS["AP08"]["max_arity"]
     for func in visitor.functions:
         if func["arity"] > max_arity:
-            violations.append({
-                "id": "AP08", "name": "Long Parameter List",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "arity=" + str(func["arity"]) + " > " + str(max_arity),
-            })
+            violations.append(
+                {
+                    "id": "AP08",
+                    "name": "Long Parameter List",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "arity=" + str(func["arity"]) + " > " + str(max_arity),
+                }
+            )
 
 
 def detect_ap09(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -510,41 +593,66 @@ def detect_ap09(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         self_calls = func.get("self_calls") or 0
         total = foreign + self_calls
         if total > 0 and foreign > self_calls and foreign >= 3:
-            violations.append({
-                "id": "AP09", "name": "Feature Envy",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "foreign_calls=" + str(foreign) + " > self_calls=" + str(self_calls),
-            })
+            violations.append(
+                {
+                    "id": "AP09",
+                    "name": "Feature Envy",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "foreign_calls="
+                    + str(foreign)
+                    + " > self_calls="
+                    + str(self_calls),
+                }
+            )
 
 
 def detect_ap10(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
     """AP10: Data Class — class with only fields/properties, no behavior."""
     for cls in visitor.classes:
-        if (cls["attributes"] >= 3
-                and not cls["has_behavior"]
-                and cls["all_methods"] >= 1
-                and not cls["is_abc"]):
-            violations.append({
-                "id": "AP10", "name": "Data Class",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "has " + str(cls["attributes"]) + " attributes but no behavioral methods",
-            })
+        if (
+            cls["attributes"] >= 3
+            and not cls["has_behavior"]
+            and cls["all_methods"] >= 1
+            and not cls["is_abc"]
+        ):
+            violations.append(
+                {
+                    "id": "AP10",
+                    "name": "Data Class",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "has "
+                    + str(cls["attributes"])
+                    + " attributes but no behavioral methods",
+                }
+            )
 
 
 def detect_ap11(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
     """AP11: Lazy Class — class with very few methods and low complexity."""
     max_methods = THRESHOLDS["AP11"]["max_methods"]
     for cls in visitor.classes:
-        if (cls["all_methods"] <= max_methods
-                and cls["all_methods"] > 0
-                and cls["attributes"] <= 2
-                and not cls["is_abc"]
-                and not cls["has_behavior"]):
-            violations.append({
-                "id": "AP11", "name": "Lazy Class",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "only " + str(cls["all_methods"]) + " methods, " + str(cls["attributes"]) + " attrs, no behavior",
-            })
+        if (
+            cls["all_methods"] <= max_methods
+            and cls["all_methods"] > 0
+            and cls["attributes"] <= 2
+            and not cls["is_abc"]
+            and not cls["has_behavior"]
+        ):
+            violations.append(
+                {
+                    "id": "AP11",
+                    "name": "Lazy Class",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "only "
+                    + str(cls["all_methods"])
+                    + " methods, "
+                    + str(cls["attributes"])
+                    + " attrs, no behavior",
+                }
+            )
 
 
 def detect_ap12(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -558,11 +666,17 @@ def detect_ap12(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
             if abs_cls["name"] in conc["bases"]:
                 impl_count += 1
         if impl_count <= 1:
-            violations.append({
-                "id": "AP12", "name": "Speculative Generality",
-                "class": abs_cls["name"], "lineno": abs_cls["lineno"],
-                "issue": "abstract class with only " + str(impl_count) + " concrete implementation(s)",
-            })
+            violations.append(
+                {
+                    "id": "AP12",
+                    "name": "Speculative Generality",
+                    "class": abs_cls["name"],
+                    "lineno": abs_cls["lineno"],
+                    "issue": "abstract class with only "
+                    + str(impl_count)
+                    + " concrete implementation(s)",
+                }
+            )
 
 
 def detect_ap13(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -572,11 +686,18 @@ def detect_ap13(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         if cls["all_methods"] >= 3:
             delegation_ratio = cls["delegates_to"] / cls["all_methods"]
             if delegation_ratio > ratio:
-                violations.append({
-                    "id": "AP13", "name": "Middle Man",
-                    "class": cls["name"], "lineno": cls["lineno"],
-                    "issue": "delegation_ratio=" + str(round(delegation_ratio, 2)) + " > " + str(ratio),
-                })
+                violations.append(
+                    {
+                        "id": "AP13",
+                        "name": "Middle Man",
+                        "class": cls["name"],
+                        "lineno": cls["lineno"],
+                        "issue": "delegation_ratio="
+                        + str(round(delegation_ratio, 2))
+                        + " > "
+                        + str(ratio),
+                    }
+                )
 
 
 def detect_ap17(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -596,17 +717,26 @@ def detect_ap17(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
         empty_methods = 0
         total_methods = 0
         for func in visitor.functions:
-            if func["lineno"] >= subcls["lineno"] and (func.get("end_lineno") or 0) <= (subcls.get("end_lineno") or 0):
+            if func["lineno"] >= subcls["lineno"] and (func.get("end_lineno") or 0) <= (
+                subcls.get("end_lineno") or 0
+            ):
                 total_methods += 1
                 if func["body_is_pass_or_ellipsis"]:
                     empty_methods += 1
 
         if total_methods >= 2 and empty_methods > total_methods / 2:
-            violations.append({
-                "id": "AP17", "name": "Refused Bequest",
-                "class": subcls["name"], "lineno": subcls["lineno"],
-                "issue": str(empty_methods) + "/" + str(total_methods) + " methods are empty (pass/...)",
-            })
+            violations.append(
+                {
+                    "id": "AP17",
+                    "name": "Refused Bequest",
+                    "class": subcls["name"],
+                    "lineno": subcls["lineno"],
+                    "issue": str(empty_methods)
+                    + "/"
+                    + str(total_methods)
+                    + " methods are empty (pass/...)",
+                }
+            )
 
 
 def detect_ap18(violations: list[dict[str, Any]], src_dir: Path) -> None:
@@ -623,30 +753,44 @@ def detect_ap18(violations: list[dict[str, Any]], src_dir: Path) -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Match):
                 if len(node.cases) > max_cases:
-                    violations.append({
-                        "id": "AP18", "name": "Switch Statements",
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": node.lineno,
-                        "issue": str(len(node.cases)) + " match cases > " + str(max_cases),
-                    })
+                    violations.append(
+                        {
+                            "id": "AP18",
+                            "name": "Switch Statements",
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": node.lineno,
+                            "issue": str(len(node.cases))
+                            + " match cases > "
+                            + str(max_cases),
+                        }
+                    )
 
         for node in ast.walk(tree):
             if isinstance(node, ast.If):
                 elif_count = _count_elif_chain(node)
                 if elif_count > max_cases:
-                    violations.append({
-                        "id": "AP18", "name": "Switch Statements",
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": node.lineno,
-                        "issue": str(elif_count) + " if-elif branches > " + str(max_cases),
-                    })
+                    violations.append(
+                        {
+                            "id": "AP18",
+                            "name": "Switch Statements",
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": node.lineno,
+                            "issue": str(elif_count)
+                            + " if-elif branches > "
+                            + str(max_cases),
+                        }
+                    )
 
 
 def _count_elif_chain(node: ast.If) -> int:
     """Count the number of branches in an if-elif-else chain."""
     count = 1
     current = node
-    while current.orelse and len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+    while (
+        current.orelse
+        and len(current.orelse) == 1
+        and isinstance(current.orelse[0], ast.If)
+    ):
         count += 1
         current = current.orelse[0]
     if current.orelse:
@@ -659,11 +803,18 @@ def detect_ap20(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     max_nesting = THRESHOLDS["AP20"]["max_nesting"]
     for func in visitor.functions:
         if func["max_nesting"] > max_nesting:
-            violations.append({
-                "id": "AP20", "name": "Deep Nesting",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "nesting=" + str(func["max_nesting"]) + " > " + str(max_nesting),
-            })
+            violations.append(
+                {
+                    "id": "AP20",
+                    "name": "Deep Nesting",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "nesting="
+                    + str(func["max_nesting"])
+                    + " > "
+                    + str(max_nesting),
+                }
+            )
 
 
 def detect_ap21(violations: list[dict[str, Any]], src_dir: Path) -> None:
@@ -681,12 +832,18 @@ def detect_ap21(violations: list[dict[str, Any]], src_dir: Path) -> None:
             if isinstance(node, ast.Attribute):
                 chain_len = _count_attr_chain(node)
                 if chain_len > max_chain:
-                    violations.append({
-                        "id": "AP21", "name": "Message Chains",
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": node.lineno,
-                        "issue": "chain_length=" + str(chain_len) + " > " + str(max_chain),
-                    })
+                    violations.append(
+                        {
+                            "id": "AP21",
+                            "name": "Message Chains",
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": node.lineno,
+                            "issue": "chain_length="
+                            + str(chain_len)
+                            + " > "
+                            + str(max_chain),
+                        }
+                    )
 
 
 def _count_attr_chain(node: ast.Attribute) -> int:
@@ -713,30 +870,54 @@ def detect_ap22(violations: list[dict[str, Any]], src_dir: Path) -> None:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for i, stmt in enumerate(node.body):
-                    if isinstance(stmt, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                    if isinstance(
+                        stmt, (ast.Return, ast.Raise, ast.Break, ast.Continue)
+                    ):
                         if i < len(node.body) - 1:
-                            violations.append({
-                                "id": "AP22", "name": "Dead Code",
-                                "file": str(py_file.relative_to(src_dir)),
-                                "lineno": node.body[i + 1].lineno,
-                                "issue": "unreachable code after " + type(stmt).__name__,
-                            })
+                            violations.append(
+                                {
+                                    "id": "AP22",
+                                    "name": "Dead Code",
+                                    "file": str(py_file.relative_to(src_dir)),
+                                    "lineno": node.body[i + 1].lineno,
+                                    "issue": "unreachable code after "
+                                    + type(stmt).__name__,
+                                }
+                            )
 
         # Check for commented-out code
         for i, line in enumerate(content.split("\n"), 1):
             stripped = line.strip()
             if stripped.startswith("#") and not stripped.startswith("#!"):
                 code_part = stripped[1:].strip()
-                if any(code_part.startswith(kw) for kw in (
-                    "def ", "class ", "import ", "from ", "return ", "if ", "for ", "while ",
-                    "try:", "with ", "raise ", "assert ", "print(", "self."
-                )):
-                    violations.append({
-                        "id": "AP22", "name": "Dead Code",
-                        "file": str(py_file.relative_to(src_dir)),
-                        "lineno": i,
-                        "issue": "commented-out code: " + code_part[:60],
-                    })
+                if any(
+                    code_part.startswith(kw)
+                    for kw in (
+                        "def ",
+                        "class ",
+                        "import ",
+                        "from ",
+                        "return ",
+                        "if ",
+                        "for ",
+                        "while ",
+                        "try:",
+                        "with ",
+                        "raise ",
+                        "assert ",
+                        "print(",
+                        "self.",
+                    )
+                ):
+                    violations.append(
+                        {
+                            "id": "AP22",
+                            "name": "Dead Code",
+                            "file": str(py_file.relative_to(src_dir)),
+                            "lineno": i,
+                            "issue": "commented-out code: " + code_part[:60],
+                        }
+                    )
 
         # Check for pragma: no cover abuse
         pragma_allowed_patterns = (
@@ -749,22 +930,31 @@ def detect_ap22(violations: list[dict[str, Any]], src_dir: Path) -> None:
             has_pragma = "pragma: no cover" in stripped or "pragma no cover" in stripped
             if has_pragma:
                 is_acceptable = any(p in stripped for p in pragma_allowed_patterns)
-                has_reason = "reason=" in stripped.lower() or "justification=" in stripped.lower()
+                has_reason = (
+                    "reason=" in stripped.lower()
+                    or "justification=" in stripped.lower()
+                )
                 if not is_acceptable and not stripped.startswith("#"):
                     if not has_reason:
-                        violations.append({
-                            "id": "AP22", "name": "Dead Code",
-                            "file": str(py_file.relative_to(src_dir)),
-                            "lineno": i,
-                            "issue": "pragma: no cover WITHOUT reason= — remove dead code or add reason= to justify exemption",
-                        })
+                        violations.append(
+                            {
+                                "id": "AP22",
+                                "name": "Dead Code",
+                                "file": str(py_file.relative_to(src_dir)),
+                                "lineno": i,
+                                "issue": "pragma: no cover WITHOUT reason= — remove dead code or add reason= to justify exemption",
+                            }
+                        )
                     else:
-                        violations.append({
-                            "id": "AP22", "name": "Dead Code",
-                            "file": str(py_file.relative_to(src_dir)),
-                            "lineno": i,
-                            "issue": "pragma: no cover with reason= — accepted but flag for review",
-                        })
+                        violations.append(
+                            {
+                                "id": "AP22",
+                                "name": "Dead Code",
+                                "file": str(py_file.relative_to(src_dir)),
+                                "lineno": i,
+                                "issue": "pragma: no cover with reason= — accepted but flag for review",
+                            }
+                        )
 
 
 def detect_ap23(violations: list[dict[str, Any]], src_dir: Path) -> None:
@@ -779,10 +969,14 @@ def detect_ap23(violations: list[dict[str, Any]], src_dir: Path) -> None:
             content = py_file.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        lines = [line.strip() for line in content.split("\n") if line.strip() and not line.strip().startswith("#")]
+        lines = [
+            line.strip()
+            for line in content.split("\n")
+            if line.strip() and not line.strip().startswith("#")
+        ]
         blocks = []
         for i in range(len(lines) - block_size + 1):
-            block = "\n".join(lines[i:i + block_size])
+            block = "\n".join(lines[i : i + block_size])
             if len(block) > 40:
                 blocks.append((i + 1, block))
         file_blocks[str(py_file)] = blocks
@@ -793,11 +987,18 @@ def detect_ap23(violations: list[dict[str, Any]], src_dir: Path) -> None:
             if block in seen:
                 other_file, other_line = seen[block]
                 if other_file != filepath:
-                    violations.append({
-                        "id": "AP23", "name": "Duplicate Code",
-                        "file": filepath, "lineno": line_no,
-                        "issue": "duplicate block also in " + other_file + ":" + str(other_line),
-                    })
+                    violations.append(
+                        {
+                            "id": "AP23",
+                            "name": "Duplicate Code",
+                            "file": filepath,
+                            "lineno": line_no,
+                            "issue": "duplicate block also in "
+                            + other_file
+                            + ":"
+                            + str(other_line),
+                        }
+                    )
             else:
                 seen[block] = (filepath, line_no)
 
@@ -807,11 +1008,18 @@ def detect_ap24(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     max_primitive = THRESHOLDS["AP24"]["max_primitive_args"]
     for func in visitor.functions:
         if func["primitive_args"] > max_primitive:
-            violations.append({
-                "id": "AP24", "name": "Primitive Obsession",
-                "function": func["name"], "lineno": func["lineno"],
-                "issue": "primitive_args=" + str(func["primitive_args"]) + " > " + str(max_primitive),
-            })
+            violations.append(
+                {
+                    "id": "AP24",
+                    "name": "Primitive Obsession",
+                    "function": func["name"],
+                    "lineno": func["lineno"],
+                    "issue": "primitive_args="
+                    + str(func["primitive_args"])
+                    + " > "
+                    + str(max_primitive),
+                }
+            )
 
 
 def detect_ap25(violations: list[dict[str, Any]], src_dir: Path) -> None:
@@ -831,66 +1039,100 @@ def detect_ap25(violations: list[dict[str, Any]], src_dir: Path) -> None:
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                params = sorted([
-                    a.arg for a in node.args.args if a.arg not in ("self", "cls")
-                ])
+                params = sorted(
+                    [a.arg for a in node.args.args if a.arg not in ("self", "cls")]
+                )
                 if len(params) >= min_params:
                     key = ",".join(params)
                     param_groups[key].append((str(py_file), node.lineno, node.name))
 
     for key, locations in param_groups.items():
         if len(locations) >= min_reps:
-            violations.append({
-                "id": "AP25", "name": "Data Clumps",
-                "file": locations[0][0],
-                "lineno": locations[0][1],
-                "issue": "parameter group [" + key + "] appears in " + str(len(locations)) + " functions",
-            })
+            violations.append(
+                {
+                    "id": "AP25",
+                    "name": "Data Clumps",
+                    "file": locations[0][0],
+                    "lineno": locations[0][1],
+                    "issue": "parameter group ["
+                    + key
+                    + "] appears in "
+                    + str(len(locations))
+                    + " functions",
+                }
+            )
 
 
 def detect_ap26(violations: list[dict[str, Any]], src_dir: Path) -> None:
     """AP26: Inconsistent Naming — detected via ruff N8XX rules."""
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", str(src_dir), "--select=N802,N803,N804,N805,N806"],
-            capture_output=True, text=True, timeout=60,
+            [
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                str(src_dir),
+                "--select=N802,N803,N804,N805,N806",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if result.returncode != 0:
             for line in result.stdout.split("\n"):
                 if ":" in line and line.strip():
                     parts = line.split(":")
-                    violations.append({
-                        "id": "AP26", "name": "Inconsistent Naming",
-                        "file": parts[0].strip() if parts else "unknown",
-                        "lineno": int(parts[1]) if len(parts) > 1 and parts[1].strip().isdigit() else 0,
-                        "issue": line.strip()[:100],
-                    })
+                    violations.append(
+                        {
+                            "id": "AP26",
+                            "name": "Inconsistent Naming",
+                            "file": parts[0].strip() if parts else "unknown",
+                            "lineno": int(parts[1])
+                            if len(parts) > 1 and parts[1].strip().isdigit()
+                            else 0,
+                            "issue": line.strip()[:100],
+                        }
+                    )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
 
-def detect_ap30(violations: list[dict[str, Any]], graph_builder: ImportGraphBuilder) -> None:
+def detect_ap30(
+    violations: list[dict[str, Any]], graph_builder: ImportGraphBuilder
+) -> None:
     """AP30: Circular Dependency — import cycles."""
     cycles = graph_builder.find_cycles()
     if cycles:
-        violations.append({
-            "id": "AP30", "name": "Circular Dependency",
-            "type": "CYCLE",
-            "modules": [str(c) for c in cycles[:5]],
-            "issue": str(len(cycles)) + " cycle(s) detected",
-        })
+        violations.append(
+            {
+                "id": "AP30",
+                "name": "Circular Dependency",
+                "type": "CYCLE",
+                "modules": [str(c) for c in cycles[:5]],
+                "issue": str(len(cycles)) + " cycle(s) detected",
+            }
+        )
 
 
-def detect_ap31(violations: list[dict[str, Any]], graph_builder: ImportGraphBuilder) -> None:
+def detect_ap31(
+    violations: list[dict[str, Any]], graph_builder: ImportGraphBuilder
+) -> None:
     """AP31: Hub/Spoke — module imported by too many others."""
     max_incoming = THRESHOLDS["AP31"]["max_incoming_imports"]
     hubs = graph_builder.find_hubs(max_incoming)
     for hub in hubs:
-        violations.append({
-            "id": "AP31", "name": "Hub/Spoke",
-            "module": hub["module"],
-            "issue": "imported by " + str(hub["imported_by"]) + " modules > " + str(max_incoming),
-        })
+        violations.append(
+            {
+                "id": "AP31",
+                "name": "Hub/Spoke",
+                "module": hub["module"],
+                "issue": "imported by "
+                + str(hub["imported_by"])
+                + " modules > "
+                + str(max_incoming),
+            }
+        )
 
 
 def detect_ap39(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -> None:
@@ -911,11 +1153,15 @@ def detect_ap39(violations: list[dict[str, Any]], visitor: AntipatternVisitor) -
     for cls in visitor.classes:
         depth = get_depth(cls["name"], set())
         if depth >= max_depth:
-            violations.append({
-                "id": "AP39", "name": "Yo-Yo Problem",
-                "class": cls["name"], "lineno": cls["lineno"],
-                "issue": "inheritance_depth=" + str(depth) + " > " + str(max_depth),
-            })
+            violations.append(
+                {
+                    "id": "AP39",
+                    "name": "Yo-Yo Problem",
+                    "class": cls["name"],
+                    "lineno": cls["lineno"],
+                    "issue": "inheritance_depth=" + str(depth) + " > " + str(max_depth),
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1024,4 +1270,5 @@ if __name__ == "__main__":
         print("Usage: antipattern_tier_a.py <src_dir>", file=sys.stderr)
         sys.exit(1)
     import json
+
     print(json.dumps(run_tier_a(sys.argv[1]), indent=2))

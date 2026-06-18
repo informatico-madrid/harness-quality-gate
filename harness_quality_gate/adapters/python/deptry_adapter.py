@@ -51,7 +51,9 @@ class DeptryAdapter(ToolAdapter):
         try:
             binary = str(resolve_tool("deptry", repo))
         except ToolNotAvailable:
-            return ToolInvocation(stderr="deptry not found on PATH or .venv", exitcode=3)
+            return ToolInvocation(
+                stderr="deptry not found on PATH or .venv", exitcode=3
+            )
         # deptry only emits JSON via ``--json-output <file>`` (``--output``
         # does not exist — the usage error made this gate vacuous, F9).
         # Same temp-file pattern as the pytest JUnit report (H8).
@@ -60,9 +62,16 @@ class DeptryAdapter(ToolAdapter):
         fd, json_name = tempfile.mkstemp(prefix="hqg-deptry-", suffix=".json")
         os.close(fd)
         json_path = Path(json_name)
-        cmd = [binary, "--json-output", str(json_path),
-               "--extend-exclude", "mutants",
-               "--extend-exclude", r"\.mutmut", "."]
+        cmd = [
+            binary,
+            "--json-output",
+            str(json_path),
+            "--extend-exclude",
+            "mutants",
+            "--extend-exclude",
+            r"\.mutmut",
+            ".",
+        ]
         if args:
             cmd.extend(args)
         try:
@@ -108,7 +117,9 @@ class DeptryAdapter(ToolAdapter):
         if not isinstance(data, dict):
             return findings
 
-        errors = (data.get("errors") or {}) if isinstance(data.get("errors"), dict) else {}
+        errors = (
+            (data.get("errors") or {}) if isinstance(data.get("errors"), dict) else {}
+        )
 
         category_severity = {
             "unused_imports": "warning",

@@ -7,11 +7,64 @@ glossary:
   L1   test execution pytest + mutmut (mutation gate)
   L2   test quality   weak-test detection (A1-A8) + diversity
   L3B  deep quality   SOLID metrics + antipattern Tier A (Tier B BMAD is
-                      LLM-orchestrated through the skill steps)
+                       LLM-orchestrated through the skill steps)
   L4   security       bandit + vulture (dead code) + deptry (dependencies)
 
 Design: Component Responsibilities / python_adapter
 Requirements: FR-5, FR-41, US-3
+
+=== DIRECTORY MAP (what each layer scans) ===
+  All dirs are relative to the repo root (`.`).
+
+  L3A (smoke):
+    ruff check:     .  (full repo — config controls exclusion list)
+    pyright:        .  (full repo — .pyrightconfig controls exclusion list)
+
+  L1 (test execution):
+    pytest:         tests/  +  harness_quality_gate/  (module auto-discovery)
+    mutmut:         full repo (pyproject.toml `paths_to_mutate` config)
+
+  L2 (test quality):
+    weak_test:      tests/  (only test_*.py files via _src_dir scan)
+    diversity:      full repo (skips .venv/, mutants/, __pycache__)
+
+  L3B (deep quality — deterministic portion):
+    solid_metrics:  harness_quality_gate/  (source package via _src_dir())
+    antipattern_tier_a:  harness_quality_gate/  (source package via _src_dir())
+
+  L4 (security & defense):
+    bandit:         full repo (uses config/paths)
+    vulture:        harness_quality_gate/  (source package)
+    deptry:         full repo (dependency graph)
+
+=== BMAD PARTY MODE PATTERN (Layer 3B Tier B) ===
+  The L3B layer has TWO components:
+
+  1. DETERMINISTIC (run by this adapter):
+     - solid_metrics.py:    AST analysis of SOLID principles with fixed thresholds
+     - antipattern_tier_a.py: AST-based detection of 22 Tier A antipatterns
+     These scan `harness_quality_gate/` and return warnings-only (self-eval F11).
+
+  2. PROBABILISTIC (Tier B — NOT executed by this adapter):
+     - The BMAD Party Mode is a *two-step process* orchestrated by the LLM agent:
+       Step B.1: `python -m harness_quality_gate.bmad.llm_solid_judge <src_dir>`
+                 -> Generates structured class inventory JSON with review_context
+       Step B.2: Pass review_context to bmad-party-mode skill (Winston + Murat)
+                 -> Agents evaluate SOLID Tier B semantically
+       Step B.3: Pass findings to bmad-review-adversarial-general
+                 -> Validates and filters false positives
+       Step B.4: Build consensus (2/3 agents agree AND no adversarial rejection)
+     - Same pattern for antipatterns:
+       `python -m harness_quality_gate.bmad.antipattern_judge <src_dir> <tests_dir>`
+                 -> Generates structured source/test context + pattern definitions
+                 -> Pass context to BMAD Party Mode for semantic antipattern review
+     - These scripts DO NOT call external APIs. They only generate structured
+       context text that serves as input for the BMAD Party Mode skill invocation.
+     - The LLM agent MUST invoke the skill steps manually — this adapter does
+       NOT call BMAD Party Mode programmatically.
+
+     If BMAD Party Mode is unavailable → Simulated Party Mode (heuristic only,
+     WARNING status, LOW confidence) — see step-04-layer3b.md.
 """
 
 from __future__ import annotations
@@ -47,6 +100,7 @@ logger = logging.getLogger(__name__)  # pragma: no mutate
 # PythonAdapter
 # ---------------------------------------------------------------------------
 
+
 class PythonAdapter(BaseAdapter):
     """Orchestrates Python quality tools across the five quality layers."""
 
@@ -74,8 +128,15 @@ class PythonAdapter(BaseAdapter):
     def tool_versions(self) -> dict[str, str]:
         """Return {tool_name: version} for every Python tool."""
         versions: dict[str, str] = {}
-        for adapter in (self.ruff, self.pyright, self.pytest, self.mutmut,
-                        self.bandit, self.vulture, self.deptry):
+        for adapter in (
+            self.ruff,
+            self.pyright,
+            self.pytest,
+            self.mutmut,
+            self.bandit,
+            self.vulture,
+            self.deptry,
+        ):
             try:
                 versions[adapter.name] = adapter.version(Path("."), {})
             except (RuntimeError, OSError):
@@ -91,9 +152,7 @@ class PythonAdapter(BaseAdapter):
             except ToolNotAvailable:
                 missing.append(tool)
         if missing:
-            raise RuntimeError(
-                f"Missing Python tool(s): {', '.join(missing)}"
-            )
+            raise RuntimeError(f"Missing Python tool(s): {', '.join(missing)}")
         return ["ruff", "pyright"]
 
     # -- L3A (static analysis + type checking) ----------------------------
@@ -142,7 +201,11 @@ class PythonAdapter(BaseAdapter):
         logger.info("pytest: %d findings", len(pytest_findings))
 
         mutation_stats, mutmut_run_ok = self._run_mutmut(repo, env)
-        mutation_passed = mutmut_run_ok and mutation_stats.survived == 0 and mutation_stats.timed_out == 0
+        mutation_passed = (
+            mutmut_run_ok
+            and mutation_stats.survived == 0
+            and mutation_stats.timed_out == 0
+        )
 
         tool_spec: dict[str, object] = {"mutation_stats": mutation_stats}
         if not mutation_passed:
@@ -211,11 +274,17 @@ class PythonAdapter(BaseAdapter):
     # -- L3B (deep quality: SOLID + antipattern Tier A) ---------------------
 
     def run_l3b(self, repo: Path, env: Mapping[str, str]) -> LayerResult:
-        """Run SOLID metrics + antipattern Tier A (deterministic deep quality).
+        """Run deterministic deep-quality checks for Layer 3B.
 
-        L3B is the deep-quality layer per the spec glossary. The Tier B
-        BMAD multi-judge consensus is orchestrated by the LLM through the
-        skill steps, not by this adapter.
+        Executes SOLID metrics + antipattern Tier A against the source package
+        (via ``_src_dir()``).  These checks use fixed AST-based thresholds
+        and emit **warnings only** (non-blocking per self-eval F11).
+
+        Tier B BMAD multi-agent consensus is LLM-orchestrated externally
+        through the skill steps (see module docstring).  This adapter does NOT
+        invoke BMAD Party Mode programmatically — the LLM agent must call
+        ``llm_solid_judge.py`` and ``antipattern_judge.py`` then feed the
+        generated context to the ``bmad-party-mode`` skill.
 
         When ``paths`` is set (partial run), return a quick-pass LayerResult.
         """
@@ -310,7 +379,9 @@ class PythonAdapter(BaseAdapter):
             try:
                 resolve_tool("bandit", repo)
             except ToolNotAvailable:
-                logger.warning("bandit not found on PATH or .venv -- required L4 tool missing")
+                logger.warning(
+                    "bandit not found on PATH or .venv -- required L4 tool missing"
+                )
                 required_tools_skipped.append("bandit")
 
         vulture_findings = self._run_vulture(repo, env)
@@ -340,7 +411,9 @@ class PythonAdapter(BaseAdapter):
                 Finding(
                     node="L4",
                     severity="error",
-                    message="Required L4 tool(s) not installed: " + ", ".join(required_tools_skipped) + ". Install them to enable full security scanning.",
+                    message="Required L4 tool(s) not installed: "
+                    + ", ".join(required_tools_skipped)
+                    + ". Install them to enable full security scanning.",
                     tool="L4",
                     layer="L4",
                     language="python",
@@ -361,10 +434,20 @@ class PythonAdapter(BaseAdapter):
 
     @staticmethod
     def _src_dir(repo: Path) -> Path:
-        """Return the source dir: ``src/``, else the root package, else repo.
+        """Return the source dir for L2/L3B analysis.
 
-        Falling straight back to the repo walked ``.venv/`` and ``mutants/``
-        too — L2/L3B hung for minutes on real repos (self-eval F10).
+        Resolution order:
+        1. ``src/`` (PEP 621 src layout) if it exists
+        2. First package-found-at-root directory (detected via
+           ``package_dirs()`` — e.g. ``harness_quality_gate/``)
+        3. Falls back to repo root (edge case: no package found)
+
+        This prevents L2/L3B from scanning ``.venv/``, ``mutants/``,
+        ``docs/``, or test files — which would cause hangs on large repos
+        (self-eval F10).
+
+        L4 tools (bandit, vulture, deptry) use their own directory logic
+        and scan independently.
         """
         src = repo / "src"
         if src.is_dir():
@@ -378,7 +461,9 @@ class PythonAdapter(BaseAdapter):
         """Run weak-test analysis (A1-A8) and convert violations to Findings."""
         tests_dir = repo / "tests"
         if not tests_dir.is_dir():
-            logger.warning("no tests/ directory in %s, skipping weak-test analysis", repo)
+            logger.warning(
+                "no tests/ directory in %s, skipping weak-test analysis", repo
+            )
             return []
         report = run_weak_test_analysis(str(tests_dir), str(self._src_dir(repo)))
         findings: list[Finding] = []
@@ -388,7 +473,9 @@ class PythonAdapter(BaseAdapter):
                 findings.append(
                     Finding(
                         node=node,
-                        severity="error" if violation.get("severity") == "ERROR" else "warning",
+                        severity="error"
+                        if violation.get("severity") == "ERROR"
+                        else "warning",
                         message=f"{weak.get('name', '')}: {violation.get('description', '')}",
                         tool="weak-test",
                         layer="L2",
@@ -459,7 +546,7 @@ class PythonAdapter(BaseAdapter):
         to the specified files/directories.
         """
         try:
-            binary = str(resolve_tool("ruff", repo))
+            str(resolve_tool("ruff", repo))
         except ToolNotAvailable:
             logger.warning("ruff not found on PATH or .venv, skipping")
             return []
@@ -474,18 +561,20 @@ class PythonAdapter(BaseAdapter):
 
     def _run_pyright(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke pyright and parse findings.
-        
+
         When ``self.paths`` is set, scopes the type-check to the specified
         files/directories.
         """
         try:
-            binary = str(resolve_tool("pyright", repo))
+            str(resolve_tool("pyright", repo))
         except ToolNotAvailable:
             logger.warning("pyright not found on PATH or .venv, skipping")
             return []
         try:
             inv = self.pyright.invoke(
-                repo, [], env=dict(env) if env else {},
+                repo,
+                [],
+                env=dict(env) if env else {},
                 python_path=sys.executable,
                 paths=self.paths,
             )
@@ -502,7 +591,9 @@ class PythonAdapter(BaseAdapter):
         When ``self.paths`` is set, passes them as test collection targets.
         """
         if not sys.executable:
-            logger.warning("Python interpreter not found (sys.executable empty), skipping")
+            logger.warning(
+                "Python interpreter not found (sys.executable empty), skipping"
+            )
             return []
 
         venv_dir: str | None = None
@@ -526,7 +617,7 @@ class PythonAdapter(BaseAdapter):
     def _run_vulture(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke vulture and parse dead-code findings."""
         try:
-            binary = str(resolve_tool("vulture", repo))
+            str(resolve_tool("vulture", repo))
         except ToolNotAvailable:
             logger.warning("vulture not found on PATH or .venv, skipping")
             return []
@@ -540,7 +631,7 @@ class PythonAdapter(BaseAdapter):
     def _run_deptry(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke deptry and parse dependency findings."""
         try:
-            binary = str(resolve_tool("deptry", repo))
+            str(resolve_tool("deptry", repo))
         except ToolNotAvailable:
             logger.warning("deptry not found on PATH or .venv, skipping")
             return []
@@ -564,11 +655,17 @@ class PythonAdapter(BaseAdapter):
         handles venv-priority internally.
         """
         empty_stats = MutationStats(
-            total=0, killed=0, survived=0, timed_out=0,
-            escaped=0, untested=0, msi=0.0, covered_msi=0.0,
+            total=0,
+            killed=0,
+            survived=0,
+            timed_out=0,
+            escaped=0,
+            untested=0,
+            msi=0.0,
+            covered_msi=0.0,
         )
         try:
-            binary = str(resolve_tool("mutmut", repo))
+            str(resolve_tool("mutmut", repo))
         except ToolNotAvailable:
             logger.warning("mutmut not found on PATH or .venv, returning empty stats")
             return (empty_stats, False)
@@ -576,12 +673,14 @@ class PythonAdapter(BaseAdapter):
         try:
             # Execute the campaign first (parity with PHP's Infection);
             # ``mutmut results`` alone is empty on a fresh repo (bug H2).
-            run_inv = self.mutmut.run(repo, env=dict(env) if env else {},
-                                      paths=self.paths)
+            run_inv = self.mutmut.run(
+                repo, env=dict(env) if env else {}, paths=self.paths
+            )
             run_ok = run_inv.exitcode == 0
             if not run_ok:
-                logger.warning("mutmut run exited %d: %s",
-                               run_inv.exitcode, run_inv.stderr.strip())
+                logger.warning(
+                    "mutmut run exited %d: %s", run_inv.exitcode, run_inv.stderr.strip()
+                )
             inv = self.mutmut.invoke(repo, [], env=dict(env) if env else {})
             stats = self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
             return (stats, run_ok)
@@ -592,7 +691,7 @@ class PythonAdapter(BaseAdapter):
     def _run_bandit(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke bandit and parse security findings."""
         try:
-            binary = str(resolve_tool("bandit", repo))
+            str(resolve_tool("bandit", repo))
         except ToolNotAvailable:
             logger.warning("bandit not found on PATH or .venv, skipping")
             return []

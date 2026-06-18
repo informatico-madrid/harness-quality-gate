@@ -113,7 +113,7 @@ class VisitorRunnerAdapter(ToolAdapter):
                 stderr=f"no PHP files found in {repo_dir}",
             )
 
-# 
+        #
         for visitor_name in visitors:
             visitor_script = VISITORS_DIR / f"{visitor_name}.php"
             if not visitor_script.is_file():
@@ -134,7 +134,12 @@ class VisitorRunnerAdapter(ToolAdapter):
                         f"visitor={visitor_name} file={php_file} exit={result.returncode}: "
                         f"{result.stderr.strip()}"
                     )
-                    logger.debug("Visitor %s failed on %s: %s", visitor_name, php_file, result.stderr.strip())
+                    logger.debug(
+                        "Visitor %s failed on %s: %s",
+                        visitor_name,
+                        php_file,
+                        result.stderr.strip(),
+                    )
                     continue
                 findings = self._parse_visitor_output(result.stdout)
                 all_findings.extend(findings)
@@ -271,7 +276,7 @@ class VisitorRunnerAdapter(ToolAdapter):
         # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
         if start >= 0 and end > start:  # pragma: no mutate
             try:
-                return json.loads(text[start:end + 1])
+                return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 pass
 
