@@ -1,6 +1,6 @@
 """Mutation Analyzer — analyze mutation testing results.
 
-Parses ``mutmut results --all true`` and ``infection-log.json`` output,
+Parses ``mutmut results`` and ``infection-log.json`` output,
 producing per-module kill statistics as :class:`MutationStats`.
 
 Design: Component Responsibilities / mutation_analyzer.
@@ -20,7 +20,7 @@ from typing import Optional
 
 # Pattern to extract module from mutmut 3.x mutant names:
 # Format: "src.calculations.x_func__mutmut_N: status"
-# Example: "src.calculations.x_func__mutmut_42: killed" -> module "calculations"
+# Group 1: dotted module path, Group 2: function name, Group 3: status
 MUTMUT_DOTTED_PATH = re.compile(
     r"^([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\.(\w+)__mutmut_\d+: (\w+)$"
 )
@@ -48,14 +48,100 @@ class ModuleMutStats:
         return self.killed / self.total
 
 
-def parse_mutmut(repo: Path) -> dict[str, ModuleMutStats]:
-    """Parse ``mutmut results --all true`` output.
+@dataclass
+class SurvivedMutant:
+    """A single survived or timeout mutant with actionable detail."""
+    mutant_id: str
+    module: str
+    file_path: str
+    status: str  # "survived" or "timeout"
 
-    Returns a dict mapping module name to :class:`ModuleMutStats`.
+
+def parse_survivors(repo: Path) -> list[SurvivedMutant]:
+    """Parse survived and timeout mutants from ``mutmut results`` output.
+
+    Returns a list of each non-killed mutant with:
+    - mutant_id: the mutmut ID (e.g., ``x_source_targets__mutmut_8``)
+    - module: dotted module path (e.g., ``harness_quality_gate.adapters.base``)
+    - file_path: filesystem path (e.g., ``harness_quality_gate/adapters/base.py``)
+    - status: ``"survived"`` or ``"timeout"``
+
+    Sorted by file_path, then mutant_id.
     """
     try:
         result = subprocess.run(
-            ["mutmut", "results", "--all", "true"],
+            ["mutmut", "results"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+    if not result.stdout.strip():
+        return []
+
+    survivors: list[SurvivedMutant] = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        module = _extract_mutmut_module(line)
+        status = _extract_mutmut_status(line)
+        if module is None or status is None:
+            continue
+
+        if status not in ("survived", "timeout"):
+            continue
+
+        # Extract the mutant_id: split dotted path on last segment before __mutmut_N
+        full_key = line.rsplit(":", 1)[0].strip()
+        # full_key = "harness_quality_gate.adapters.base.x_source_targets__mutmut_8"
+        # We know module = "harness_quality_gate.adapters.base"
+        # mutant_id is the part after module + "."
+        suffix = full_key[len(module):].lstrip(".")
+        # suffix could be like "base.x_source_targets__mutmut_8"
+        # The last component after the last dot is the mutant function name
+        func_name = suffix.rsplit(".", 1)[-1]  # e.g. "x_source_targets__mutmut_8"
+
+        module_path = module.replace(".", "/") + ".py"
+
+        survivors.append(SurvivedMutant(
+            mutant_id=func_name,
+            module=module,
+            file_path=module_path,
+            status=status,
+        ))
+
+    survivors.sort(key=lambda s: (s.file_path, s.mutant_id))
+    return survivors
+
+
+def parse_mutmut(
+    repo: Path,
+    *,
+    survivors_only: bool = False,
+) -> dict[str, ModuleMutStats]:
+    """Parse mutmut result output.
+
+    Args:
+        repo: Path to the repository root.
+        survivors_only: If True, run ``mutmut results`` (survivors only).
+            If False, run ``mutmut results --all true`` (all mutants).
+
+    Returns:
+        A dict mapping module name to :class:`ModuleMutStats`.
+    """
+    cmd = ["mutmut", "results"]
+    if not survivors_only:
+        cmd.extend(["--all", "true"])
+
+    try:
+        result = subprocess.run(
+            cmd,
             cwd=str(repo),
             capture_output=True,
             text=True,
@@ -79,7 +165,9 @@ def parse_mutmut(repo: Path) -> dict[str, ModuleMutStats]:
         if module is None or status is None:
             continue
 
-        stats[module] = _update_mutmut_stats(stats.get(module), status)
+        stats[module] = _update_mutmut_stats(
+            stats.get(module), status, module_name=module,
+        )
 
     return stats
 
@@ -183,10 +271,14 @@ def analyze(repo: Path, tool: str = "mutmut") -> MutationStats:
 
 
 def _extract_mutmut_module(line: str) -> Optional[str]:
-    """Extract module name from a mutmut result line."""
+    """Extract dotted module path from a mutmut result line.
+
+    For ``MUTMUT_DOTTED_PATH`` returns group(1) — the dotted module path.
+    For ``MUTMUT_PYC_FILE`` returns group(1) — the .py filename stem.
+    """
     match = MUTMUT_DOTTED_PATH.match(line)
     if match:
-        return match.group(2)
+        return match.group(1)
     match = MUTMUT_PYC_FILE.match(line)
     if match:
         base = match.group(1)
@@ -207,10 +299,14 @@ def _extract_mutmut_status(line: str) -> Optional[str]:
 def _update_mutmut_stats(
     existing: Optional[ModuleMutStats],
     status: str,
+    module_name: str = "",
 ) -> ModuleMutStats:
     """Add one mutant to stats, returning the updated stats."""
     if existing is None:
-        existing = ModuleMutStats(module="", total=0, killed=0, survived=0, timeout=0, skipped=0)
+        existing = ModuleMutStats(
+            module=module_name, total=0, killed=0,
+            survived=0, timeout=0, skipped=0,
+        )
 
     if status == "killed":
         existing = ModuleMutStats(
