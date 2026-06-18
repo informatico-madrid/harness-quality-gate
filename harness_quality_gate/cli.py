@@ -36,7 +36,7 @@ from .allow_list_auditor import AllowListAuditor, AuditReport
 from .checkpoint import build as build_checkpoint
 from .checkpoint import write as write_checkpoint
 from .config import ConfigInvalid
-from .config import load as config_load
+from .config import load_with_defaults
 from .exit_codes import CONFIG_INVALID, FAIL, INFRA_INCOMPLETE, INTERNAL_ERROR, PASS, UNSUPPORTED
 from .messages_es import t
 from .models import LayerResult
@@ -172,8 +172,9 @@ def _cmd_all(args: argparse.Namespace) -> int:
 
     # Config v1 rejection (FR-34): a config file with a deprecated schema is
     # a hard error; a missing config file simply means defaults.
+    # Use load_with_defaults() for bundled defaults + project overrides.
     try:
-        config_load(repo)
+        cfg = load_with_defaults(repo)
     except ConfigInvalid as exc:
         return _exit_with(
             CONFIG_INVALID,

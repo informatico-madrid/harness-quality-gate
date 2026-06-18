@@ -54,6 +54,13 @@ class Config:
     layer4: dict = field(default_factory=dict)
     skill_dir: str = ""
     composer_home: str = ""
+    # ── Convergence Phase 5: top-level configurable parameters ──
+    source_dir: str | None = None
+    vulture_confidence: int = 80
+    ruff_exclude: list[str] = field(default_factory=lambda: ["tests/"])
+    mutmut_max_children: int | None = None
+    mutation_threshold: float = 100.0
+    coverage_threshold: float = 100.0
 
 
 class ConfigInvalid(Exception):
@@ -83,13 +90,22 @@ def _expand_env_vars(obj: object) -> object:
 
 
 def _find_config_path(repo: Path) -> Path | None:
-    """Return the first existing config file path, or None."""
+    """Return the first existing config file path, or None.
+
+    Precedence (first match wins):
+
+    1. ``_quality-gate/quality-gate.yaml`` -- per-project overrides (gitignored)
+    2. ``.quality-gate.yaml``              -- repo-root legacy location
+    3. ``config/quality-gate.yaml``         -- bundled / skill defaults
+    4. ``quality-gate.yaml``                -- legacy flat location
+    """
+    candidates: list[Path] = []  # pragma: no mutate
     # reason: the three filename strings are convention-defined config locations.
     # Mutating "quality-gate.yaml"→"XXquality-gate.yamlXX" simply means no file is found
     # (file does not exist on disk under the mutated name) — the load() return value
     # reason: path string mutations produce a non-existent filename → no file found.
     # audited: 2026-06-04
-    candidates: list[Path] = []  # pragma: no mutate
+    candidates.append(repo / "_quality-gate" / "quality-gate.yaml")  # per-project (NEW)
     candidates.append(repo / ".quality-gate.yaml")  # pragma: no mutate
     candidates.append(repo / "config" / "quality-gate.yaml")  # pragma: no mutate
     candidates.append(repo / "quality-gate.yaml")  # pragma: no mutate
@@ -97,6 +113,29 @@ def _find_config_path(repo: Path) -> Path | None:
         if p.is_file():
             return p
     return None
+
+
+def _int_or_none(val: Any) -> int | None:
+    """Return `int(val)` or `None` when *val* is None."""
+    if val is None:
+        return None
+    return int(val)
+
+
+def _str_or_none(val: Any) -> str | None:
+    """Return `str(val)` or `None` when *val* is None or falsy."""
+    if val is None or val == "":
+        return None
+    return str(val)
+
+
+def _merge_list_keys(merged: dict, defaults: dict, project: dict) -> None:
+    """Merge top-level list keys: project value replaces default (not combined)."""
+    list_keys = ("ruff_exclude",)
+    for key in list_keys:
+        if key in project and isinstance(project[key], list):
+            merged[key] = project[key]
+        # else: keep the value already set from defaults
 
 
 def validate(raw: dict) -> Config:
@@ -166,6 +205,13 @@ def validate(raw: dict) -> Config:
         shared_tools=raw.get("shared_tools") or {},  # pragma: no mutate
         # reason: same. # audited: 2026-06-04
         layer4=raw.get("layer4") or {},  # pragma: no mutate
+        # ── Convergence Phase 5 top-level keys ──
+        source_dir=_str_or_none(raw.get("source_dir")),
+        vulture_confidence=int(raw.get("vulture_confidence") or 80),
+        ruff_exclude=list(raw.get("ruff_exclude") or ["tests/"]),
+        mutmut_max_children=_int_or_none(raw.get("mutmut_max_children")),
+        mutation_threshold=float(raw.get("mutation_threshold") or 100.0),
+        coverage_threshold=float(raw.get("coverage_threshold") or 100.0),
     )
 
 
@@ -187,7 +233,8 @@ def load(repo: Path) -> Config:
     if config_path is None:
         raise FileNotFoundError(
             f"Quality-gate config not found in {repo}. "
-            f"Looked for .quality-gate.yaml, config/quality-gate.yaml, "
+            f"Looked for _quality-gate/quality-gate.yaml, "
+            f".quality-gate.yaml, config/quality-gate.yaml, "
             f"or quality-gate.yaml.",
         )
 
@@ -195,3 +242,80 @@ def load(repo: Path) -> Config:
     raw = _expand_env_vars(raw)  # type: ignore[assignment]
 
     return validate(raw)
+
+
+def load_with_defaults(
+    repo: Path,
+    skill_dir: Path | None = None,
+) -> Config:
+    """Load config merging bundled defaults + project overrides.
+
+    Merges the bundled defaults (from ``skill_dir/config/quality-gate.yaml``)
+    with project-level overrides (from ``_quality-gate/quality-gate.yaml``).
+
+    Precedence: **project config > bundled defaults**.
+
+    Args:
+        repo: Path to the repository root (for finding project overrides).
+        skill_dir: Path to the skill root (for bundled defaults).
+            When ``None``, tries ``$CLAUDE_SKILL_DIR``, then the package
+            resource path.
+
+    Returns:
+        A validated ``Config`` with bundled defaults overlaid by
+        project-level overrides.
+    """
+    if skill_dir is None:
+        skill_dir_str = os.environ.get("CLAUDE_SKILL_DIR")
+        if skill_dir_str:
+            skill_dir = Path(skill_dir_str)
+
+    # Load bundled defaults when available.
+    defaults: dict[str, Any] | None = None
+    if skill_dir is not None:
+        bundled = skill_dir / "config" / "quality-gate.yaml"
+        if bundled.is_file():
+            defaults = yaml.safe_load(bundled.read_text(encoding="utf-8")) or {}
+            defaults = _expand_env_vars(defaults)  # type: ignore[assignment]
+
+    # If we found bundled defaults, validate them as a baseline.
+    if defaults is not None:
+        validate(defaults)  # ensures schema_version: 2 and thresholds OK
+
+    # Load project overrides.
+    try:
+        project_raw: dict[str, Any] = {}
+        try:
+            cfg_path = _find_config_path(repo)
+            if cfg_path is not None:
+                project_raw = yaml.safe_load(
+                    cfg_path.read_text(encoding="utf-8"),
+                ) or {}
+                project_raw = _expand_env_vars(project_raw)  # type: ignore[assignment]
+        except FileNotFoundError:
+            pass
+
+        # Merge: project overrides on top of defaults.
+        if defaults and project_raw:
+            merged: dict[str, Any] = {**defaults, **project_raw}
+            # Lists are replaced (not combined) at the top level.
+            _merge_list_keys(merged, defaults, project_raw)
+        elif project_raw:
+            merged = project_raw
+        elif defaults:
+            merged = defaults
+        else:
+            # Neither bundled defaults nor project config found.
+            raise FileNotFoundError(
+                f"No quality-gate config found. "
+                f"Bundled defaults: {skill_dir}, Project: {repo}",
+            )
+
+        return validate(merged)
+    except ConfigInvalid:
+        raise
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"No quality-gate config found. "
+            f"Bundled defaults: {skill_dir}, Project: {repo}",
+        )

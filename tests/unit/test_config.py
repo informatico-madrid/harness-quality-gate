@@ -1,7 +1,8 @@
 """Unit tests for the config loader and validator.
 
 Covers v1 hard-reject; v2 valid; threshold-lowered hard-reject;
-${VAR} expansion; and missing config file.
+${VAR} expansion; new Phase 5 top-level keys; config file precedence;
+and load_with_defaults() merging.
 """
 
 from __future__ import annotations
@@ -13,7 +14,14 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from harness_quality_gate.config import ConfigInvalid, _expand_env_vars, load, validate
+from harness_quality_gate.config import (
+    ConfigInvalid,
+    _expand_env_vars,
+    _find_config_path,
+    load,
+    load_with_defaults,
+    validate,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -382,3 +390,154 @@ def test_shipped_skill_config_is_v2_valid() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     cfg = load(repo_root)
     assert cfg.schema_version == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: New Config fields — defaults
+# ---------------------------------------------------------------------------
+
+
+def test_validate_phase5_fields_defaults() -> None:
+    """Config with only schema_version gets correct defaults for new fields."""
+    config = validate(_make_v2_config())
+    assert config.source_dir is None
+    assert config.vulture_confidence == 80
+    assert config.ruff_exclude == ["tests/"]
+    assert config.mutmut_max_children is None
+    assert config.mutation_threshold == 100.0
+    assert config.coverage_threshold == 100.0
+
+
+def test_validate_phase5_fields_from_raw() -> None:
+    """validate() reads new keys from the raw dict."""
+    cfg = _make_v2_config({
+        "source_dir": "lib",
+        "vulture_confidence": 90,
+        "ruff_exclude": ["tests/", "vendor/"],
+        "mutmut_max_children": 8,
+        "mutation_threshold": 90.0,
+        "coverage_threshold": 95.0,
+    })
+    config = validate(cfg)
+    assert config.source_dir == "lib"
+    assert config.vulture_confidence == 90
+    assert config.ruff_exclude == ["tests/", "vendor/"]
+    assert config.mutmut_max_children == 8
+    assert config.mutation_threshold == 90.0
+    assert config.coverage_threshold == 95.0
+
+
+def test_validate_phase5_null_values_handled() -> None:
+    """None/null values map to Python None for optional fields."""
+    cfg = _make_v2_config({
+        "source_dir": None,
+        "mutmut_max_children": None,
+    })
+    config = validate(cfg)
+    assert config.source_dir is None
+    assert config.mutmut_max_children is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Config location precedence — _find_config_path
+# ---------------------------------------------------------------------------
+
+
+def test_find_config_path_prefers_quality_gate_dir(tmp_path: Path) -> None:
+    """_quality-gate/quality-gate.yaml wins over .quality-gate.yaml."""
+    _write_yaml(tmp_path, "_quality-gate/quality-gate.yaml", _make_v2_config())
+    _write_yaml(tmp_path, ".quality-gate.yaml", _make_v2_config())
+    result = _find_config_path(tmp_path)
+    assert result is not None
+    assert result.parts[-2:] == ("_quality-gate", "quality-gate.yaml")
+
+
+def test_find_config_path_falls_through_to_dot_yaml(tmp_path: Path) -> None:
+    """Without _quality-gate dir, .quality-gate.yaml is found."""
+    _write_yaml(tmp_path, ".quality-gate.yaml", _make_v2_config())
+    result = _find_config_path(tmp_path)
+    assert result is not None
+    assert result.name == ".quality-gate.yaml"
+
+
+def test_find_config_path_falls_through_to_config_subdir(tmp_path: Path) -> None:
+    """Without _quality-gate or .quality-gate.yaml, config/quality-gate.yaml is found."""
+    _write_yaml(tmp_path, "config/quality-gate.yaml", _make_v2_config())
+    result = _find_config_path(tmp_path)
+    assert result is not None
+    assert result.name == "quality-gate.yaml"
+
+
+def test_find_config_path_all_absent_returns_none(tmp_path: Path) -> None:
+    """No config files → None."""
+    result = _find_config_path(tmp_path)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: load_with_defaults() — merging bundled + project config
+# ---------------------------------------------------------------------------
+
+
+def test_load_with_defaults_uses_bundled_when_no_project_config(tmp_path: Path) -> None:
+    """No project config → bundled defaults are used."""
+    bundled_path = tmp_path / "bundled"
+    bundled_path.mkdir()
+    bundled_cfg = _make_v2_config({"source_dir": "src"})
+    _write_yaml(bundled_path, "config/quality-gate.yaml", bundled_cfg)
+    config = load_with_defaults(tmp_path, skill_dir=bundled_path)
+    assert config.source_dir == "src"
+    assert config.vulture_confidence == 80
+
+
+def test_load_with_defaults_project_overrides_bundled(tmp_path: Path) -> None:
+    """Project-level overrides take precedence over bundled defaults."""
+    bundled_path = tmp_path / "bundled"
+    bundled_path.mkdir()
+    bundled_cfg = _make_v2_config({"source_dir": "src", "vulture_confidence": 60})
+    _write_yaml(bundled_path, "config/quality-gate.yaml", bundled_cfg)
+
+    project_path = tmp_path / "project"
+    project_cfg = {"schema_version": 2, "source_dir": "lib"}
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", project_cfg)
+
+    config = load_with_defaults(project_path, skill_dir=bundled_path)
+    assert config.source_dir == "lib"  # project override
+    assert config.vulture_confidence == 60  # bundled default
+
+
+def test_load_with_defaults_list_replacement(tmp_path: Path) -> None:
+    """Project ruff_exclude replaces (not appends to) bundled ruff_exclude."""
+    bundled_path = tmp_path / "bundled"
+    bundled_path.mkdir()
+    bundled_cfg = _make_v2_config({"ruff_exclude": ["tests/", "vendor/"]})
+    _write_yaml(bundled_path, "config/quality-gate.yaml", bundled_cfg)
+
+    project_path = tmp_path / "project"
+    project_cfg = {"schema_version": 2, "ruff_exclude": ["tests/"]}
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", project_cfg)
+
+    config = load_with_defaults(project_path, skill_dir=bundled_path)
+    assert config.ruff_exclude == ["tests/"]
+
+
+def test_load_with_defaults_rejects_v1_schema(tmp_path: Path) -> None:
+    """Project config with v1 schema → ConfigInvalid."""
+    bundled_path = tmp_path / "bundled"
+    bundled_path.mkdir()
+    bundled_cfg = _make_v2_config()
+    _write_yaml(bundled_path, "config/quality-gate.yaml", bundled_cfg)
+
+    project_path = tmp_path / "project"
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", {"schema_version": 1})
+
+    with pytest.raises(ConfigInvalid, match="v1"):
+        load_with_defaults(project_path, skill_dir=bundled_path)
+
+
+def test_load_with_defaults_no_bundled_no_project(tmp_path: Path) -> None:
+    """No bundled defaults and no project config → FileNotFoundError."""
+    project_path = tmp_path / "project"
+    project_path.mkdir()
+    with pytest.raises(FileNotFoundError):
+        load_with_defaults(project_path, skill_dir=tmp_path / "nonexistent")
