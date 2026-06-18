@@ -52,8 +52,15 @@ class PythonAdapter(BaseAdapter):
 
     _name = "python"
 
-    def __init__(self) -> None:
-        """Instantiate all tool adapters."""
+    def __init__(self, paths: list[str] | None = None) -> None:
+        """Instantiate all tool adapters.
+
+        Args:
+            paths: Optional subset of files/dirs to scan. When provided,
+                   the adapter performs partial runs (L3A + L1 only) scoped
+                   to these paths. L2, L3B, L4 return quick-pass results.
+        """
+        self.paths = paths
         self.ruff = RuffAdapter()
         self.pyright = PyrightAdapter()
         self.pytest = PytestAdapter()
@@ -166,7 +173,17 @@ class PythonAdapter(BaseAdapter):
         is decided by ERROR-severity weak-test findings only (A1, A4, A6,
         A7, A8); WARNING-severity rules (A2, A3, A5, A9) inform but do not
         fail the layer.
+
+        When ``paths`` is set (partial run), return a quick-pass LayerResult.
         """
+        if self.paths is not None:
+            return LayerResult(
+                layer="L2",
+                language="python",
+                passed=True,
+                findings=[],
+                duration_sec=0.0,
+            )
         t0 = time.monotonic()
 
         findings = self._weak_test_findings(repo)
@@ -199,7 +216,17 @@ class PythonAdapter(BaseAdapter):
         L3B is the deep-quality layer per the spec glossary. The Tier B
         BMAD multi-judge consensus is orchestrated by the LLM through the
         skill steps, not by this adapter.
+
+        When ``paths`` is set (partial run), return a quick-pass LayerResult.
         """
+        if self.paths is not None:
+            return LayerResult(
+                layer="L3B",
+                language="python",
+                passed=True,
+                findings=[],
+                duration_sec=0.0,
+            )
         t0 = time.monotonic()
         all_findings: list[Finding] = []
 
@@ -261,7 +288,17 @@ class PythonAdapter(BaseAdapter):
         vulture and deptry are the Python equivalents of PHP's
         dead-code-detector and composer-dependency-analyser, which run in
         L4 per the spec glossary (security defense: dep-analysis).
+
+        When ``paths`` is set (partial run), return a quick-pass LayerResult.
         """
+        if self.paths is not None:
+            return LayerResult(
+                layer="L4",
+                language="python",
+                passed=True,
+                findings=[],
+                duration_sec=0.0,
+            )
         t0 = time.monotonic()
         all_findings: list[Finding] = []
         required_tools_skipped: list[str] = []
@@ -418,7 +455,8 @@ class PythonAdapter(BaseAdapter):
         """Invoke ruff and parse findings.
 
         Uses :func:`resolve_tool` to locate the ruff binary, which handles
-        venv-priority internally.
+        venv-priority internally. When ``self.paths`` is set, scopes the scan
+        to the specified files/directories.
         """
         try:
             binary = str(resolve_tool("ruff", repo))
@@ -426,14 +464,20 @@ class PythonAdapter(BaseAdapter):
             logger.warning("ruff not found on PATH or .venv, skipping")
             return []
         try:
-            inv = self.ruff.invoke(repo, [], env=dict(env) if env else {})
+            inv = self.ruff.invoke(
+                repo, [], env=dict(env) if env else {}, paths=self.paths
+            )
             return self.ruff.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("ruff invocation failed: %s", exc)
             return []
 
     def _run_pyright(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
-        """Invoke pyright and parse findings."""
+        """Invoke pyright and parse findings.
+        
+        When ``self.paths`` is set, scopes the type-check to the specified
+        files/directories.
+        """
         try:
             binary = str(resolve_tool("pyright", repo))
         except ToolNotAvailable:
@@ -443,6 +487,7 @@ class PythonAdapter(BaseAdapter):
             inv = self.pyright.invoke(
                 repo, [], env=dict(env) if env else {},
                 python_path=sys.executable,
+                paths=self.paths,
             )
             return self.pyright.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
@@ -454,6 +499,7 @@ class PythonAdapter(BaseAdapter):
 
         Uses the venv pytest via ``sys.executable -m pytest`` which
         automatically resolves to the venv's Python interpreter.
+        When ``self.paths`` is set, passes them as test collection targets.
         """
         if not sys.executable:
             logger.warning("Python interpreter not found (sys.executable empty), skipping")
@@ -469,7 +515,9 @@ class PythonAdapter(BaseAdapter):
                 prev_path = patched_env.get("PATH", os.environ.get("PATH", ""))
                 patched_env["PATH"] = venv_dir + os.pathsep + prev_path
                 env = patched_env  # type: ignore[assignment]
-            inv = self.pytest.invoke(repo, [], env=dict(env) if env else {})
+            inv = self.pytest.invoke(
+                repo, [], env=dict(env) if env else {}, paths=self.paths
+            )
             return self.pytest.parse(inv.stdout, inv.stderr, inv.exitcode)
         except (OSError, RuntimeError) as exc:
             logger.warning("pytest invocation failed: %s", exc)
@@ -509,6 +557,9 @@ class PythonAdapter(BaseAdapter):
         Returns a tuple of (MutationStats, bool) where run_ok is False
         when the mutmut run failed or the tool is not found.
 
+        When ``self.paths`` is set, scopes the mutation campaign to
+        the specified modules.
+
         Uses :func:`resolve_tool` to locate the mutmut binary, which
         handles venv-priority internally.
         """
@@ -525,7 +576,8 @@ class PythonAdapter(BaseAdapter):
         try:
             # Execute the campaign first (parity with PHP's Infection);
             # ``mutmut results`` alone is empty on a fresh repo (bug H2).
-            run_inv = self.mutmut.run(repo, env=dict(env) if env else {})
+            run_inv = self.mutmut.run(repo, env=dict(env) if env else {},
+                                      paths=self.paths)
             run_ok = run_inv.exitcode == 0
             if not run_ok:
                 logger.warning("mutmut run exited %d: %s",

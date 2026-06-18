@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Any
 
 from .adapters.php.php_adapter import PhpAdapter
+from .adapters.python.python_adapter import (
+    PythonAdapter as _PYTHON_ADAPTER_CLASS,
+)
 from .adapters.python.python_adapter import PythonAdapter
 from .allow_list_auditor import AllowListAuditor, AuditReport
 from .checkpoint import build as build_checkpoint
@@ -200,7 +203,10 @@ def _cmd_all(args: argparse.Namespace) -> int:
     work_dir = repo / "_quality-gate" / "work"
 
     try:
-        adapter = PhpAdapter() if language == "php" else PythonAdapter()
+        if language == "php":
+            adapter = PhpAdapter()
+        else:
+            adapter = PythonAdapter(paths=args.paths)
     except Exception as exc:  # noqa: BLE001
         return _exit_with(
             INTERNAL_ERROR,
@@ -210,9 +216,31 @@ def _cmd_all(args: argparse.Namespace) -> int:
 
     env = {**os.environ, "work_dir": str(work_dir)}
     layer_results: list[LayerResult] = []
+
+    # When --paths is provided for Python repos, run only Tier 1 (L3A + L1)
+    # for fast agent feedback. L2, L3B, L4 are skipped.
+    # --paths is Python-only; PHP repos ignore it and always run all 5 layers.
+    partial_run = (
+        args.paths is not None
+        and getattr(adapter, "paths", None) is not None
+    )
+    layer_names = ("L3A", "L1", "L2", "L3B", "L4")
+
     try:
-        for run_layer in (adapter.run_l3a, adapter.run_l1, adapter.run_l2, adapter.run_l3b, adapter.run_l4):
-            layer_results.append(run_layer(repo, env))
+        for idx, run_layer in enumerate(
+            (adapter.run_l3a, adapter.run_l1, adapter.run_l2, adapter.run_l3b, adapter.run_l4)
+        ):
+            if partial_run and idx >= 2:
+                # Quick-pass: record layer as passed for partial runs.
+                layer_results.append(LayerResult(
+                    layer=layer_names[idx],
+                    language=language,
+                    passed=True,
+                    findings=[],
+                    duration_sec=0.0,
+                ))
+            else:
+                layer_results.append(run_layer(repo, env))
     except Exception as exc:  # noqa: BLE001
         return _exit_with(
             INTERNAL_ERROR,
@@ -336,6 +364,12 @@ def main(argv: list[str] | None = None) -> int:
 
     all_p = sub.add_parser("all", help="Run all quality-gate layers")
     _add_common_flags(all_p)
+    all_p.add_argument(
+        "--paths",
+        nargs="*",
+        default=None,
+        help="Subset of files/dirs to scan — runs only Tier 1 (L3A + L1)",
+    )
 
     audit_p = sub.add_parser("audit-ignores", help="Audit suppression annotations")
     _add_common_flags(audit_p)

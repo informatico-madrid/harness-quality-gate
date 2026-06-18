@@ -31,7 +31,7 @@ from harness_quality_gate.models import LayerResult
 def _make_args(**kwargs):
     """Build a minimal argparse.Namespace with sane defaults."""
     import argparse
-    defaults = {"repo": ".", "json": False, "quiet": False}
+    defaults = {"repo": ".", "json": False, "quiet": False, "paths": None}
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 

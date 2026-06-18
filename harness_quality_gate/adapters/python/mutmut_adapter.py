@@ -59,6 +59,7 @@ class MutmutAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 3600.0,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
         """Execute the mutation campaign (``mutmut run``) in *repo*.
 
@@ -66,6 +67,9 @@ class MutmutAdapter(ToolAdapter):
         which the PhpAdapter also executes inline. ``MUTATION_MAX_CHILDREN``
         in *env* caps parallelism — without it mutmut spawns one child per
         core, which produces false timeouts on many-core hosts (self-eval F3).
+
+        When *paths* is provided (partial run), append them after ``mutmut run``
+        to override the ``paths_to_mutate`` config.
 
         Uses :func:`resolve_tool` to locate the mutmut binary, which
         handles venv-priority internally.
@@ -75,6 +79,8 @@ class MutmutAdapter(ToolAdapter):
         except ToolNotAvailable:
             return ToolInvocation(stderr="mutmut not found on PATH or .venv", exitcode=3)
         cmd = [binary, "run"]
+        if paths:
+            cmd.extend(paths)
         max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")  # pragma: no mutate
         if max_children.isdigit():
             cmd.extend(["--max-children", max_children])

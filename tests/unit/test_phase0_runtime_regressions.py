@@ -38,7 +38,7 @@ from harness_quality_gate.models import LayerResult, MutationStats
 
 def _make_args(**kwargs):
     import argparse
-    defaults = {"repo": ".", "json": False, "quiet": False}
+    defaults = {"repo": ".", "json": False, "quiet": False, "paths": None}
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 

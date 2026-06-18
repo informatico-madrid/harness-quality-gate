@@ -1820,7 +1820,7 @@ class TestRunRuffHelper:
         a.ruff = _mock_subadapter(findings=[])
         with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/ruff")):
             a._run_ruff(tmp_path, None)
-        a.ruff.invoke.assert_called_once_with(tmp_path, [], env={})
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env={}, paths=None)
 
 
 # ---------------------------------------------------------------------------
@@ -3150,9 +3150,9 @@ class TestPyAdapterSurvivorKillers:
              patch(_PA_WHICH, return_value=Path("/usr/bin/x")), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l3a(tmp_path, self.ENV)
-        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV, paths=None)
         a.pyright.invoke.assert_called_once_with(
-            tmp_path, [], env=self.ENV, python_path=sys.executable,
+            tmp_path, [], env=self.ENV, python_path=sys.executable, paths=None,
         )
         a.ruff.parse.assert_called_once_with("out-0", "err-0", 0)
         a.pyright.parse.assert_called_once_with("out-1", "err-1", 1)
@@ -3175,9 +3175,9 @@ class TestPyAdapterSurvivorKillers:
              patch(_PA_WHICH, return_value=Path("/usr/bin/x")), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l1(tmp_path, self.ENV)
-        a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV, paths=None)
         a.pytest.parse.assert_called_once_with("out-2", "err-2", 2)
-        a.mutmut.run.assert_called_once_with(tmp_path, env=self.ENV)
+        a.mutmut.run.assert_called_once_with(tmp_path, env=self.ENV, paths=None)
         a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
         assert _pa_messages(caplog) == ["pytest: 0 findings"]

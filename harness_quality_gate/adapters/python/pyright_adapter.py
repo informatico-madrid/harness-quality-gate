@@ -48,6 +48,7 @@ class PyrightAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
         python_path: Path | str | None = None,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
         try:
             binary = str(resolve_tool("pyright", repo))
@@ -62,20 +63,24 @@ class PyrightAdapter(ToolAdapter):
             cmd.extend(["--pythonpath", ppath])
         if args:
             cmd.extend(args)
-        # Default scan targets for type-checking — exclude_tests ensures
-        # pyright never scans test code. L2/L1 handle test quality separately.
-        source_dir = detect_source_dir(repo)
-        if source_dir:
-            default_targets = source_targets(repo, source_dir, exclude_tests=True)
+        # When explicit paths are provided (partial run), use them as scan targets
+        # instead of auto-discovering the full repo.
+        if paths:
+            scan_targets = paths
         else:
-            # No src/ — fall back to package dirs, excluding tests/
-            default_targets = [
-                str(p) if isinstance(p, Path) else p
-                for p in package_dirs(repo) if "test" not in str(p).lower()
-            ]
-        if not default_targets:
-            default_targets = [str(repo)]
-        cmd.extend(default_targets)
+            # Default scan targets for type-checking — exclude_tests ensures
+            # pyright never scans test code. L2/L1 handle test quality separately.
+            source_dir = detect_source_dir(repo)
+            if source_dir:
+                default_targets = source_targets(repo, source_dir, exclude_tests=True)
+            else:
+                # No src/ — fall back to package dirs, excluding tests/
+                default_targets = [
+                    str(p) if isinstance(p, Path) else p
+                    for p in package_dirs(repo) if "test" not in str(p).lower()
+                ]
+            scan_targets = default_targets if default_targets else [str(repo)]
+        cmd.extend(scan_targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     @staticmethod

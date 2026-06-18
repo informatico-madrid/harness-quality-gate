@@ -41,6 +41,7 @@ class RuffAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
         try:
             binary = str(resolve_tool("ruff", repo))
@@ -49,22 +50,26 @@ class RuffAdapter(ToolAdapter):
         cmd = [binary, "check", "--output-format=json"]
         if args:
             cmd.extend(args)
-        # L3A scans production source only — test code quality is covered
-        # by L2 (weak_test, etc.). Excluding tests prevents noise from
-        # F841, F401, F811, F541 in test files that are false positives.
-        source_dir = detect_source_dir(repo)
-        if source_dir:
-            default_targets = source_targets(repo, source_dir, exclude_tests=True)
+        # When explicit paths are provided (partial run), use them as scan targets
+        # instead of auto-discovering the full repo.
+        if paths:
+            scan_targets = paths
         else:
-            # No src/ — fall back to package dirs, excluding tests/
-            default_targets = [
-                p if isinstance(p, str) else str(p)
-                for p in package_dirs(repo)
-                if "test" not in str(p).lower()
-            ]
-        if not default_targets:
-            default_targets = ["."]
-        cmd.extend(default_targets)
+            # L3A scans production source only — test code quality is covered
+            # by L2 (weak_test, etc.). Excluding tests prevents noise from
+            # F841, F401, F811, F541 in test files that are false positives.
+            source_dir = detect_source_dir(repo)
+            if source_dir:
+                default_targets = source_targets(repo, source_dir, exclude_tests=True)
+            else:
+                # No src/ — fall back to package dirs, excluding tests/
+                default_targets = [
+                    p if isinstance(p, str) else str(p)
+                    for p in package_dirs(repo)
+                    if "test" not in str(p).lower()
+                ]
+            scan_targets = default_targets if default_targets else ["."]
+        cmd.extend(scan_targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]

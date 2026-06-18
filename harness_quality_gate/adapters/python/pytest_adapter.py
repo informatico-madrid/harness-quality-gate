@@ -49,6 +49,7 @@ class PytestAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
         python = sys.executable
         # The JUnit report goes to a temp file: writing it to /dev/stdout
@@ -61,9 +62,13 @@ class PytestAdapter(ToolAdapter):
                "-o", "junit_suite_name=pytest"]
         if args:
             cmd.extend(args)
-        # Collect tests/ only when present — default collection would also
-        # pick up the copies under mutants/ (H10).
-        if (repo / "tests").is_dir():
+        # When explicit paths are provided (partial run), use them as
+        # test collection targets instead of auto-discovering tests/.
+        if paths:
+            cmd.extend(paths)
+        elif (repo / "tests").is_dir():
+            # Collect tests/ only when present — default collection would also
+            # pick up the copies under mutants/ (H10).
             cmd.append("tests")
         try:
             result = self._run(cmd, cwd=repo, env=env, timeout=timeout)
