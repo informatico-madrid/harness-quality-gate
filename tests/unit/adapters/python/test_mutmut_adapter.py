@@ -18,6 +18,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter
 
 
@@ -40,18 +41,18 @@ def _ok_invocation(stdout: str = "") -> ToolInvocation:
 
 
 def test_version_binary_not_found_raises(tmp_path: Path) -> None:
-    """shutil.which returns None → RuntimeError with 'mutmut' in message."""
-    with patch("shutil.which", return_value=None):
+    """resolve_tool returns None → RuntimeError with 'mutmut' in message."""
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
         with pytest.raises(RuntimeError, match="mutmut"):
             _adapter().version(tmp_path)
 
 
-def test_version_calls_shutil_which_with_literal_mutmut(tmp_path: Path) -> None:
-    """version() must call shutil.which('mutmut') verbatim (kills mutmut_2: which(None))."""
+def test_version_calls_resolve_tool_with_literal_mutmut(tmp_path: Path) -> None:
+    """version() must call resolve_tool('mutmut') verbatim (kills mutmut_2: resolve_tool(None, tmp_path))."""
     with (
         patch(
-            "harness_quality_gate.adapters.python.mutmut_adapter.shutil.which",
-            return_value="/usr/bin/mutmut",
+            "harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool",
+            return_value=Path("/usr/bin/mutmut"),
         ) as which_mock,
         patch.object(
             ToolAdapter,
@@ -60,7 +61,7 @@ def test_version_calls_shutil_which_with_literal_mutmut(tmp_path: Path) -> None:
         ),
     ):
         _adapter().version(tmp_path)
-    which_mock.assert_called_once_with("mutmut")
+    which_mock.assert_called_once_with("mutmut", tmp_path)
 
 
 def test_name_property_returns_tool_name() -> None:
@@ -70,7 +71,7 @@ def test_name_property_returns_tool_name() -> None:
 
 def test_version_calls_run_version_flag(tmp_path: Path) -> None:
     """Binary found → _run invoked with [binary, '--version']."""
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")
         ) as mock_run:
@@ -84,7 +85,7 @@ def test_version_calls_run_version_flag(tmp_path: Path) -> None:
 
 def test_version_passes_cwd(tmp_path: Path) -> None:
     """invoke() passes cwd to _run."""
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")) as mock_run:
             _adapter().version(tmp_path)
 
@@ -96,7 +97,7 @@ def test_version_wiring_exact_call_args(tmp_path: Path) -> None:
 
     Kills mutmut survivors (13,16): env→None mutation on version.
     """
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")
         ) as mock_run:
@@ -113,7 +114,7 @@ def test_version_env_none_passed(tmp_path: Path) -> None:
 
     Kills mutmut on env=env mutation: env=None → removed.
     """
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="3.5.0")
         ) as mock_run:
@@ -123,7 +124,7 @@ def test_version_env_none_passed(tmp_path: Path) -> None:
 
 def test_version_trimmed_output(tmp_path: Path) -> None:
     """stdout=' 3.5.0  ' → stripped to '3.5.0'."""
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="  3.5.0  ")
         ) as mock_run:
@@ -134,7 +135,7 @@ def test_version_trimmed_output(tmp_path: Path) -> None:
 
 def test_version_empty_returns_unknown(tmp_path: Path) -> None:
     """stdout='' → returns 'unknown'."""
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(
             ToolAdapter, "_run", return_value=MagicMock(stdout="")
         ) as mock_run:
@@ -150,7 +151,7 @@ def test_version_empty_returns_unknown(tmp_path: Path) -> None:
 
 def test_invoke_binary_not_found(tmp_path: Path) -> None:
     """mutmut not found → exitcode=3, stderr contains 'mutmut'."""
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
         result = _adapter().invoke(tmp_path, [])
 
     assert result.exitcode == 3
@@ -166,7 +167,7 @@ def test_invoke_wiring_exact_call_args(tmp_path: Path) -> None:
     cwd→None, env→None, timeout→mutated. Uses §4.4 strict mock args.
     """
     fake_bin = "/usr/bin/mutmut"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter,
             "_run",
@@ -191,7 +192,7 @@ def test_invoke_wiring_exact_call_args(tmp_path: Path) -> None:
 def test_invoke_command_structure(tmp_path: Path) -> None:
     """Binary found → cmd = [binary, 'results', '--json', ...user-args]."""
     fake_bin = "/usr/bin/mutmut"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter,
             "_run",
@@ -212,7 +213,7 @@ def test_invoke_command_structure(tmp_path: Path) -> None:
 def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
     """invoke() forwards cwd, env, and timeout to _run."""
     fake_bin = "/usr/bin/mutmut"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter,
             "_run",
@@ -230,7 +231,7 @@ def test_invoke_sets_cwd_env_timeout(tmp_path: Path) -> None:
 def test_invoke_passes_through_result(tmp_path: Path) -> None:
     """invoke() returns whatever _run returns."""
     fake_bin = "/usr/bin/mutmut"
-    with patch("shutil.which", return_value=fake_bin):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path(fake_bin)):
         with patch.object(
             ToolAdapter,
             "_run",
@@ -245,7 +246,7 @@ def test_invoke_passes_through_result(tmp_path: Path) -> None:
     assert result.exitcode == 1
     assert result.duration_seconds == 5.5
 
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
         result = _adapter().invoke(tmp_path, [])
     assert result.exitcode == 3
 
@@ -609,7 +610,7 @@ def test_invoke_uses_results_all_true(tmp_path: Path) -> None:
     """`mutmut results --json` does not exist in mutmut 3.x — the adapter
     must ask for per-mutant status lines instead."""
     adapter = _adapter()
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             adapter.invoke(tmp_path, [])
     cmd = run.call_args[0][0]
@@ -619,7 +620,7 @@ def test_invoke_uses_results_all_true(tmp_path: Path) -> None:
 
 def test_run_executes_mutation_campaign(tmp_path: Path) -> None:
     adapter = _adapter()
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             inv = adapter.run(tmp_path)
     cmd = run.call_args[0][0]
@@ -637,7 +638,7 @@ def test_run_honors_mutation_max_children_env(tmp_path: Path) -> None:
     Without the cap mutmut spawns one child per core; on >18-core hosts
     that produces false timeouts (project convention: .env sets 18).
     """
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             _adapter().run(tmp_path, env={"MUTATION_MAX_CHILDREN": "18"})
     assert run.call_args.args[0] == [
@@ -647,7 +648,7 @@ def test_run_honors_mutation_max_children_env(tmp_path: Path) -> None:
 
 def test_run_ignores_invalid_mutation_max_children(tmp_path: Path) -> None:
     """A non-numeric MUTATION_MAX_CHILDREN is ignored, not passed through."""
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             _adapter().run(tmp_path, env={"MUTATION_MAX_CHILDREN": "lots"})
     assert run.call_args.args[0] == ["/usr/bin/mutmut", "run"]
@@ -655,10 +656,10 @@ def test_run_ignores_invalid_mutation_max_children(tmp_path: Path) -> None:
 
 def test_run_binary_not_found_degrades(tmp_path: Path) -> None:
     adapter = _adapter()
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
         inv = adapter.run(tmp_path)
     assert inv.exitcode == 3
-    assert "mutmut not found on PATH" in inv.stderr
+    assert "mutmut not found on PATH or .venv" in inv.stderr
 
 
 def test_parse_per_mutant_lines_aggregates_statuses(tmp_path: Path) -> None:
@@ -701,25 +702,27 @@ def test_parse_usage_error_text_yields_zero_stats(tmp_path: Path) -> None:
 
 
 def test_run_queries_which_with_exact_tool_name(tmp_path: Path) -> None:
-    """A name-checking fake (not a blanket return) kills which-arg mutants."""
-    def _which(name):
-        return "/usr/bin/mutmut" if name == "mutmut" else None
+    """A name-checking fake (not a blanket return) kills resolve_tool-arg mutants."""
+    def _resolve(name, repo):
+        if name == "mutmut":
+            return Path("/usr/bin/mutmut")
+        raise ToolNotAvailable(name)
 
-    with patch("shutil.which", side_effect=_which):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=_resolve):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             _adapter().run(tmp_path)
     assert run.call_args.args[0] == ["/usr/bin/mutmut", "run"]
 
 
 def test_run_not_found_exact_stderr(tmp_path: Path) -> None:
-    with patch("shutil.which", return_value=None):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("mutmut")):
         inv = _adapter().run(tmp_path)
-    assert inv.stderr == "mutmut not found on PATH"
+    assert inv.stderr == "mutmut not found on PATH or .venv"
     assert inv.exitcode == 3
 
 
 def test_run_passes_env_through(tmp_path: Path) -> None:
-    with patch("shutil.which", return_value="/usr/bin/mutmut"):
+    with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
         with patch.object(MutmutAdapter, "_run", return_value=_ok_invocation()) as run:
             _adapter().run(tmp_path, env={"MUTMUT_CI": "1"})
     assert run.call_args.kwargs["env"] == {"MUTMUT_CI": "1"}

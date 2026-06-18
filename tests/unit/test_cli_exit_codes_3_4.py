@@ -17,13 +17,14 @@ from harness_quality_gate.models import LayerResult
 
 def _make_args(**kwargs):
     import argparse
-    defaults = {"repo": ".", "json": False, "quiet": False}
+    defaults = {"repo": ".", "json": False, "quiet": False, "paths": None}
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
 
 def _mock_adapter() -> MagicMock:
     adapter = MagicMock()
+    adapter.paths = None  # disable partial_run — full run by default
     lr = LayerResult(layer="L3A", language="python", passed=True,
                      findings=[], duration_sec=0.0)
     for method in ("run_l3a", "run_l1", "run_l2", "run_l3b", "run_l4"):

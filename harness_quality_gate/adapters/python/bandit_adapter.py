@@ -9,12 +9,12 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation, source_targets
+from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
 
 class BanditAdapter(ToolAdapter):
@@ -27,9 +27,10 @@ class BanditAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("bandit")
-        if binary is None:
-            raise RuntimeError("bandit not found on PATH")
+        try:
+            binary = str(resolve_tool("bandit", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("bandit not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip() or "unknown"
 
@@ -41,14 +42,26 @@ class BanditAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
     ) -> ToolInvocation:
-        binary = shutil.which("bandit")
-        if binary is None:
-            return ToolInvocation(stderr="bandit not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("bandit", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="bandit not found on PATH or .venv", exitcode=3)
         # Recurse the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
         # -q keeps bandit 1.9's progress bar out of stdout — it corrupts
         # the JSON report otherwise (self-eval F7).
-        targets = source_targets(repo, "src") or [str(repo)]
+        source_dir = detect_source_dir(repo)
+        if source_dir:
+            targets = source_targets(repo, source_dir, exclude_tests=True) or [str(repo)]
+        else:
+            # No src/ — fall back to package dirs, excluding tests/
+            targets = [
+                p if isinstance(p, str) else str(p)
+                for p in package_dirs(repo)
+                if "test" not in str(p).lower()
+            ]
+            if not targets:
+                targets = [str(repo)]
         cmd = [binary, "-r", "-q", "--format", "json", *targets]
         if args:
             cmd.extend(args)

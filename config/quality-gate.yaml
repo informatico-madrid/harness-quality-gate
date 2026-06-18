@@ -5,6 +5,16 @@
 # during self-application (self-eval F14).
 schema_version: 2
 
+# ── Convergence Phase 5: top-level configurable parameters ──
+# These keys can be overridden per-project in _quality-gate/quality-gate.yaml.
+source_dir: src                    # auto-detected if unset
+vulture_confidence: 80             # filter dead-code noise
+ruff_exclude:
+  - tests/
+mutmut_max_children: null          # auto: os.cpu_count() // 2
+mutation_threshold: 100.0
+coverage_threshold: 100.0
+
 # Layer 1: Test Execution
 layer1:
   coverage_threshold: 85.0

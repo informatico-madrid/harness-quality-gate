@@ -9,11 +9,10 @@ Requirements: FR-29, US-9.
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable
 from ...models import MutationStats
 from ..base import ToolAdapter, ToolInvocation
 
@@ -28,13 +27,10 @@ class MutmutAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        venv_bin = repo / ".venv" / "bin" / "mutmut"
-        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
-            binary = str(venv_bin)
-        else:
-            binary = shutil.which("mutmut")
-        if binary is None:
-            raise RuntimeError("mutmut not found on PATH")
+        try:
+            binary = str(resolve_tool("mutmut", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("mutmut not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip() or "unknown"
 
@@ -46,13 +42,10 @@ class MutmutAdapter(ToolAdapter):
         env: Mapping[str, str] | None = None,
         timeout: float = 600.0,
     ) -> ToolInvocation:
-        venv_bin = repo / ".venv" / "bin" / "mutmut"
-        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
-            binary = str(venv_bin)
-        else:
-            binary = shutil.which("mutmut")
-        if binary is None:
-            return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("mutmut", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="mutmut not found on PATH or .venv", exitcode=3)
         # mutmut 3.x has no ``results --json``; per-mutant status lines are
         # the only machine-readable output (same source as mutation_analyzer).
         cmd = [binary, "results", "--all", "true"]
@@ -66,6 +59,7 @@ class MutmutAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 3600.0,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
         """Execute the mutation campaign (``mutmut run``) in *repo*.
 
@@ -74,19 +68,19 @@ class MutmutAdapter(ToolAdapter):
         in *env* caps parallelism — without it mutmut spawns one child per
         core, which produces false timeouts on many-core hosts (self-eval F3).
 
-        When the repo has a ``.venv/bin/mutmut``, prefers the venv binary
-        over the system version — system mutmut (3.5.0) is missing the
-        ``mutmut.mutation.trampoline`` module that the campaign needs,
-        causing silent test failures and empty mutation stats (bug H2).
+        When *paths* is provided (partial run), append them after ``mutmut run``
+        to override the ``paths_to_mutate`` config.
+
+        Uses :func:`resolve_tool` to locate the mutmut binary, which
+        handles venv-priority internally.
         """
-        venv_bin = repo / ".venv" / "bin" / "mutmut"
-        if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
-            binary = str(venv_bin)
-        else:
-            binary = shutil.which("mutmut")
-        if binary is None:
-            return ToolInvocation(stderr="mutmut not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("mutmut", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="mutmut not found on PATH or .venv", exitcode=3)
         cmd = [binary, "run"]
+        if paths:
+            cmd.extend(paths)
         max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")  # pragma: no mutate
         if max_children.isdigit():
             cmd.extend(["--max-children", max_children])

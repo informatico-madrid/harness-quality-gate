@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.python.bandit_adapter import BanditAdapter
 from harness_quality_gate.adapters.python.deptry_adapter import DeptryAdapter
 from harness_quality_gate.adapters.python.mutmut_adapter import MutmutAdapter
@@ -21,11 +22,11 @@ class TestDeptryKillers:
     MOD = "harness_quality_gate.adapters.python.deptry_adapter"
 
     def test_invoke_which_exact_and_not_found_invocation(self, tmp_path: Path) -> None:
-        with patch(f"{self.MOD}.shutil.which", return_value=None) as which:
+        with patch(f"{self.MOD}.resolve_tool", side_effect=ToolNotAvailable("tool")) as which:
             result = DeptryAdapter().invoke(tmp_path, [])
-        which.assert_called_once_with("deptry")
+        which.assert_called_once_with("deptry", tmp_path)
         assert result == ToolInvocation(
-            stdout="", stderr="deptry not found on PATH", exitcode=3,
+            stdout="", stderr="deptry not found on PATH or .venv", exitcode=3,
             duration_seconds=0.0,
         )
 
@@ -51,18 +52,18 @@ class TestMutmutAdapterKillers:
     MOD = "harness_quality_gate.adapters.python.mutmut_adapter"
 
     def test_invoke_which_exact_and_not_found_invocation(self, tmp_path: Path) -> None:
-        with patch(f"{self.MOD}.shutil.which", return_value=None) as which:
+        with patch(f"{self.MOD}.resolve_tool", side_effect=ToolNotAvailable("tool")) as which:
             result = MutmutAdapter().invoke(tmp_path, [])
-        which.assert_called_once_with("mutmut")
+        which.assert_called_once_with("mutmut", tmp_path)
         assert result == ToolInvocation(
-            stdout="", stderr="mutmut not found on PATH", exitcode=3,
+            stdout="", stderr="mutmut not found on PATH or .venv", exitcode=3,
             duration_seconds=0.0,
         )
 
     def test_invoke_exact_cmd_and_default_timeout(self, tmp_path: Path) -> None:
         adapter = MutmutAdapter()
         with (
-            patch(f"{self.MOD}.shutil.which", return_value="/usr/bin/mutmut"),
+            patch(f"{self.MOD}.resolve_tool", return_value=Path("/usr/bin/mutmut")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, ["--extra"])
@@ -78,8 +79,8 @@ class TestVersionTokenKillers:
         inv = MagicMock(stdout="pyright version 1.1.300\n")
         with (
             patch(
-                "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-                return_value="/usr/bin/pyright",
+                "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+                return_value=Path("/usr/bin/pyright"),
             ),
             patch.object(adapter, "_run", return_value=inv),
         ):
@@ -87,10 +88,10 @@ class TestVersionTokenKillers:
 
     def test_pyright_version_missing_exact_message(self, tmp_path: Path) -> None:
         with patch(
-            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("tool"),
         ):
-            with pytest.raises(RuntimeError, match=r"^pyright not found on PATH$"):
+            with pytest.raises(RuntimeError, match=r"^pyright not found on PATH or .venv$"):
                 PyrightAdapter().version(tmp_path)
 
     def test_ruff_version_takes_last_token(self, tmp_path: Path) -> None:
@@ -98,8 +99,8 @@ class TestVersionTokenKillers:
         inv = MagicMock(stdout="ruff version 0.6.8\n")
         with (
             patch(
-                "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-                return_value="/usr/bin/ruff",
+                "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+                return_value=Path("/usr/bin/ruff"),
             ),
             patch.object(adapter, "_run", return_value=inv),
         ):
@@ -117,7 +118,7 @@ class TestPytestAdapterKillers:
 </testsuites>"""
 
     def test_invoke_fallback_python3_literal_in_cmd(self, tmp_path: Path) -> None:
-        # No longer uses shutil.which — now uses sys.executable.
+        # No longer uses shutil.which — now uses resolve_tool — now uses sys.executable.
         # Verify that invocation uses sys.executable instead of "python3".
         adapter = PytestAdapter()
         with (
@@ -167,11 +168,11 @@ class TestVultureKillers:
     def test_invoke_which_exact_name(self, tmp_path: Path) -> None:
         from harness_quality_gate.adapters.python.vulture_adapter import VultureAdapter
         with patch(
-            "harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("tool"),
         ) as which:
             VultureAdapter().invoke(tmp_path, [])
-        which.assert_called_once_with("vulture")
+        which.assert_called_once_with("vulture", tmp_path)
 
 
 class TestBanditResultsDefault:
@@ -182,17 +183,17 @@ class TestBanditResultsDefault:
 class TestV14PythonKillers:
     def test_deptry_version_exact_message_and_run_spy(self, tmp_path):
         with patch(
-            "harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("tool"),
         ):
-            with pytest.raises(RuntimeError, match=r"^deptry not found on PATH$"):
+            with pytest.raises(RuntimeError, match=r"^deptry not found on PATH or .venv$"):
                 DeptryAdapter().version(tmp_path)
         adapter = DeptryAdapter()
         inv = MagicMock(stdout="deptry 0.20.0\n")
         with (
             patch(
-                "harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                return_value="/usr/bin/deptry",
+                "harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                return_value=Path("/usr/bin/deptry"),
             ),
             patch.object(adapter, "_run", return_value=inv) as run,
         ):
@@ -204,8 +205,8 @@ class TestV14PythonKillers:
         assert DeptryAdapter().parse(stdout)[0].node == "<unknown>"
 
     @pytest.mark.parametrize("mod,cls,msg", [
-        ("mutmut_adapter", "MutmutAdapter", "mutmut not found on PATH"),
-        ("vulture_adapter", "VultureAdapter", "vulture not found on PATH"),
+        ("mutmut_adapter", "MutmutAdapter", "mutmut not found on PATH or .venv"),
+        ("vulture_adapter", "VultureAdapter", "vulture not found on PATH or .venv"),
     ])
     def test_version_missing_exact_messages(self, tmp_path, mod, cls, msg):
         import importlib
@@ -213,7 +214,7 @@ class TestV14PythonKillers:
         adapter = getattr(module, cls)()
         import re as _re
         with patch(
-            f"harness_quality_gate.adapters.python.{mod}.shutil.which", return_value=None,
+            f"harness_quality_gate.adapters.python.{mod}.resolve_tool", side_effect=ToolNotAvailable("tool"),
         ):
             with pytest.raises(RuntimeError, match=f"^{_re.escape(msg)}$"):
                 adapter.version(tmp_path)
@@ -274,8 +275,8 @@ class TestScanTargetsExcludeMutationArtifacts:
         repo = self._repo(tmp_path)
         adapter = RuffAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-                  return_value="/usr/bin/ruff"),
+            patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/ruff")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
@@ -287,8 +288,8 @@ class TestScanTargetsExcludeMutationArtifacts:
     def test_ruff_falls_back_to_repo_root_without_src_tests(self, tmp_path: Path) -> None:
         adapter = RuffAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-                  return_value="/usr/bin/ruff"),
+            patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/ruff")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
@@ -301,8 +302,8 @@ class TestScanTargetsExcludeMutationArtifacts:
         repo = self._repo(tmp_path)
         adapter = PyrightAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-                  return_value="/usr/bin/pyright"),
+            patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/pyright")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
@@ -313,8 +314,8 @@ class TestScanTargetsExcludeMutationArtifacts:
         repo = self._repo(tmp_path)
         adapter = BanditAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                  return_value="/usr/bin/bandit"),
+            patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/bandit")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
@@ -326,18 +327,25 @@ class TestScanTargetsExcludeMutationArtifacts:
         repo = self._repo(tmp_path)
         adapter = VultureAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
-                  return_value="/usr/bin/vulture"),
+            patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/vulture")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "src"]
+        cmd = run.call_args.args[0]
+        # vulture now uses detect_source_dir + --min-confidence
+        assert cmd[0] == "/usr/bin/vulture"
+        assert "--min-confidence" in cmd
+        assert "80" in cmd
+        assert "src" in cmd
+        # src should be the source target (last arg)
+        assert cmd[-1] == "src"
 
     def test_deptry_extends_excludes_with_mutation_artifacts(self, tmp_path: Path) -> None:
         adapter = DeptryAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which",
-                  return_value="/usr/bin/deptry"),
+            patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/deptry")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
@@ -351,7 +359,7 @@ class TestScanTargetsExcludeMutationArtifacts:
     def test_pytest_collects_only_tests_dir_when_present(self, tmp_path: Path) -> None:
         repo = self._repo(tmp_path)
         adapter = PytestAdapter()
-        # No longer mocks shutil.which — uses sys.executable directly.
+        # No longer mocks shutil.which — uses resolve_tool — uses sys.executable directly.
         with (
             patch.object(adapter, "_run", return_value=MagicMock(
                 stdout="", stderr="", exitcode=0, duration_seconds=0.1)) as run,
@@ -423,8 +431,8 @@ class TestPackageAtRootLayout:
         repo = self._pkg_repo(tmp_path)
         adapter = RuffAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-                  return_value="/usr/bin/ruff"),
+            patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/ruff")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
@@ -437,8 +445,8 @@ class TestPackageAtRootLayout:
         repo = self._pkg_repo(tmp_path)
         adapter = BanditAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                  return_value="/usr/bin/bandit"),
+            patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/bandit")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
@@ -450,18 +458,25 @@ class TestPackageAtRootLayout:
         repo = self._pkg_repo(tmp_path)
         adapter = VultureAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which",
-                  return_value="/usr/bin/vulture"),
+            patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/vulture")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])
-        assert run.call_args.args[0] == ["/usr/bin/vulture", "mypkg"]
+        cmd = run.call_args.args[0]
+        # vulture now uses detect_source_dir + --min-confidence
+        assert cmd[0] == "/usr/bin/vulture"
+        assert "--min-confidence" in cmd
+        assert "80" in cmd
+        # Package at root — no src/ → falls back to mypkg, not tests
+        assert "mypkg" in cmd
+        assert "tests" not in cmd
 
     def test_bandit_falls_back_to_repo_root_without_packages(self, tmp_path: Path) -> None:
         adapter = BanditAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                  return_value="/usr/bin/bandit"),
+            patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/bandit")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
@@ -482,8 +497,8 @@ class TestPackageAtRootLayout:
         repo = self._pkg_repo(tmp_path)
         adapter = PyrightAdapter()
         with (
-            patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-                  return_value="/usr/bin/pyright"),
+            patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/pyright")),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(repo, [])

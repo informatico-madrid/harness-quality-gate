@@ -15,11 +15,13 @@ Covers the four dogfooding bugs that crashed ``all`` at runtime:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
     PhpAntipatternTierAAdapter,
 )
@@ -36,7 +38,7 @@ from harness_quality_gate.models import LayerResult, MutationStats
 
 def _make_args(**kwargs):
     import argparse
-    defaults = {"repo": ".", "json": False, "quiet": False}
+    defaults = {"repo": ".", "json": False, "quiet": False, "paths": None}
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
@@ -81,8 +83,8 @@ class TestPyrightParseSignature:
         adapter = PythonAdapter()
         invocation = ToolInvocation(stdout=self._PYRIGHT_JSON, stderr="", exitcode=1)
         with (
-            patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
-                  return_value="/usr/bin/pyright"),
+            patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/pyright")),
             patch.object(adapter.pyright, "invoke", return_value=invocation),
         ):
             findings = adapter._run_pyright(tmp_path, {})

@@ -56,27 +56,30 @@ def _mock_subadapter(findings: list[Finding] | None = None) -> MagicMock:
 
 
 def _all_tools_on_path(which_map: dict[str, str | None] | None = None):
-    """Return a patch for shutil.which that considers all Python tools present.
+    """Return a patch for resolve_tool that considers all Python tools present.
 
     Default: all tools considered found. Optionally customize per-tool.
-    This patches 'harness_quality_gate.adapters.python.python_adapter.shutil.which'.
+    This patches 'harness_quality_gate.adapters.python.python_adapter.resolve_tool'.
     """
     defaults = {
-        "ruff": "/bin/ruff", "pyright": "/bin/pyright",
-        "vulture": "/bin/vulture", "deptry": "/bin/deptry",
-        "mutmut": "/bin/mutmut", "bandit": "/bin/bandit",
-        "python3": "/usr/bin/python3",
+        "ruff": Path("/bin/ruff"), "pyright": Path("/bin/pyright"),
+        "vulture": Path("/bin/vulture"), "deptry": Path("/bin/deptry"),
+        "mutmut": Path("/bin/mutmut"), "bandit": Path("/bin/bandit"),
+        "python3": Path("/usr/bin/python3"),
     }
     if which_map:
-        defaults.update(which_map)
+        defaults.update({k: Path(v) if isinstance(v, str) else v for k, v in which_map.items()})
 
-    def _which(name):
+    def _resolve(name, repo):
         # Handle absolute paths (the code sometimes passes /usr/bin/python3 directly)
-        if os.path.isabs(name):
-            return name
-        return defaults.get(name)
+        if isinstance(name, str) and os.path.isabs(name):
+            return Path(name)
+        val = defaults.get(name)
+        if val is None:
+            raise ToolNotAvailable(name)
+        return val if isinstance(val, Path) else Path(val)
 
-    return patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", side_effect=_which)
+    return patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_resolve)
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +94,8 @@ class TestRunL3A:
         """Deterministic: the sub-adapters are mocked; the which() guards in
         _run_ruff/_run_pyright must not depend on locally installed tools."""
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            side_effect=lambda name: (
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            side_effect=lambda name, repo=None: (
                 f"/usr/bin/{name}" if name in ("ruff", "pyright") else None
             ),
         ):
@@ -279,6 +282,27 @@ class TestRunL3A:
         assert inv_args[0] is tmp_path, "invoke() first arg = repo (kills mutmut_15,29)"
         assert inv_args[1] == [], "invoke() second arg = [] (kills mutmut_15,29)"
 
+
+    def test_l3a_pyright_passes_python_path(self, tmp_path: Path):
+        """_run_pyright passes python_path=sys.executable to enable venv-aware resolution.
+
+        Phase 2 convergence: pyright must resolve imports from the project's .venv
+        to prevent false-positive import errors when pyright is installed globally.
+        """
+        import sys as _sys
+        a = self._adapter()
+        a.ruff = _mock_subadapter(findings=[])
+        a.pyright = _mock_subadapter(findings=[])
+        with _all_tools_on_path({"ruff": "/bin/ruff", "pyright": "/bin/pyright"}):
+            layer = a.run_l3a(tmp_path, {})
+        assert a.pyright.invoke.called
+        _, inv_kwargs = a.pyright.invoke.call_args
+        assert "python_path" in inv_kwargs, "python_path keyword arg must be passed"
+        assert inv_kwargs["python_path"] == _sys.executable, (
+            f"python_path must equal sys.executable ({_sys.executable}), "
+            f"got {inv_kwargs['python_path']}"
+        )
+
     def test_l3a_passed_type_when_fail(self, tmp_path: Path):
         """passed must be exact bool False when findings exist.
 
@@ -312,8 +336,8 @@ class TestRunL1:
         """Deterministic: the which("mutmut") guard in _run_mutmut must not
         depend on mutmut being installed on the machine."""
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            side_effect=lambda name: (
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            side_effect=lambda name, repo=None: (
                 "/usr/bin/mutmut" if name == "mutmut" else None
             ),
         ):
@@ -766,7 +790,7 @@ class TestRunL1MutationGate:
         mutmut_8 (UPPERCASE), mutmut_13 (escaped=None), mutmut_14 (untested=None).
         """
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 layer = a.run_l1(tmp_path, {})
         ms = layer.tool_specific["mutation_stats"]
@@ -783,11 +807,11 @@ class TestRunL1MutationGate:
         assert ms.untested == 0  # kills mutmut_14: untested=0 → None
         assert layer.passed is False  # run_ok=False → gate fails when mutmut can't run
         # Exact log message kills string mutations 5,6,7,8
-        assert "mutmut not found on PATH, returning empty stats" in caplog.text
+        assert "mutmut not found on PATH or .venv, returning empty stats" in caplog.text
         # Strict exact-message assertion — kills mutmut_6 (XX...XX prefix/suffix)
         for record in caplog.records:
             if record.levelname == "WARNING" and "mutmut not found" in record.getMessage():
-                assert record.getMessage() == "mutmut not found on PATH, returning empty stats"
+                assert record.getMessage() == "mutmut not found on PATH or .venv, returning empty stats"
 
     def test_l1mut_mutmut_raises_oserror(self, tmp_path: Path):
         """mutmut.invoke raises OSError -> (empty_stats, False) -> layer fails."""
@@ -1399,7 +1423,7 @@ class TestCheckTools:
     def test_check_tools_nothing_found(self, tmp_path: Path):
         """Neither ruff nor pyright present -> RuntimeError."""
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError, match="Missing Python tool"):
                 a.check_tools()
 
@@ -1407,12 +1431,12 @@ class TestCheckTools:
         """Only ruff missing -> RuntimeError with ruff."""
         a = self._adapter()
 
-        def _which(cmd):
+        def _resolve(cmd, repo=None):
             if cmd == "ruff":
-                return None
-            return "/usr/bin/fake"
+                raise ToolNotAvailable(cmd)
+            return Path("/usr/bin/fake")
 
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", side_effect=_which):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_resolve):
             with pytest.raises(RuntimeError, match="ruff") as exc_info:
                 a.check_tools()
         assert "ruff" in exc_info.value.args[0]
@@ -1421,12 +1445,12 @@ class TestCheckTools:
         """Only pyright missing -> RuntimeError with pyright."""
         a = self._adapter()
 
-        def _which(cmd):
+        def _resolve(cmd, repo=None):
             if cmd == "pyright":
-                return None
-            return "/usr/bin/fake"
+                raise ToolNotAvailable(cmd)
+            return Path("/usr/bin/fake")
 
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", side_effect=_which):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=_resolve):
             with pytest.raises(RuntimeError, match="pyright") as exc_info:
                 a.check_tools()
         assert "pyright" in exc_info.value.args[0]
@@ -1434,14 +1458,14 @@ class TestCheckTools:
     def test_check_tools_both_present(self, tmp_path: Path):
         """Both ruff and pyright present -> return list."""
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/usr/bin/tool"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/tool")):
             result = a.check_tools()
         assert result == ["ruff", "pyright"]
 
     def test_check_tools_error_message_contains_both_names(self, tmp_path: Path):
         """Error lists both missing tool names."""
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             try:
                 a.check_tools()
             except RuntimeError as e:
@@ -1564,7 +1588,7 @@ class TestRunRuffHelper:
         (with env={} both branches yield {}, mutations indistinguishable)
       - Return type/value assertions kill return []→None mutations
       - env kwarg assertions kill env=None/removed/conditional mutations
-      - Separate test for tool-not-found path (shutil.which→None)
+      - Separate test for tool-not-found path (resolve_tool() → None)
     """
 
     def _adapter(self):
@@ -1599,31 +1623,31 @@ class TestRunRuffHelper:
 
 
     def test_run_ruff_shell_which_arg_exact(self, tmp_path, monkeypatch):
-        """shutil.which() called with exact string "ruff", not mutated.
+        """resolve_tool() called with exact string "ruff", not mutated.
 
         Kills string mutations on the "ruff" literal:
-        - mutmut_6: shutil.which("ruff") -> shutil.which("XXruffXX")
+        - mutmut_6: resolve_tool("ruff") -> resolve_tool("XXruffXX")
         - mutmut_7: similar string prefix/suffix mutations
         - mutmut_8: uppercase/lowercase mutation on "ruff"
 
-        Strategy: mock shutil.which and capture args to verify EXACT string.
+        Strategy: mock resolve_tool and capture args to verify EXACT string.
         """
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
         which_calls = []
 
-        def spy_which(name):
+        def spy_resolve(name, repo=None):
             which_calls.append(name)
-            return "/bin/ruff"
+            return Path("/bin/ruff")
 
         monkeypatch.setattr(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            spy_which,
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            spy_resolve,
         )
         a._run_ruff(tmp_path, {})
         assert len(which_calls) == 1
         assert which_calls[0] == "ruff", (
-            f'shutil.which must be called with exact "ruff", '
+            f'resolve_tool must be called with exact "ruff", '
             f'got {repr(which_calls[0])} (kills H8 string mutations)'
         )
 
@@ -1658,7 +1682,7 @@ class TestRunRuffHelper:
         Kills return []→None mutations and H8 string log mutations.
         """
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 findings = a._run_ruff(tmp_path, {})
         assert isinstance(findings, list), "return must be list (kills return→None)"
@@ -1667,7 +1691,7 @@ class TestRunRuffHelper:
         # Kill H8 string mutation in log msg: assert EXACT message
         warn_msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(warn_msgs) == 1
-        assert warn_msgs[0] == "ruff not found on PATH, skipping", (
+        assert warn_msgs[0] == "ruff not found on PATH or .venv, skipping", (
             f"Logger must emit exact message, got {warn_msgs[0]!r} "
             "(kills H8 string mutation)"
         )
@@ -1794,9 +1818,9 @@ class TestRunRuffHelper:
         """env=None must reach ruff.invoke as env={} (defensive asserts removed)."""
         a = self._adapter()
         a.ruff = _mock_subadapter(findings=[])
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value="/usr/bin/ruff"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/ruff")):
             a._run_ruff(tmp_path, None)
-        a.ruff.invoke.assert_called_once_with(tmp_path, [], env={})
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env={}, paths=None)
 
 
 # ---------------------------------------------------------------------------
@@ -1819,8 +1843,8 @@ class TestRunPyrightHelper:
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[_make_finding(tool="pyright")])
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            return_value="/usr/bin/pyright",
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            return_value=Path("/usr/bin/pyright"),
         ):
             findings = a._run_pyright(tmp_path, {})
         assert len(findings) == 1
@@ -1846,7 +1870,7 @@ class TestRunPyrightHelper:
         """
         a = self._adapter()
         a.pyright = _mock_subadapter(findings=[])
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 findings = a._run_pyright(tmp_path, {})
         # Type assertion: kills mutmut_7 (return []→None)
@@ -1857,7 +1881,7 @@ class TestRunPyrightHelper:
         pyright_warn = [r for r in caplog.records if r.levelname == "WARNING" and "pyright" in r.message.lower()]
         assert len(pyright_warn) == 1, f"Expected warning, got {len(pyright_warn)}"
         # Kill mutmut_6: verify exact log message (not garbled/empty)
-        assert pyright_warn[0].getMessage() == "pyright not found on PATH, skipping", \
+        assert pyright_warn[0].getMessage() == "pyright not found on PATH or .venv, skipping", \
             f"Expected exact warning message, got: {pyright_warn[0].getMessage()}"
 
     def test_run_pyright_oserror(self, tmp_path: Path, caplog):
@@ -1970,7 +1994,7 @@ class TestRunPytestHelper:
     def test_run_pytest_tool_not_found(self, tmp_path: Path, caplog):
         """sys.executable falsy → early return with warning.
 
-        The guard was migrated from shutil.which("python3") to sys.executable.
+        The guard was migrated from resolve_tool("python3") to sys.executable.
         Since sys.executable is never empty in normal Python execution,
         this tests that the guard still fires when it would be falsy.
         Kills mutmut_5,6,7,8,29 via adapted guard-check logic.
@@ -2064,7 +2088,7 @@ class TestRunVultureHelper:
         """Vulture not on PATH -> empty list."""
         a = self._adapter()
         a.vulture = _mock_subadapter(findings=[])
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             findings = a._run_vulture(tmp_path, {})
         assert findings == []
 
@@ -2187,7 +2211,7 @@ class TestRunVultureHelper:
         Kills logger message string mutation via exact message check.
         """
         a = self._adapter()
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 findings = a._run_vulture(tmp_path, {})
 
@@ -2203,7 +2227,7 @@ class TestRunVultureHelper:
         ]
         assert len(vulture_warn) >= 1, "Logger must emit vulture not found warning (kills mutmut_10, 11)"
         # Kill exact-message string mutations (mutmut on log format string)
-        assert any("vulture not found on PATH" in r.getMessage() for r in vulture_warn), (
+        assert any("vulture not found on PATH or .venv" in r.getMessage() for r in vulture_warn), (
             "Warning must contain 'vulture not found on PATH' message"
         )
 
@@ -2274,7 +2298,7 @@ class TestRunDeptryHelper:
         a = self._adapter()
         a.deptry = _mock_subadapter(findings=[])
 
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 findings = a._run_deptry(tmp_path, {})
 
@@ -2297,7 +2321,7 @@ class TestRunDeptryHelper:
             f"Logger must emit deptry not found warning (kills mutmut_5,7,8), got {len(deptry_warn)}"
         )
         # Kill exact-message string mutations (mutmut_6: XX...XX prefix/suffix mutation)
-        assert any(r.getMessage().startswith("deptry not found on PATH") for r in deptry_warn), (
+        assert any(r.getMessage().startswith("deptry not found on PATH or .venv") for r in deptry_warn), (
             "Warning must start with 'deptry not found on PATH' (kills mutmut_6)"
         )
 
@@ -2334,7 +2358,7 @@ class TestRunDeptryHelper:
     def test_run_deptry_not_found_no_invoke(self, tmp_path: Path):
         """When deptry not on PATH, deptry.invoke must NOT be called (kills guard mutation).
 
-        Kills mutmut_21, 23, 24 (guard: if shutil.which("deptry") is None) mutations.
+        Kills mutmut_21, 23, 24 (guard: if resolve_tool("deptry") is None) mutations.
         If guard is mutated and invoke is called when tool not found, this fails.
         """
         a = self._adapter()
@@ -2342,8 +2366,8 @@ class TestRunDeptryHelper:
         mock_deptry.parse.return_value = []
         with patch.object(a, "deptry", mock_deptry):
             with patch(
-                "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-                return_value=None,
+                "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+                side_effect=ToolNotAvailable("deptry"),
             ):
                 a._run_deptry(tmp_path, {})
         assert not mock_deptry.invoke.called, \
@@ -2376,12 +2400,12 @@ class TestRunBanditHelper:
         """Bandit not on PATH -> empty list."""
         a = self._adapter()
         a.bandit = _mock_subadapter(findings=[])
-        with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             findings = a._run_bandit(tmp_path, {})
         assert findings == []
-        # Kills mutmut_21 (shutil.which→None guard mutation):
-        # If shutil.which is mutated to a different falsy value, the early return still fires
-        # But if the guard itself is mutated so shutil.which("bandit") returns truthy,
+        # Kills mutmut_21 (resolve_tool() → None guard mutation):
+        # If resolve_tool is mutated to a different falsy value, the early return still fires
+        # But if the guard itself is mutated so resolve_tool("bandit") returns truthy,
         # invoke would be called -> assert_not_called kills this
 
     def test_run_bandit_not_found_no_invoke(self, tmp_path: Path):
@@ -2395,8 +2419,8 @@ class TestRunBanditHelper:
         mock_bandit.parse.return_value = []
         with patch.object(a, "bandit", mock_bandit):
             with patch(
-                "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-                return_value=None,
+                "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+                side_effect=ToolNotAvailable("bandit"),
             ):
                 a._run_bandit(tmp_path, {})
         assert not mock_bandit.invoke.called, \
@@ -2490,7 +2514,7 @@ class TestRunBanditHelper:
         mock_bandit = MagicMock()
         mock_bandit.parse.return_value = []
         with patch.object(a, "bandit", mock_bandit):
-            with patch("harness_quality_gate.adapters.python.python_adapter.shutil.which", return_value=None):
+            with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
                 with caplog.at_level("WARNING",
                                        logger="harness_quality_gate.adapters.python.python_adapter"):
                     findings = a._run_bandit(tmp_path, {})
@@ -2511,7 +2535,7 @@ class TestRunBanditHelper:
             f"Exactly 1 bandit warning expected, got {len(bandit_warn)} (kills mutmut_10)"
 
         # Kill mutmut_6: exact log message equality — XX...XX mutations killed by == check
-        assert bandit_warn[0].getMessage() == "bandit not found on PATH, skipping", \
+        assert bandit_warn[0].getMessage() == "bandit not found on PATH or .venv, skipping", \
             f"Exact log message check kills mutmut_6 (XX...XX mutations in not-found message)"
 
     def test_run_bandit_oserror_strict(self, tmp_path: Path, caplog):
@@ -2565,9 +2589,9 @@ class TestRunMutmutDirect:
     """Target mutations on _run_mutmut: mutmut_39 through mutmut_48.
 
     These mutations are on _run_mutmut itself (not through run_l3b):
-    - mutmut_39: shutil.which("mutmut") → None (already in test_l3b_mutmut_not_on_path)
-    - mutmut_40: shutil.which("mutmut") → True
-    - mutmut_42: logger.warning("mutmut not found on PATH, ") → removed
+    - mutmut_39: resolve_tool("mutmut") → None (already in test_l3b_mutmut_not_on_path)
+    - mutmut_40: resolve_tool("mutmut") → True
+    - mutmut_42: logger.warning("mutmut not found on PATH or .venv, ") → removed
     - mutmut_43: "PATH, " → "XX...XX"
       Returns early with default MutationStats → assert all-zero fields.
     - mutmut_45: return MutationStats() → replaced with None
@@ -2585,15 +2609,15 @@ class TestRunMutmutDirect:
         """mutmut not on PATH → returns default empty MutationStats.
 
         Kills:
-        - mutmut_39: shutil.which("mutmut") → None branch → assert all fields are 0
-        - mutmut_40: shutil.which("mutmut") → True (mutated guard) → still returns default stats
+        - mutmut_39: resolve_tool("mutmut") → None branch → assert all fields are 0
+        - mutmut_40: resolve_tool("mutmut") → True (mutated guard) → still returns default stats
         - mutmut_42: logger.warning() call removed → asserts warning is present kills removal
         - mutmut_43: format string "PATH, " → "XX...XX" → asserts exact log message
         """
         a = self._adapter()
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("mutmut"),
         ):
             with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                 # Replace mutmut sub-adapter with a spy mock so we can check .invoke.called
@@ -2617,7 +2641,7 @@ class TestRunMutmutDirect:
         # Mutmut_43: exact log message (format string not corrupted)
         warn = [r for r in caplog.records if r.levelname == "WARNING" and "mutmut not found" in r.message]
         assert len(warn) == 1, "logger.warning must be called (kills mutmut_42)"
-        assert warn[0].getMessage() == "mutmut not found on PATH, returning empty stats"
+        assert warn[0].getMessage() == "mutmut not found on PATH or .venv, returning empty stats"
         # Kill mutmut_54/55: assert mutmut.invoke NOT called (guard prevents invoke)
         assert not mock_mutmut.invoke.called, \
             "invoke() must NOT be called when mutmut is not on PATH (kills guard mutation)"
@@ -2967,8 +2991,8 @@ class TestRunMutmut:
         """Deterministic: the which("mutmut") guard in _run_mutmut must not
         depend on mutmut being installed on the machine."""
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            side_effect=lambda name: (
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            side_effect=lambda name, repo=None: (
                 "/usr/bin/mutmut" if name == "mutmut" else None
             ),
         ):
@@ -3084,11 +3108,12 @@ class TestRunMutmut:
 
 import logging
 
+from harness_quality_gate.bootstrap import resolve_tool, ToolNotAvailable
 from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
 
 _PA_LOGGER = "harness_quality_gate.adapters.python.python_adapter"
 _PA_MONOTONIC = "harness_quality_gate.adapters.python.python_adapter.time.monotonic"
-_PA_WHICH = "harness_quality_gate.adapters.python.python_adapter.shutil.which"
+_PA_WHICH = "harness_quality_gate.adapters.python.python_adapter.resolve_tool"
 
 
 def _pa_messages(caplog):
@@ -3122,12 +3147,12 @@ class TestPyAdapterSurvivorKillers:
         a.ruff.parse.return_value = [f]
         a.pyright.parse.return_value = [f, f]
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_WHICH, return_value=Path("/usr/bin/x")), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l3a(tmp_path, self.ENV)
-        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.ruff.invoke.assert_called_once_with(tmp_path, [], env=self.ENV, paths=None)
         a.pyright.invoke.assert_called_once_with(
-            tmp_path, [], env=self.ENV, python_path=sys.executable,
+            tmp_path, [], env=self.ENV, python_path=sys.executable, paths=None,
         )
         a.ruff.parse.assert_called_once_with("out-0", "err-0", 0)
         a.pyright.parse.assert_called_once_with("out-1", "err-1", 1)
@@ -3147,12 +3172,12 @@ class TestPyAdapterSurvivorKillers:
         a.mutmut.parse.return_value = stats
         a.mutmut.run.return_value = MagicMock(exitcode=0, stderr="")
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_WHICH, return_value=Path("/usr/bin/x")), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l1(tmp_path, self.ENV)
-        a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
+        a.pytest.invoke.assert_called_once_with(tmp_path, [], env=self.ENV, paths=None)
         a.pytest.parse.assert_called_once_with("out-2", "err-2", 2)
-        a.mutmut.run.assert_called_once_with(tmp_path, env=self.ENV)
+        a.mutmut.run.assert_called_once_with(tmp_path, env=self.ENV, paths=None)
         a.mutmut.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
         a.mutmut.parse.assert_called_once_with("out-3", "err-3", 3)
         assert _pa_messages(caplog) == ["pytest: 0 findings"]
@@ -3198,7 +3223,7 @@ class TestPyAdapterSurvivorKillers:
     def test_l4_exact_calls_logs_duration(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
         with caplog.at_level(logging.INFO, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/x"), \
+             patch(_PA_WHICH, return_value=Path("/usr/bin/x")), \
              patch(_PA_MONOTONIC, side_effect=[10.0, 11.23456]):
             result = a.run_l4(tmp_path, self.ENV)
         a.bandit.invoke.assert_called_once_with(tmp_path, [], env=self.ENV)
@@ -3215,17 +3240,17 @@ class TestPyAdapterSurvivorKillers:
         assert result.language == "python"
 
     @pytest.mark.parametrize("attr,tool,not_found_msg,fail_msg", [
-        ("ruff", "ruff", "ruff not found on PATH, skipping", "ruff invocation failed: io-boom"),
-        ("pyright", "pyright", "pyright not found on PATH, skipping", "pyright invocation failed: io-boom"),
-        ("vulture", "vulture", "vulture not found on PATH, skipping", "vulture invocation failed: io-boom"),
-        ("deptry", "deptry", "deptry not found on PATH, skipping", "deptry invocation failed: io-boom"),
-        ("bandit", "bandit", "bandit not found on PATH, skipping", "bandit invocation failed: io-boom"),
+        ("ruff", "ruff", "ruff not found on PATH or .venv, skipping", "ruff invocation failed: io-boom"),
+        ("pyright", "pyright", "pyright not found on PATH or .venv, skipping", "pyright invocation failed: io-boom"),
+        ("vulture", "vulture", "vulture not found on PATH or .venv, skipping", "vulture invocation failed: io-boom"),
+        ("deptry", "deptry", "deptry not found on PATH or .venv, skipping", "deptry invocation failed: io-boom"),
+        ("bandit", "bandit", "bandit not found on PATH or .venv, skipping", "bandit invocation failed: io-boom"),
     ])
     def test_helper_not_found_and_failure_logs_exact(self, tmp_path, caplog, attr, tool, not_found_msg, fail_msg):
         a = _pa_full_mock_adapter()
         helper = getattr(a, f"_run_{attr}")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value=None):
+             patch(_PA_WHICH, side_effect=ToolNotAvailable("tool")):
             assert helper(tmp_path, self.ENV) == []
         getattr(a, attr).invoke.assert_not_called()
         assert _pa_messages(caplog) == [not_found_msg]
@@ -3233,13 +3258,13 @@ class TestPyAdapterSurvivorKillers:
         caplog.clear()
         getattr(a, attr).invoke.side_effect = OSError("io-boom")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/x"):
+             patch(_PA_WHICH, return_value=Path("/usr/bin/x")):
             assert helper(tmp_path, self.ENV) == []
         assert _pa_messages(caplog) == [fail_msg]
 
     def test_run_pytest_not_found_and_failure_logs_exact(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
-        # Guard now checks sys.executable instead of shutil.which("python3")
+        # Guard now checks sys.executable instead of resolve_tool("python3")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
              patch.object(sys, "executable", ""):
             assert a._run_pytest(tmp_path, self.ENV) == []
@@ -3256,19 +3281,19 @@ class TestPyAdapterSurvivorKillers:
     def test_run_mutmut_not_found_returns_exact_zero_stats(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value=None):
+             patch(_PA_WHICH, side_effect=ToolNotAvailable("tool")):
             result = a._run_mutmut(tmp_path, self.ENV)
         # result is (stats, False) — mutmut not found, run_ok=False
         assert result == (_zero_stats(), False), "not found → (zero_stats, False)"
         a.mutmut.invoke.assert_not_called()
-        assert _pa_messages(caplog) == ["mutmut not found on PATH, returning empty stats"]
+        assert _pa_messages(caplog) == ["mutmut not found on PATH or .venv, returning empty stats"]
 
     def test_run_mutmut_failure_returns_exact_zero_stats(self, tmp_path, caplog):
         a = _pa_full_mock_adapter()
         a.mutmut.run.return_value = MagicMock(exitcode=0, stderr="")
         a.mutmut.invoke.side_effect = RuntimeError("mm-boom")
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
-             patch(_PA_WHICH, return_value="/usr/bin/mutmut"):
+             patch(_PA_WHICH, return_value=Path("/usr/bin/mutmut")):
             result = a._run_mutmut(tmp_path, self.ENV)
         # run_ok=False because invoke raised → (zero_stats, False)
         assert result == (_zero_stats(), False), "failure → (zero_stats, False)"
@@ -3289,10 +3314,10 @@ class TestPyAdapterSurvivorKillers:
 
     def test_check_tools_exact_probe_and_message(self):
         a = _pa_full_mock_adapter()
-        with patch(_PA_WHICH, return_value="/usr/bin/x") as which:
+        with patch(_PA_WHICH, return_value=Path("/usr/bin/x")) as which:
             assert a.check_tools() == ["ruff", "pyright"]
         assert [c.args[0] for c in which.call_args_list] == ["ruff", "pyright"]
-        with patch(_PA_WHICH, return_value=None), pytest.raises(
+        with patch(_PA_WHICH, side_effect=ToolNotAvailable("tool")), pytest.raises(
             RuntimeError, match=r"^Missing Python tool\(s\): ruff, pyright$",
         ):
             a.check_tools()
@@ -3328,7 +3353,7 @@ class TestPyAdapterSurvivorKillers:
             escaped=0, untested=0, msi=80.0, covered_msi=80.0,
         )
         a.mutmut.parse.return_value = stats
-        with patch(_PA_WHICH, return_value="/usr/bin/x"):
+        with patch(_PA_WHICH, return_value=Path("/usr/bin/x")):
             result = a.run_l1(tmp_path, self.ENV)
         assert result.passed is False
         assert result.tool_specific["mutation_stats"] is stats
@@ -3566,7 +3591,7 @@ class TestL1MutmutRunWiring:
         a.mutmut.run.return_value = MagicMock(stdout="", stderr="", exitcode=0)
         a.mutmut.invoke.return_value = MagicMock(stdout="x", stderr="", exitcode=0)
         a.mutmut.parse.return_value = stats
-        with patch("shutil.which", return_value="/usr/bin/x"):
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/x")):
             layer = a.run_l1(tmp_path, {})
         a.mutmut.run.assert_called_once()
         # run() must happen before results collection
@@ -3586,8 +3611,8 @@ class TestL3ASeverityGate:
     @pytest.fixture(autouse=True)
     def _tools_on_path(self):
         with patch(
-            "harness_quality_gate.adapters.python.python_adapter.shutil.which",
-            side_effect=lambda name: (
+            "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+            side_effect=lambda name, repo=None: (
                 f"/usr/bin/{name}" if name in ("ruff", "pyright") else None
             ),
         ):
@@ -3689,8 +3714,8 @@ class TestL4SeverityGate:
             patch.object(PythonAdapter, "_run_bandit", return_value=findings),
             patch.object(PythonAdapter, "_run_vulture", return_value=[]),
             patch.object(PythonAdapter, "_run_deptry", return_value=[]),
-            patch("harness_quality_gate.adapters.python.python_adapter.shutil.which",
-                  return_value="/usr/bin/x"),
+            patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool",
+                  return_value=Path("/usr/bin/x")),
         ):
             return a.run_l4(tmp_path, {})
 
@@ -3734,6 +3759,42 @@ class TestRunMutmutRunFailureLog:
         with caplog.at_level(
             _logging.WARNING,
             logger="harness_quality_gate.adapters.python.python_adapter",
-        ), patch("shutil.which", return_value="/usr/bin/mutmut"):
+        ), patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/mutmut")):
             a._run_mutmut(tmp_path, {})
         assert "mutmut run exited 2: boom" in caplog.messages
+
+# ---------------------------------------------------------------------------
+# check_tools mutation killers
+# ---------------------------------------------------------------------------
+
+class TestCheckToolsMutationKills:
+    """These tests kill specific survivor mutations that mock-based tests miss."""
+
+    def _adapter(self):
+        from harness_quality_gate.adapters.python.python_adapter import PythonAdapter
+        return PythonAdapter()
+
+    def test_check_tools_return_list_element_types(self, tmp_path: Path):
+        """Verify each element in results is a proper string, not a mutation variant.
+        Kills mutations like 'ruff' -> 'Ruff' or 'ruff' in the list."""
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", return_value=Path("/usr/bin/tool")):
+            result = a.check_tools()
+        assert len(result) == 2, f"Expected 2 elements, got {len(result)}"
+        assert all(isinstance(s, str) for s in result), f"All elements must be strings: {result}"
+        assert all(s != "" for s in result), "No empty strings allowed"
+        assert all(s != "None" for s in result), "No 'None' strings allowed"
+        assert all(s != "UNKNOWN" for s in result), "No 'UNKNOWN' strings allowed"
+
+    def test_check_tools_error_message_detail(self, tmp_path: Path):
+        """The error message should list each missing tool exactly.
+        Kills mutations in the join format or missing list population."""
+        a = self._adapter()
+        with patch("harness_quality_gate.adapters.python.python_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
+            try:
+                a.check_tools()
+            except RuntimeError as e:
+                msg = str(e)
+                # Should contain the exact tool names
+                assert "ruff" in msg, f"'ruff' not in error: {msg}"
+                assert "pyright" in msg, f"'pyright' not in error: {msg}"

@@ -12,6 +12,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from harness_quality_gate.adapters.python.bandit_adapter import BanditAdapter
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.models import Finding
 
 
@@ -472,7 +473,10 @@ class TestVersion:
 
     def test_version_binary_not_found(self):
         """Binary not found → RuntimeError."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("bandit"),
+        ):
             with pytest.raises(RuntimeError, match="bandit not found on PATH"):
                 _adapter().version(Path("/tmp"))
 
@@ -481,7 +485,10 @@ class TestVersion:
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         bandit_bin = "/usr/local/bin/bandit"
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=bandit_bin):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path(bandit_bin),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 ver = adapter.version(Path("/tmp"))
         assert ver == "bandit 1.7.5"
@@ -492,7 +499,10 @@ class TestVersion:
         """Empty stdout → 'unknown'."""
         mock_result = MagicMock(stdout="")
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/local/bin/bandit"):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/bandit"),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result):
                 ver = adapter.version(Path("/tmp"))
         assert ver == "unknown"
@@ -505,7 +515,10 @@ class TestVersion:
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         bandit_bin = "/usr/local/bin/bandit"
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=bandit_bin):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path(bandit_bin),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp/repo"), env={"BANDIT_ENV": "1"})
         mock_run.assert_called_once()
@@ -516,7 +529,10 @@ class TestVersion:
         """env=None passed to _run when not specified."""
         mock_result = MagicMock(stdout="bandit 1.7.5\n")
         adapter = _adapter()
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/local/bin/bandit"):
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/bandit"),
+        ):
             with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp"))
         assert mock_run.call_args.kwargs["env"] is None
@@ -549,8 +565,10 @@ class TestInvokeQuietFlag:
         from unittest.mock import MagicMock, patch
         adapter = _adapter()
         with (
-            patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                  return_value="/usr/bin/bandit"),
+            patch(
+                "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                return_value=Path("/usr/bin/bandit"),
+            ),
             patch.object(adapter, "_run", return_value=MagicMock()) as run,
         ):
             adapter.invoke(tmp_path, [])
@@ -574,3 +592,63 @@ class TestParseErrorFindingExact:
         assert f.layer == "L4"
         assert f.language == "python"
         assert f.rule_id == "parse-error"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_bandit_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, bandit uses detect_source_dir('src').
+
+    Phase 2 convergence: bandit detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+        return_value=Path("/usr/bin/bandit"),
+    ):
+        with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = BanditAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # bandit command: binary, -r, -q, --format, json, TARGET
+    assert "-r" in cmd
+    assert "-q" in cmd
+    assert "--format" in cmd
+    # src/ is a scan target, tests/ should NOT be (exclude_tests=True)
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_bandit_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, bandit falls back to repo root.
+
+    Phase 2 convergence: no source dir found → repo root as target.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+        return_value=Path("/usr/bin/bandit"),
+    ):
+        with patch.object(BanditAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = BanditAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no sources, tmp_path root is the target
+    assert str(tmp_path) in cmd

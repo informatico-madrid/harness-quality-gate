@@ -14,6 +14,7 @@ import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
 from harness_quality_gate.models import Finding
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.adapters.python.pyright_adapter import PyrightAdapter
 
 
@@ -263,7 +264,7 @@ class TestInvokeBinaryNotFound:
     when binary is None, or remove the _run() call entirely.
     """
 
-    @patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None)
+    @patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright"))
     def test_invoke_returns_exitcode_3_when_pyright_missing(self, mock_which, adapter):
         """Binary missing → ToolInvocation with exitcode=3, no subprocess call.
 
@@ -278,7 +279,7 @@ class TestInvokeBinaryNotFound:
         )
         assert isinstance(result, ToolInvocation)
         assert result.exitcode == 3
-        assert result.stderr == "pyright not found on PATH"
+        assert result.stderr == "pyright not found on PATH or .venv"
 
 
 # ── version ─────────────────────────────────────────────────────────────
@@ -304,8 +305,8 @@ class TestVersion:
         Kills mutations that remove the `if binary is None: raise` branch.
         """
         adapter = PyrightAdapter()
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="pyright not found on PATH"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright")):
+            with pytest.raises(RuntimeError, match="pyright not found on PATH or .venv"):
                 adapter.version(Path("/tmp"))
 
     def test_version_calls_run_with_correct_cmd(self):
@@ -322,7 +323,7 @@ class TestVersion:
         binary = "/usr/bin/mock_pyright"
         mock_result = MagicMock(stdout="pyright 1.1.265")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path(binary)):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 repo = Path("/repo/X")
                 result = adapter.version(repo)
@@ -340,7 +341,7 @@ class TestVersion:
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/bin/pyright")):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result):
                 result = adapter.version(Path("/tmp"))
         assert result == "unknown"
@@ -354,7 +355,7 @@ class TestVersion:
         binary = "/usr/bin/pyright"
         mock_result = MagicMock(stdout="pyright 1.1.265")
 
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=binary):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path(binary)): 
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 result = adapter.version(Path("/repo/X"), env={"PATH_OVERRIDE": "/usr/bin"})
         mock_run.assert_called_once()
@@ -369,26 +370,26 @@ class TestVersion:
         """
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="pyright 1.1.265")
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/usr/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/usr/bin/pyright")):
             with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
                 adapter.version(Path("/tmp"))
         assert mock_run.call_args.kwargs["env"] is None
 
     def test_version_asserts_shutil_which_arg_is_literal_pyright(self):
-        """Spy on shutil.which and assert the literal argument "pyright".
+        """Spy on resolve_tool and assert the literal tool name "pyright" + repo.
 
-        Kills mutmut_2: shutil.which("pyright") → shutil.which(None).
-        The mutant passes None, which breaks the assert_called_once_with("pyright").
+        Kills mutmut_2: resolve_tool("pyright") → resolve_tool(None, repo).
+        The mutant passes None, which breaks the assert_called_once_with("pyright", repo).
         """
         adapter = PyrightAdapter()
         mock_result = MagicMock(stdout="pyright 1.1.265")
         with patch(
-            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-            return_value="/usr/bin/pyright",
-        ) as which_mock:
+            "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+            return_value=Path("/usr/bin/pyright"),
+        ) as resolve_mock:
             with patch.object(PyrightAdapter, "_run", return_value=mock_result):
                 adapter.version(Path("/repo/X"))
-        which_mock.assert_called_once_with("pyright")
+        resolve_mock.assert_called_once_with("pyright", Path("/repo/X"))
 
 
 class TestInvokeNormalPath:
@@ -401,11 +402,13 @@ class TestInvokeNormalPath:
     def _pyright_on_path(self):
         """Deterministic: these tests must not require pyright installed
         (CI runners don't have it — only mypy gates the repo there)."""
+        def _resolve(name, repo):
+            if name == "pyright":
+                return Path("/usr/bin/pyright")
+            raise ToolNotAvailable(name)
         with patch(
-            "harness_quality_gate.adapters.python.pyright_adapter.shutil.which",
-            side_effect=lambda name: (
-                "/usr/bin/pyright" if name == "pyright" else None
-            ),
+            "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+            side_effect=_resolve,
         ):
             yield
 
@@ -487,3 +490,112 @@ class TestInvokeNormalPath:
         with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
             adapter.invoke(repo=Path("/tmp/repo"), args=[])
         assert mock_run.call_args[1]['timeout'] == 300.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_pyright_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, pyright uses detect_source_dir('src').
+
+    Phase 2 convergence: pyright detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    # Create a repo with src/
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # Should scan src/, not tests/
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_pyright_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, pyright falls back to repo root.
+
+    Phase 2 convergence: no source dir found → repo root as target.
+    """
+    # Empty tmp_path (no src/, no packages)
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no source dirs found, repo root is the target
+    assert str(tmp_path) in cmd
+    # Should exclude tests/ from scan
+    assert "tests" not in cmd
+
+
+def test_pyright_passes_pythonpath_when_python_path_given(tmp_path: Path):
+    """When python_path is provided, --pythonpath flag is included.
+
+    Phase 2 convergence: --pythonpath from python_adapter._run_pyright
+    ensures pyright resolves imports from .venv.
+    """
+    venv_py = Path("/tmp/repo/.venv/bin/python")
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [], python_path=venv_py)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--pythonpath" in cmd
+    idx = cmd.index("--pythonpath")
+    assert cmd[idx + 1] == str(venv_py)
+
+
+def test_pyright_no_pythonpath_when_none(tmp_path: Path):
+    """When python_path=None, --pythonpath flag is NOT included.
+
+    Verifies that the python_path conditional is respected.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = PyrightAdapter()
+            adapter.invoke(tmp_path, [], python_path=None)
+
+    cmd = mock_run.call_args[0][0]
+    assert "--pythonpath" not in cmd

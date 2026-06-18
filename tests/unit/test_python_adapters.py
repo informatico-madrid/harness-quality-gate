@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from harness_quality_gate.bootstrap import resolve_tool, ToolNotAvailable
 from harness_quality_gate.adapters.base import ToolInvocation
 
 
@@ -41,19 +42,19 @@ class TestBanditAdapter:
     # -- version --
 
     def test_version_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError, match="bandit not found"):
                 self._adapter().version(tmp_path)
 
     def test_version_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="bandit 1.7.5\n")):
                 result = self._adapter().version(tmp_path)
             assert result == "bandit 1.7.5"
 
     def test_version_passes_env_to_run(self, tmp_path: Path):
         """env dict is passed through to _run. Kills mutmut_13,15,16 (env mutations)."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             capture = []
             def cap(cmd, **kw):
                 capture.append(kw)
@@ -68,7 +69,7 @@ class TestBanditAdapter:
     def test_version_command_args_validated(self, tmp_path: Path):
         """Verify _run receives correct cmd and kwargs.
         This kills mutations on _run() args: missing kwarg, None, wrong values."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             capture = []
             def capture_run(cmd, **kwargs):
                 capture.append((cmd, kwargs))
@@ -83,72 +84,72 @@ class TestBanditAdapter:
         ]
 
     def test_version_which_arg_is_string(self, tmp_path: Path):
-        """_run receives a real binary path from shutil.which('bandit').
-        Kills: shutil.which('bandit') → shutil.which(None/'XXbanditXX'/'BANDIT').
+        """_run receives a real binary path from resolve_tool('bandit').
+        Kills: resolve_tool('bandit') → resolve_tool(None/'XXbanditXX'/'BANDIT').
         Uses side_effect so that mutated strings return None, triggering the error."""
         with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="bandit 1.7.5\n")):
             with patch(
-                "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-                side_effect=lambda name: "/usr/bin/bandit" if name == "bandit" else None,
+                "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+                side_effect=lambda name, repo=None: Path("/usr/bin/bandit") if name == "bandit" else None,
             ):
                 result = self._adapter().version(tmp_path)
             assert result == "bandit 1.7.5"
 
     def test_version_binary_not_found_raises(self, tmp_path: Path):
-        """When shutil.which can't find bandit, raises RuntimeError."""
+        """When resolve_tool can't find bandit, raises RuntimeError."""
         with patch(
-            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("bandit"),
         ):
-            with pytest.raises(RuntimeError, match="bandit not found on PATH"):
+            with pytest.raises(RuntimeError, match="bandit not found on PATH or .venv"):
                 self._adapter().version(tmp_path)
 
     def test_version_empty_output(self, tmp_path: Path):
         """Version returns 'unknown' when stdout is empty."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="")):
                 result = self._adapter().version(tmp_path)
                 assert result == "unknown"
 
     def test_version_none_stderr(self, tmp_path: Path):
         """Version handles empty stderr string."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="v2.0\n")):
                 result = self._adapter().version(tmp_path)
                 assert result.startswith("v2.0")
 
     def test_version_not_found_exact_message(self, tmp_path: Path):
         """Exact error message — kills string mutations (prefix/suffix, case)."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError) as exc:
                 self._adapter().version(tmp_path)
-        assert str(exc.value) == "bandit not found on PATH"
+        assert str(exc.value) == "bandit not found on PATH or .venv"
 
     # -- invoke --
 
     def test_invoke_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
-            assert inv.stderr == "bandit not found on PATH"
+            assert inv.stderr == "bandit not found on PATH or .venv"
 
     def test_invoke_not_found_stderr_assertion(self, tmp_path: Path):
         """Verify stderr is exactly 'bandit not found on PATH'."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
-            assert inv.stderr == "bandit not found on PATH"
+            assert inv.stderr == "bandit not found on PATH or .venv"
             assert inv.stdout == ""
 
     def test_invoke_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout='{"results":[]}')):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 0
 
     def test_invoke_args_appended(self, tmp_path: Path):
         """Extra args are appended to the bandit command."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             def capture_run(cmd, **kwargs):
                 assert cmd == ["/usr/bin/bandit", "-r", "-q", "--format", "json", str(tmp_path), "--ignore-paths", "tests"]
                 assert kwargs.get("cwd") is tmp_path
@@ -159,7 +160,7 @@ class TestBanditAdapter:
 
     def test_invoke_no_args(self, tmp_path: Path):
         """When no extra args given, command is just binary + -r --format json."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             def capture_run(cmd, **kwargs):
                 assert cmd == ["/usr/bin/bandit", "-r", "-q", "--format", "json", str(tmp_path)]
                 assert kwargs.get("cwd") is tmp_path
@@ -170,7 +171,7 @@ class TestBanditAdapter:
 
     def test_invoke_timeout_passthrough(self, tmp_path: Path):
         """Timeout is passed to _run as keyword arg. Cwd is also validated."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             def capture_run(cmd, **kwargs):
                 assert kwargs.get("cwd") is tmp_path
                 assert kwargs.get("timeout") == 60.0
@@ -180,7 +181,7 @@ class TestBanditAdapter:
 
     def test_invoke_env_passthrough(self, tmp_path: Path):
         """env dict is passed to _run."""
-        with patch("harness_quality_gate.adapters.python.bandit_adapter.shutil.which", return_value="/usr/bin/bandit"):
+        with patch("harness_quality_gate.adapters.python.bandit_adapter.resolve_tool", return_value=Path("/usr/bin/bandit")):
             def capture_run(cmd, **kwargs):
                 assert kwargs.get("cwd") is tmp_path
                 assert kwargs.get("env").get("BANDIT_CONF") == "/custom.conf"
@@ -193,8 +194,8 @@ class TestBanditAdapter:
         This kills mutmut on _run() args (missing cmd, None, etc.)."""
         capture = []
         with patch(
-            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-            side_effect=lambda name: "/usr/bin/bandit" if name == "bandit" else None,
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            side_effect=lambda name, repo=None: Path("/usr/bin/bandit") if name == "bandit" else None,
         ):
             def cap(cmd, **kw):
                 capture.append((cmd, kw))
@@ -208,10 +209,10 @@ class TestBanditAdapter:
         ]
 
     def test_invoke_binary_not_found_via_which(self, tmp_path: Path):
-        """When shutil.which returns None, invoke returns error without calling _run."""
+        """When resolve_tool returns None, invoke returns error without calling _run."""
         with patch(
-            "harness_quality_gate.adapters.python.bandit_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("bandit"),
         ):
             with patch.object(self._adapter().__class__, "_run") as mock_run:
                 inv = self._adapter().invoke(tmp_path, [])
@@ -564,22 +565,22 @@ class TestBanditAdapter:
             assert self._adapter().name == "ruff"
 
         def test_version_not_found(self, tmp_path: Path):
-            with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value=None):
+            with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
                 with pytest.raises(RuntimeError):
                     self._adapter().version(tmp_path)
 
         def test_version_found(self, tmp_path: Path):
-            with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value="/bin/ruff"):
+            with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", return_value=Path("/bin/ruff")):
                 with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="ruff 0.4.0\n")):
                     assert "0.4.0" in self._adapter().version(tmp_path)
 
         def test_invoke_not_found(self, tmp_path: Path):
-            with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value=None):
+            with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 3
 
         def test_invoke_found(self, tmp_path: Path):
-            with patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value="/bin/ruff"):
+            with patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", return_value=Path("/bin/ruff")):
                 with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="[]")):
                     inv = self._adapter().invoke(tmp_path, [])
                     assert inv.exitcode == 0
@@ -626,22 +627,22 @@ class TestVultureAdapter:
         assert self._adapter().name == "vulture"
 
     def test_version_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError):
                 self._adapter().version(tmp_path)
 
     def test_version_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value="/bin/vulture"):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/bin/vulture")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="vulture 2.11\n")):
                 assert "2.11" in self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
 
     def test_invoke_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.vulture_adapter.shutil.which", return_value="/bin/vulture"):
+        with patch("harness_quality_gate.adapters.python.vulture_adapter.resolve_tool", return_value=Path("/bin/vulture")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="")):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 0
@@ -684,22 +685,22 @@ class TestDeptryAdapter:
         assert self._adapter().name == "deptry"
 
     def test_version_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError):
                 self._adapter().version(tmp_path)
 
     def test_version_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="deptry 0.12.0\n")):
                 assert "0.12" in self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
 
     def test_invoke_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.deptry_adapter.shutil.which", return_value="/bin/deptry"):
+        with patch("harness_quality_gate.adapters.python.deptry_adapter.resolve_tool", return_value=Path("/bin/deptry")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="[]")):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 0
@@ -738,23 +739,23 @@ class TestPyrightAdapter:
         assert self._adapter().name == "pyright"
 
     def test_version_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError):
                 self._adapter().version(tmp_path)
 
     def test_version_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/bin/pyright")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="pyright 1.1.350\n")):
                 result = self._adapter().version(tmp_path)
                 assert "1.1" in result
 
     def test_invoke_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
 
     def test_invoke_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.pyright_adapter.shutil.which", return_value="/bin/pyright"):
+        with patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", return_value=Path("/bin/pyright")):
             payload = json.dumps({"generalDiagnostics": [], "summary": {"errorCount": 0}})
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout=payload)):
                 inv = self._adapter().invoke(tmp_path, [])
@@ -1064,22 +1065,22 @@ class TestMutmutAdapter:
         assert self._adapter().name == "mutmut"
 
     def test_version_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             with pytest.raises(RuntimeError):
                 self._adapter().version(tmp_path)
 
     def test_version_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which", return_value="/bin/mutmut"):
+        with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/bin/mutmut")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="mutmut 2.4.6\n")):
                 assert "2.4" in self._adapter().version(tmp_path)
 
     def test_invoke_not_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which", return_value=None):
+        with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", side_effect=ToolNotAvailable("tool")):
             inv = self._adapter().invoke(tmp_path, [])
             assert inv.exitcode == 3
 
     def test_invoke_found(self, tmp_path: Path):
-        with patch("harness_quality_gate.adapters.python.mutmut_adapter.shutil.which", return_value="/bin/mutmut"):
+        with patch("harness_quality_gate.adapters.python.mutmut_adapter.resolve_tool", return_value=Path("/bin/mutmut")):
             with patch.object(self._adapter().__class__, "_run", return_value=_fake_invocation(stdout="", exitcode=0)):
                 inv = self._adapter().invoke(tmp_path, [])
                 assert inv.exitcode == 0

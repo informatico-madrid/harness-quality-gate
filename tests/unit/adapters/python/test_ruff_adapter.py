@@ -13,6 +13,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from harness_quality_gate.adapters.base import ToolInvocation
+from harness_quality_gate.bootstrap import ToolNotAvailable
 from harness_quality_gate.models import Finding
 from harness_quality_gate.adapters.python.ruff_adapter import RuffAdapter
 
@@ -320,7 +321,7 @@ class TestRuffInvokeBinaryNotFound:
     when binary is None, or remove the _run() call entirely.
     """
 
-    @patch("harness_quality_gate.adapters.python.ruff_adapter.shutil.which", return_value=None)
+    @patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", side_effect=ToolNotAvailable("ruff"))
     def test_invoke_returns_infra_when_ruff_missing(self, mock_which):
         """Binary not found → return ToolInvocation with exitcode=3.
 
@@ -336,7 +337,7 @@ class TestRuffInvokeBinaryNotFound:
         )
         assert isinstance(result, ToolInvocation)
         assert result.exitcode == 3
-        assert result.stderr == "ruff not found on PATH"
+        assert result.stderr == "ruff not found on PATH or .venv"
         assert result.stdout == ""
 
 
@@ -349,7 +350,7 @@ class TestRuffVersion:
     """Tests for RuffAdapter.version — kill mutmut_1..12.
 
     Kills:
-      - mutmut_1: shutil.which("ruff") → shutil.which(None)
+      - mutmut_1: resolve_tool("ruff") → resolve_tool(None, path)
       - mutmut_2: .stdout.strip() → .stdout.strip(None)
       - mutmut_3: .split()[-1] → .split(None)[-1]
       - mutmut_7: .stdout else "unknown" → .stdout.strip() else "unknown"
@@ -363,8 +364,8 @@ class TestRuffVersion:
         Kills mutmut_2 (strip(None)) and mutmut_3 (split(None)).
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
         ):
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff 0.8.0\n")
@@ -379,8 +380,8 @@ class TestRuffVersion:
         (empty string stripped is "" which is falsy → falls through).
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
         ):
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="")
@@ -391,17 +392,17 @@ class TestRuffVersion:
     def test_version_binary_not_found_raises(self):
         """Binary not found → raises RuntimeError with exact message.
 
-        Kills mutmut_1 (shutil.which → shutil.which(None))
+        Kills mutmut_1 (resolve_tool("ruff") → ToolNotAvailable)
         and mutmut_8 ("ruff not found on PATH" → "XXnot found on PATH").
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value=None,
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            side_effect=ToolNotAvailable("ruff"),
         ):
             adapter = RuffAdapter()
             with pytest.raises(RuntimeError) as exc_info:
                 adapter.version(Path("/tmp/repo"))
-        assert str(exc_info.value) == "ruff not found on PATH"
+        assert str(exc_info.value) == "ruff not found on PATH or .venv"
 
     def test_version_env_passed_to_run(self):
         """version() passes env to _run.
@@ -409,8 +410,8 @@ class TestRuffVersion:
         Kills mutmut that removes env parameter from the _run call.
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
         ):
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff 0.8.0\n")
@@ -427,8 +428,8 @@ class TestRuffVersion:
         and mutmut on strip().
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
         ):
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff-check 0.8.0\n")
@@ -442,9 +443,9 @@ class TestRuffVersion:
         Kills mutmut_19: env=None mutation on version call args.
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
-        ) as which_mock:
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
+        ) as resolve_mock:
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff 0.8.0\n")
             with patch.object(adapter, "_run", return_value=mock_result) as mock_run:
@@ -453,9 +454,9 @@ class TestRuffVersion:
         assert mock_run.call_args.args[0] == ["/usr/bin/ruff", "--version"]
         assert mock_run.call_args.kwargs["cwd"] == Path("/tmp/repo")
         assert mock_run.call_args.kwargs["env"] == {"RUFF_ENV": "1"}
-        # §4.4 spy: which must be called with literal "ruff" — kills
-        # mutmut_2 (shutil.which("ruff") → shutil.which(None)).
-        which_mock.assert_called_once_with("ruff")
+        # §4.4 spy: resolve_tool must be called with literal "ruff" — kills
+        # mutmut_2 (resolve_tool("ruff", path) → resolve_tool(None, path)).
+        resolve_mock.assert_called_once_with("ruff", Path("/tmp/repo"))
 
     def test_version_env_none_passed(self):
         """When env is None, it's passed as None to _run.
@@ -463,8 +464,8 @@ class TestRuffVersion:
         Kills mutmut on env=env mutation: env=None → env=repo or removed.
         """
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/bin/ruff"),
         ):
             adapter = RuffAdapter()
             mock_result = MagicMock(stdout="ruff 0.8.0\n")
@@ -489,12 +490,16 @@ class TestRuffInvokeNormalPath:
     def _ruff_on_path(self):
         """Deterministic: must not require ruff installed on the machine.
 
-        Name-checking fake — a mutated which("ruff") argument gets None,
-        so the which-arg mutants (invoke 4/5) still die.
+        Name-checking fake — a mutated resolve_tool("ruff", path) argument gets
+        ToolNotAvailable, so the resolve-toool-arg mutants (invoke 4/5) still die.
         """
+        def _resolve(name, repo):
+            if name == "ruff":
+                return Path("/usr/bin/ruff")
+            raise ToolNotAvailable(name)
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            side_effect=lambda name: "/usr/bin/ruff" if name == "ruff" else None,
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            side_effect=_resolve,
         ):
             yield
 
@@ -563,8 +568,8 @@ class TestRuffInvokeNormalPath:
         BIN = "/usr/local/bin/ruff"
 
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value=BIN,
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path(BIN),
         ):
             with patch.object(RuffAdapter, '_run', return_value=mock_result) as mock_run:
                 adapter.invoke(repo, args=['--select=E501'], env={"RUFF_FOO": "bar"}, timeout=60.0)
@@ -590,8 +595,8 @@ class TestRuffInvokeNormalPath:
         repo = Path('/tmp/test_repo')
 
         with patch(
-            "harness_quality_gate.adapters.python.ruff_adapter.shutil.which",
-            return_value="/usr/local/bin/ruff",
+            "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/ruff"),
         ):
             with patch.object(RuffAdapter, '_run', return_value=mock_result) as mock_run:
                 adapter.invoke(repo, args=[])
@@ -727,3 +732,92 @@ class TestParseEdgeCases:
         assert f.layer == "L3A"
         assert f.language == "python"
         assert f.fix_hint is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: detect_source_dir usage
+# ---------------------------------------------------------------------------
+
+
+def test_ruff_invoke_uses_detect_source_dir_with_src(tmp_path: Path):
+    """When src/ exists, ruff uses detect_source_dir('src').
+
+    Phase 2 convergence: ruff detects the source dir instead of
+    hardcoding 'src', enabling config-driven source directories.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # "check" "--output-format=json" "--select=..." ... src
+    assert "check" in cmd
+    assert "--output-format=json" in cmd
+    # src/ is a scan target, tests/ should NOT be (exclude_tests=True)
+    assert src.name in cmd
+    assert "tests" not in cmd
+
+
+def test_ruff_invoke_fallback_when_no_src(tmp_path: Path):
+    """When no src/ or packages exist, ruff falls back to repo root.
+
+    Phase 2 convergence: no source dir found → "." as target.
+    """
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # When no sources, "." is the fallback
+    assert "." in cmd
+    assert "check" in cmd
+
+
+def test_ruff_package_fallback_excludes_tests(tmp_path: Path):
+    """When falling back to package_dirs, tests/ and test* dirs are excluded.
+
+    Phase 2 convergence: source detection must apply exclude_tests consistently.
+    """
+    # Create a package that looks like a test package
+    pkg = tmp_path / "testutils"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+    mock_result.stderr = ""
+    mock_result.returncode = 0
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", return_value=mock_result) as mock_run:
+            adapter = RuffAdapter()
+            adapter.invoke(tmp_path, [])
+
+    cmd = mock_run.call_args[0][0]
+    # "testutils" has "test" in name → should be excluded by exclude_tests
+    # This confirms the adapter properly excludes test packages
+    assert cmd[-1] == "."  # fallback to "." since testutils is excluded

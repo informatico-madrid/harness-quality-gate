@@ -9,10 +9,10 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
@@ -27,9 +27,10 @@ class RuffAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("ruff")
-        if binary is None:
-            raise RuntimeError("ruff not found on PATH")
+        try:
+            binary = str(resolve_tool("ruff", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("ruff not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip().split()[-1] if result.stdout else "unknown"
 
@@ -40,27 +41,35 @@ class RuffAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        paths: list[str] | None = None,
     ) -> ToolInvocation:
-        binary = shutil.which("ruff")
-        if binary is None:
-            return ToolInvocation(stderr="ruff not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("ruff", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="ruff not found on PATH or .venv", exitcode=3)
         cmd = [binary, "check", "--output-format=json"]
         if args:
             cmd.extend(args)
-        # L3A scans production source only — test code quality is covered
-        # by L2 (weak_test, etc.). Excluding tests prevents noise from
-        # F841, F401, F811, F541 in test files that are false positives.
-        default_targets = source_targets(repo, "src", exclude_tests=True)
-        if not default_targets:
-            # No src/ — fall back to package dirs, excluding tests/
-            default_targets = [
-                p if isinstance(p, str) else str(p)
-                for p in package_dirs(repo)
-                if "test" not in str(p).lower()
-            ]
-        if not default_targets:
-            default_targets = ["."]
-        cmd.extend(default_targets)
+        # When explicit paths are provided (partial run), use them as scan targets
+        # instead of auto-discovering the full repo.
+        if paths:
+            scan_targets = paths
+        else:
+            # L3A scans production source only — test code quality is covered
+            # by L2 (weak_test, etc.). Excluding tests prevents noise from
+            # F841, F401, F811, F541 in test files that are false positives.
+            source_dir = detect_source_dir(repo)
+            if source_dir:
+                default_targets = source_targets(repo, source_dir, exclude_tests=True)
+            else:
+                # No src/ — fall back to package dirs, excluding tests/
+                default_targets = [
+                    p if isinstance(p, str) else str(p)
+                    for p in package_dirs(repo)
+                    if "test" not in str(p).lower()
+                ]
+            scan_targets = default_targets if default_targets else ["."]
+        cmd.extend(scan_targets)
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
     def parse(  # type: ignore[override]

@@ -17,12 +17,12 @@ Requirements: FR-29, US-3.
 from __future__ import annotations
 
 import re
-import shutil
 from pathlib import Path
 from typing import Mapping
 
+from ...bootstrap import resolve_tool, ToolNotAvailable, detect_source_dir
 from ...models import Finding
-from ..base import ToolAdapter, ToolInvocation, source_targets
+from ..base import ToolAdapter, ToolInvocation, package_dirs, source_targets
 
 _LINE_RE = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+): (?P<desc>.+?) \(\d+% confidence\)\s*$"
@@ -39,9 +39,10 @@ class VultureAdapter(ToolAdapter):
         return self._name
 
     def version(self, repo: Path, env: Mapping[str, str] | None = None) -> str:
-        binary = shutil.which("vulture")
-        if binary is None:
-            raise RuntimeError("vulture not found on PATH")
+        try:
+            binary = str(resolve_tool("vulture", repo))
+        except ToolNotAvailable:
+            raise RuntimeError("vulture not found on PATH or .venv")
         result = self._run([binary, "--version"], cwd=repo, env=env)
         return result.stdout.strip() or "unknown"
 
@@ -52,14 +53,27 @@ class VultureAdapter(ToolAdapter):
         *,
         env: Mapping[str, str] | None = None,
         timeout: float = 300.0,
+        min_confidence: int = 80,
     ) -> ToolInvocation:
-        binary = shutil.which("vulture")
-        if binary is None:
-            return ToolInvocation(stderr="vulture not found on PATH", exitcode=3)
+        try:
+            binary = str(resolve_tool("vulture", repo))
+        except ToolNotAvailable:
+            return ToolInvocation(stderr="vulture not found on PATH or .venv", exitcode=3)
         # Scan the source dirs only (src/ or root packages, never tests);
         # the whole repo would sweep mutation artifacts too (H10/F2).
-        targets = source_targets(repo, "src") or [str(repo)]
-        cmd = [binary]
+        source_dir = detect_source_dir(repo)
+        if source_dir:
+            targets = source_targets(repo, source_dir, exclude_tests=True) or [str(repo)]
+        else:
+            # No src/ — fall back to package dirs, excluding tests/
+            targets = [
+                p if isinstance(p, str) else str(p)
+                for p in package_dirs(repo)
+                if "test" not in str(p).lower()
+            ]
+            if not targets:
+                targets = [str(repo)]
+        cmd = [binary, "--min-confidence", str(min_confidence)]
         if args:
             cmd.extend(args)
         cmd.extend(targets)
@@ -82,7 +96,6 @@ class VultureAdapter(ToolAdapter):
 
         for line in stdout.splitlines():
             # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
-            # Tipo C equivalent: lstrip also works because regex matches tail ws.
             m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
             if m is None:
                 continue

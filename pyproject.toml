@@ -87,6 +87,7 @@ paths_to_mutate = [
     "harness_quality_gate/adapters/python/python_adapter.py",
     "harness_quality_gate/adapters/python/ruff_adapter.py",
     "harness_quality_gate/adapters/python/vulture_adapter.py",
+    "harness_quality_gate/bootstrap.py",
     "harness_quality_gate/allow_list_auditor.py",
     "harness_quality_gate/checkpoint.py",
     "harness_quality_gate/cli.py",
