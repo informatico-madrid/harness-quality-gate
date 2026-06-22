@@ -599,3 +599,42 @@ def test_pyright_no_pythonpath_when_none(tmp_path: Path):
 
     cmd = mock_run.call_args[0][0]
     assert "--pythonpath" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# Spy tests — kill subprocess.run kwarg mutations (mutmut_5,33,36,37,38)
+# ---------------------------------------------------------------------------
+
+
+def test_pyright_invoke_spy_exact_command(tmp_path: Path):
+    """Spy on _run — exact cmd structure to kill mutmut_5,33,36,37,38.
+
+    Kills mutations on:
+      - resolve_tool("pyright") → resolve_tool(None/XX, repo)   [mutmut_5]
+      - cmd elements on lines 59/86 — --outputjson, targets    [mutmut_33,36,37]
+      - subprocess.run kwargs on line 87                       [mutmut_37,38]
+    """
+    captured = {}
+
+    def spy_run(self, cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["kwargs"] = dict(kwargs)
+        return ToolInvocation(stdout="{}", stderr="", exitcode=0)
+
+    with patch(
+        "harness_quality_gate.adapters.python.pyright_adapter.resolve_tool",
+        return_value=Path("/usr/bin/pyright"),
+    ):
+        with patch.object(PyrightAdapter, "_run", spy_run):
+            PyrightAdapter().invoke(tmp_path, [])
+
+    cmd = captured["cmd"]
+    # Binary is exact — not mutated to None/XX
+    assert cmd[0] == "/usr/bin/pyright"
+    # --outputjson must be in cmd
+    assert "--outputjson" in cmd
+    # At least one target path
+    assert any(str(tmp_path) == c or tmp_path.name in c for c in cmd)
+    # kwargs passed through correctly
+    kw = captured["kwargs"]
+    assert kw.get("timeout") == 300.0

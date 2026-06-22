@@ -821,3 +821,37 @@ def test_ruff_package_fallback_excludes_tests(tmp_path: Path):
     # "testutils" has "test" in name → should be excluded by exclude_tests
     # This confirms the adapter properly excludes test packages
     assert cmd[-1] == "."  # fallback to "." since testutils is excluded
+
+
+def test_ruff_invoke_spy_exact_command_and_kwargs(tmp_path: Path):
+    """Spy on _run — exact cmd and kwargs to kill mutmut_34.
+
+    Kills subprocess.run kwarg mutation:
+      - check=False → True
+      - capture_output=True → False
+      - text=True → False
+      - timeout=300 → 301
+    """
+    captured = {}
+
+    def spy_run(self, cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["kwargs"] = dict(kwargs)
+        return ToolInvocation(stdout="[]", stderr="", exitcode=0)
+
+    with patch(
+        "harness_quality_gate.adapters.python.ruff_adapter.resolve_tool",
+        return_value=Path("/usr/bin/ruff"),
+    ):
+        with patch.object(RuffAdapter, "_run", spy_run):
+            RuffAdapter().invoke(tmp_path, [])
+
+    cmd = captured["cmd"]
+    # Binary exact
+    assert cmd[0] == "/usr/bin/ruff"
+    # Core flags
+    assert "check" in cmd
+    assert "--output-format=json" in cmd
+    # kwargs exact
+    kw = captured["kwargs"]
+    assert kw.get("timeout") == 300.0

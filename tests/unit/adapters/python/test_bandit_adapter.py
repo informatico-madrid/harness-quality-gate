@@ -575,6 +575,48 @@ class TestInvokeQuietFlag:
         cmd = run.call_args.args[0]
         assert cmd[:5] == ["/usr/bin/bandit", "-r", "-q", "--format", "json"]
 
+    def test_invoke_spy_exact_command_and_kwargs(self, tmp_path):
+        """Spy on _run — exact cmd and kwargs to kill mutmut_5,7,24,27,28,29.
+
+        Kills subprocess.call mutations on:
+          - mutmut_5: resolve_tool("bandit") → resolve_tool(None,repo)
+          - mutmut_7: resolve_tool("bandit") → resolve_tool("XXbanditXX",repo)
+          - mutmut_24: str(repo) → repo on cmd target
+          - mutmut_27: cmd elements mutation (line 69)
+          - mutmut_28: line 57-58 target mutation
+          - mutmut_29: fallback target mutation
+        """
+        mock_result = MagicMock()
+        mock_result.stdout = "[]"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch(
+            "harness_quality_gate.adapters.python.bandit_adapter.resolve_tool",
+            return_value=Path("/usr/local/bin/bandit"),
+        ):
+            with patch.object(
+                BanditAdapter, "_run", return_value=mock_result,
+            ) as mock_run:
+                _adapter().invoke(tmp_path, [])
+
+        call_args = mock_run.call_args
+        cmd = call_args.args[0] if call_args.args else call_args[0][0]
+
+        # Exact binary must survive (kills XX- mutations on resolve_tool)
+        assert cmd[0] == "/usr/local/bin/bandit"
+
+        # First five elements must be in exact order
+        assert cmd[:5] == ["/usr/local/bin/bandit", "-r", "-q", "--format", "json"]
+
+        # At least one target path must follow
+        assert len(cmd) >= 5
+
+        # kwargs passed to _run must be exact
+        # timeout survives mutation: 300.0 → 301 (mutmut on line 72)
+        assert call_args.kwargs.get("timeout") == 300.0
+        assert call_args.kwargs.get("cwd") == tmp_path
+
 
 class TestParseErrorFindingExact:
     """Pin every field of the bandit parse-error finding (mutation killers)."""

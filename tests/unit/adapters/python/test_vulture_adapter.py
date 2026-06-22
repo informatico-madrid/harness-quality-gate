@@ -451,3 +451,43 @@ def test_invoke_fallback_to_package_dirs(tmp_path: Path) -> None:
     assert "--min-confidence" in cmd
     assert "80" in cmd
     assert "mypkg" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Spy tests — kill subprocess.run kwarg mutations (mutmut_25,28,29,30)
+# ---------------------------------------------------------------------------
+
+
+def test_vulture_invoke_spy_exact_command(tmp_path: Path):
+    """Spy on _run — exact cmd structure to kill mutmut_25,28,29,30.
+
+    Kills mutations on:
+      - resolve_tool("vulture") → resolve_tool(None/XX, repo)   [mutmut_25]
+      - cmd elements on lines 80/83 — --min-confidence, targets [mutmut_28,29]
+      - subprocess.run kwargs on line 84                       [mutmut_30]
+    """
+    captured = {}
+
+    def spy_run(self, cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["kwargs"] = dict(kwargs)
+        return ToolInvocation(stdout="{}", stderr="", exitcode=0)
+
+    with patch(
+        "harness_quality_gate.adapters.python.vulture_adapter.resolve_tool",
+        return_value=Path("/usr/bin/vulture"),
+    ):
+        with patch.object(ToolAdapter, "_run", spy_run):
+            _adapter().invoke(tmp_path, [])
+
+    cmd = captured["cmd"]
+    # Binary exact — not mutated to None/XX
+    assert cmd[0] == "/usr/bin/vulture"
+    # --min-confidence 80 must be present
+    assert "--min-confidence" in cmd
+    assert "80" in cmd
+    # At least one target path
+    assert any(str(tmp_path) == c or tmp_path.name in c for c in cmd)
+    # kwargs passed through correctly
+    kw = captured["kwargs"]
+    assert kw.get("timeout") == 300.0

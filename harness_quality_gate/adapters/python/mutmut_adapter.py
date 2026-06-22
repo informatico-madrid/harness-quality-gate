@@ -87,7 +87,7 @@ class MutmutAdapter(ToolAdapter):
             cmd.extend(paths)
         # reason: mutation-resistant by design — see inline comment
         # audited: 2026-06-18
-        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")  # pragma: no mutate
+        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")
         if max_children.isdigit():
             cmd.extend(["--max-children", max_children])
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
@@ -107,7 +107,7 @@ class MutmutAdapter(ToolAdapter):
         # reason: Tipo C — cualquier valor falsy inicial es gemelo de {}: las dos
         # ramas siguientes reasignan data antes de cualquier acceso (json.loads
         # o _aggregate_mutant_lines, que siempre devuelve dict). # audited: 2026-06-12
-        data: dict = {}  # pragma: no mutate
+        data: dict = {}
 
         # --- try valid JSON first ------------------------------------------
         try:
