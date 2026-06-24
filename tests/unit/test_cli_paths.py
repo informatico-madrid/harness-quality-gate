@@ -433,12 +433,17 @@ class TestEmptyPathsConfigInvalid:
         code, data, quiet = exit_calls[0]
         assert code == CONFIG_INVALID
         err_msg = str(data.get("error", ""))
-        assert "at least one path" in err_msg
+        # Exact message pins both literal fragments — substring assertions let
+        # XX-wrap / uppercase mutations of either fragment survive (H14).
+        assert err_msg == (
+            "--paths requires at least one path argument; "
+            "use without --paths for a full run"
+        )
         assert quiet is False
 
         # Verify JSON printed via print() includes the error message
         out, err = capfd.readouterr()
-        assert "at least one path" in out
+        assert "--paths requires at least one path argument" in out
 
     def test_invalid_path_returns_config_invalid(self, tmp_path):
         """paths=['--evil'] should return CONFIG_INVALID (validate_paths rejects it)."""

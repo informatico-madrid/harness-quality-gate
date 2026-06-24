@@ -62,11 +62,9 @@ class RuffAdapter(ToolAdapter):
             if source_dir:
                 default_targets = source_targets(repo, source_dir, exclude_tests=True)
             else:
-                # No src/ — fall back to package dirs, excluding tests/
+                # No src/ — fall back to package dirs, excluding test packages.
                 default_targets = [
-                    p if isinstance(p, str) else str(p)
-                    for p in package_dirs(repo)
-                    if "test" not in str(p).lower()
+                    p for p in package_dirs(repo) if "test" not in p.lower()
                 ]
             scan_targets = default_targets if default_targets else ["."]
         cmd.extend(scan_targets)

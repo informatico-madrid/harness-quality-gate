@@ -85,10 +85,8 @@ class MutmutAdapter(ToolAdapter):
         cmd = [binary, "run"]
         if paths:
             cmd.extend(paths)
-        # reason: mutation-resistant by design — see inline comment
-        # audited: 2026-06-18
-        max_children = (env or {}).get("MUTATION_MAX_CHILDREN", "")
-        if max_children.isdigit():
+        max_children = (env or {}).get("MUTATION_MAX_CHILDREN")
+        if max_children and max_children.isdigit():
             cmd.extend(["--max-children", max_children])
         return self._run(cmd, cwd=repo, env=env, timeout=timeout)
 
@@ -104,10 +102,10 @@ class MutmutAdapter(ToolAdapter):
         ``mutmut results --all true`` (``pkg.x_f__mutmut_1: killed``), or
         bare ``key: number`` pairs as a last-resort text fallback.
         """
-        # reason: Tipo C — cualquier valor falsy inicial es gemelo de {}: las dos
-        # ramas siguientes reasignan data antes de cualquier acceso (json.loads
-        # o _aggregate_mutant_lines, que siempre devuelve dict). # audited: 2026-06-12
-        data: dict = {}
+        # reason: Tipo G/H15 — el inicial {} es gemelo falsy de None/""; el único
+        # consumidor es `if not data:` (truthiness), idéntico para todo falsy, y
+        # data se reasigna siempre antes de leerse. # audited: 2026-06-24
+        data: dict = {}  # pragma: no mutate
 
         # --- try valid JSON first ------------------------------------------
         try:

@@ -876,6 +876,32 @@ class TestV14PhpKillers:
         assert "PHPMD output is not valid JSON: %r" % ("z" * 200,) in msgs
         assert "Visitor output is not valid JSON: %r" % ("z" * 200,) in msgs
 
+    def test_antipattern_phpmd_files_not_list_message_names_real_type(self, tmp_path):
+        """The 'files must be a list' assert message names the actual type.
+
+        Kills ``type(phpmd_files).__name__ -> type(None).__name__``: feeding a
+        non-list, non-None ``files`` (a str) makes the assert fail with
+        "got str"; the mutant would say "got NoneType".
+        """
+        from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
+            PhpAntipatternTierAAdapter,
+        )
+
+        adapter = PhpAntipatternTierAAdapter()
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.invoke.return_value = MagicMock(
+            stdout=json.dumps({"files": "notalist"}), stderr="", exitcode=0,
+        )
+        adapter._visitors = MagicMock()
+        adapter._visitors.invoke.return_value = MagicMock(
+            stdout="[]", stderr="", exitcode=0,
+        )
+
+        with pytest.raises(
+            AssertionError, match=r"phpmd files must be a list, got str$"
+        ):
+            adapter.invoke(tmp_path, [])
+
     def test_antipattern_source_phpmd_uses_priority_severity(self):
         from harness_quality_gate.adapters.php.antipattern_tier_a_php import (
             PhpAntipatternTierAAdapter,

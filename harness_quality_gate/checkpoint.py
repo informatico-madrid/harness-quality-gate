@@ -54,14 +54,16 @@ def build(
 
     layers = []
     for lr in layer_results:
-        raw_findings = lr.get("findings") or []
-        findings = [_to_dict(f) for f in raw_findings]
+        # findings/duration_sec: default only when the key is ABSENT; a present
+        # value (incl. a present None) is used verbatim, so build never silently
+        # coalesces a real value away (a None there is a caller bug, not "empty").
+        findings = [_to_dict(f) for f in lr.get("findings", [])]
         entry: dict[str, Any] = {
             "layer": lr.get("layer") or "",
             "language": lr.get("language") or "",
             "passed": lr.get("passed", False),
             "findings": findings,
-            "duration_sec": lr.get("duration_sec") or 0.0,
+            "duration_sec": lr.get("duration_sec", 0.0),
         }
         if "per_language" in lr:
             entry["per_language"] = lr["per_language"]
@@ -123,11 +125,11 @@ def write(path: str | Path, data: dict[str, Any]) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # mutations produce semantically identical JSON for ASCII content.
-    # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (idéntico en runtime);
-    # indent/True/removal los fija test_write_exact_payload_and_unicode. default=str era
-    # parámetro muerto (validate() garantiza datos JSON-serializables) y fue eliminado.
-    # audited: 2026-06-11
+    # reason: Tipo G/C — ensure_ascii=None es gemelo falsy de False (json lo evalúa
+    # con `if ensure_ascii:`, idéntico en runtime); ningún test puede observar la
+    # diferencia y no existe forma sin un literal falsy. indent=2 y la unicode-fidelity
+    # los fija test_write_exact_payload_and_unicode.
+    # audited: 2026-06-24
     payload = json.dumps(data, indent=2, ensure_ascii=False)  # pragma: no mutate
 
     # Atomic write: write to temp file in same directory, then rename

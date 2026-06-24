@@ -93,7 +93,7 @@ from .weak_test import run_weak_test_analysis
 
 # reason: logger name mutation doesn't change observability; only the __name__ label differs.
 # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +398,8 @@ class PythonAdapter(BaseAdapter):
         # clean repo; simulation bug H1).
         # Required-tools policy: if a required L4 tool is missing, gate fails
         # rather than pass vacuously (bug H15).
-        required_tools = self._REQUIRED_L4_TOOLS.get(self._name, ())
+        # Every adapter's _name is a key in _REQUIRED_L4_TOOLS, so no default.
+        required_tools = self._REQUIRED_L4_TOOLS[self._name]
         for tool_name in required_tools:
             if tool_name not in required_tools_skipped:
                 try:
@@ -601,7 +602,7 @@ class PythonAdapter(BaseAdapter):
             venv_dir = str(repo / ".venv" / "bin")
 
         try:
-            if venv_dir:
+            if venv_dir is not None:
                 patched_env = dict(env) if env else {}
                 prev_path = patched_env.get("PATH", os.environ.get("PATH", ""))
                 patched_env["PATH"] = venv_dir + os.pathsep + prev_path

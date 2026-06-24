@@ -966,6 +966,16 @@ class TestParseVisitorOutputEdgeCases:
         assert len(result) == 1
         assert result[0]["k"] == "v"
 
+    def test_parse_visitor_output_array_spanning_newlines(self) -> None:
+        """A bracketed array whose body spans multiple lines is extracted.
+
+        The extraction regex must use re.DOTALL so ``.`` crosses newlines;
+        without it the array body would not match and findings would be lost.
+        """
+        text = 'warn: scanning\n[\n  {"file": "x.php", "line": 3}\n]'
+        result = VisitorRunnerAdapter._parse_visitor_output(text)
+        assert result == [{"file": "x.php", "line": 3}]
+
     def test_parse_visitor_output_return_is_list_not_none(self) -> None:
         """Return value is always a list, never None.
 

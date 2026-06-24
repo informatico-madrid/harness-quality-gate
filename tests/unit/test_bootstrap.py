@@ -8,12 +8,13 @@ plus ToolNotAvailable and ToolCheckResult.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -373,15 +374,15 @@ class TestInstallTools:
         # ensure_venv already sees .venv exists, so all calls are from install loop
         assert len(mock_run.call_args_list) == len(PYTHON_TOOLS)
 
-        for i, call in enumerate(mock_run.call_args_list):
-            cmd = call.args[0]
+        for i, run_call in enumerate(mock_run.call_args_list):
+            cmd = run_call.args[0]
             assert len(cmd) == 4, f"Call {i}: expected 4 args [uv pip install pkg], got {len(cmd)}: {cmd}"
             assert cmd[1] == "pip"       # catches mutmut_15 (XX-mXX), mutmut_16 (-M)
             assert cmd[2] == "install"   # catches mutmut_17 (XXpipXX), mutmut_18 (PIP)
             assert cmd[3] in PYTHON_TOOLS.values(), f"Call {i}: unexpected package {cmd[3]}"
-            assert call.kwargs["capture_output"] is True
-            assert call.kwargs["text"] is True
-            assert call.kwargs["timeout"] == 120
+            assert run_call.kwargs["capture_output"] is True
+            assert run_call.kwargs["text"] is True
+            assert run_call.kwargs["timeout"] == 120
 
     def test_subprocess_run_calls_exact_commands_when_fallback_pip(self, tmp_path: Path) -> None:
         """When uv is missing, pip_cmd uses venv_python -m pip path.
@@ -401,16 +402,16 @@ class TestInstallTools:
 
         assert len(mock_run.call_args_list) == len(PYTHON_TOOLS)
 
-        for i, call in enumerate(mock_run.call_args_list):
-            cmd = call.args[0]
+        for i, run_call in enumerate(mock_run.call_args_list):
+            cmd = run_call.args[0]
             assert len(cmd) == 5, f"Call {i}: expected 5 args [python -m pip install pkg], got {len(cmd)}: {cmd}"
             assert cmd[0] == str(venv_python)      # catches mutmut_2 (None), mutmut_6~9 (path mutations)
             assert cmd[1] == "-m"                   # catches mutmut_15 (XX-mXX), mutmut_16 (-M)
             assert cmd[2] == "pip"                  # catches mutmut_17 (XXpipXX), mutmut_18 (PIP)
             assert cmd[4] in PYTHON_TOOLS.values()  # catches mutmut_25,26 (XXpkgXX, Pkg)
-            assert call.kwargs["capture_output"] is True
-            assert call.kwargs["text"] is True
-            assert call.kwargs["timeout"] == 120
+            assert run_call.kwargs["capture_output"] is True
+            assert run_call.kwargs["text"] is True
+            assert run_call.kwargs["timeout"] == 120
 
     def test_subprocess_run_has_exact_kwargs(self, tmp_path: Path) -> None:
         """install_tools calls subprocess.run with exact keyword arguments."""
@@ -423,12 +424,12 @@ class TestInstallTools:
         ):
             install_tools(tmp_path)
 
-        for call in mock_run.call_args_list:
-            assert "capture_output" in call.kwargs
-            assert call.kwargs["capture_output"] is True
-            assert call.kwargs["text"] is True
-            assert "timeout" in call.kwargs
-            assert call.kwargs["timeout"] == 120
+        for run_call in mock_run.call_args_list:
+            assert "capture_output" in run_call.kwargs
+            assert run_call.kwargs["capture_output"] is True
+            assert run_call.kwargs["text"] is True
+            assert "timeout" in run_call.kwargs
+            assert run_call.kwargs["timeout"] == 120
 
     def test_exception_handled(self, tmp_path: Path) -> None:
         """Exceptions during install should be caught and stored."""
@@ -1061,3 +1062,312 @@ class TestDetectSourceDirValidation:
 
         assert result == "my_app"
 
+
+
+# ===================================================================
+# Mutant killers: exact-message logs + argument-passthrough wiring
+# (replaces brittle substring/`any(...)` assertions that let
+# XX-wrap, count, and passthrough mutants survive — see MUTANT_KILLING_GUIDE
+# H1/H3/H7/H14)
+# ===================================================================
+
+_BOOT_LOGGER = "harness_quality_gate.bootstrap"
+
+
+class TestInstallToolsSummaryAndWiring:
+    """install_tools: exact summary counts + shutil.which("uv") wiring."""
+
+    def test_summary_log_has_exact_installed_and_failed_counts(
+        self, tmp_path: Path, caplog,
+    ) -> None:
+        """The completion log pins installed/total/failed counts exactly.
+
+        Kills the count mutants (sum(1)->None / sum(2) / ==!=) and the
+        "installed"/"failed:" string mutants: a substring assertion would let
+        any of them through, exact interpolated text does not.
+        """
+        (tmp_path / ".venv").mkdir()
+        total = len(PYTHON_TOOLS)
+        n_ok = 4
+        # First n_ok installs succeed, the rest fail with a non-empty stderr.
+        seq = [_FakeCompletedProcess(returncode=0)] * n_ok + [
+            _FakeCompletedProcess(returncode=1, stderr="boom")
+            for _ in range(total - n_ok)
+        ]
+        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
+        with (
+            patch("shutil.which", return_value="/fake/uv"),
+            patch("subprocess.run", side_effect=seq),
+        ):
+            install_tools(tmp_path)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert (
+            f"install_tools complete: {n_ok}/{total} tools installed, "
+            f"{total - n_ok} failed"
+        ) in messages
+
+    def test_shutil_which_called_with_exact_uv_name(self, tmp_path: Path) -> None:
+        """uv lookup uses the literal "uv" (kills "uv"->"UV"/"XXuvXX")."""
+        (tmp_path / ".venv").mkdir()
+        with (
+            patch("shutil.which", return_value="/fake/uv") as mock_which,
+            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)),
+        ):
+            install_tools(tmp_path)
+        mock_which.assert_called_once_with("uv")
+
+
+class TestVerifyToolsSummaryAndWiring:
+    """verify_tools: exact summary counts + resolve_tool(name, repo) wiring."""
+
+    def test_resolve_tool_called_with_each_name_and_repo(
+        self, tmp_path: Path,
+    ) -> None:
+        """Every tool is resolved with its own name AND the repo (positional).
+
+        Kills resolve_tool(None, repo) / resolve_tool(name, None) and the
+        dropped-argument mutants — a fixed-return mock would otherwise swallow
+        the wrong arguments silently (H1).
+        """
+        with (
+            patch(
+                "harness_quality_gate.bootstrap.resolve_tool",
+                return_value=Path("/bin/fake"),
+            ) as mock_resolve,
+            patch(
+                "harness_quality_gate.bootstrap._get_version", return_value="1.0.0",
+            ),
+        ):
+            verify_tools(tmp_path)
+
+        expected = [
+            call(name, tmp_path)
+            for name in (list(PYTHON_TOOLS.keys()) + ["pyright"])
+        ]
+        assert mock_resolve.call_args_list == expected
+
+    def test_summary_log_has_exact_available_counts(
+        self, tmp_path: Path, caplog,
+    ) -> None:
+        """The summary log pins total/available/unavailable counts exactly.
+
+        Kills sum(1)->sum(2), the `not c.available`->`c.available` flip, and
+        the "Verified %d tools..." XX-wrap.
+        """
+        all_tools = list(PYTHON_TOOLS.keys()) + ["pyright"]
+        total = len(all_tools)
+        n_unavailable = 2
+        # Last two tools raise ToolNotAvailable; the rest resolve.
+        side: list = [Path("/bin/fake")] * (total - n_unavailable) + [
+            ToolNotAvailable(name) for name in all_tools[total - n_unavailable:]
+        ]
+        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
+        with (
+            patch(
+                "harness_quality_gate.bootstrap.resolve_tool", side_effect=side,
+            ),
+            patch(
+                "harness_quality_gate.bootstrap._get_version", return_value="1.0.0",
+            ),
+        ):
+            verify_tools(tmp_path)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert (
+            f"Verified {total} tools: {total - n_unavailable} available, "
+            f"{n_unavailable} unavailable"
+        ) in messages
+
+
+class TestDetectSourceDirExactWarnings:
+    """detect_source_dir: exact warning text + package_dirs wiring."""
+
+    def _write_config(self, repo: Path) -> Path:
+        config = repo / "_quality-gate" / "quality-gate.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("source_dir: x\n", encoding="utf-8")
+        return config
+
+    def test_escape_warning_exact_message(self, tmp_path: Path, caplog) -> None:
+        """source_dir escaping the repo logs the exact warning (kills the
+        source_dir_str->None passthrough and the escape-string mutants)."""
+        self._write_config(tmp_path)
+        with (
+            patch("yaml.safe_load", return_value={"source_dir": "../evil"}),
+            caplog.at_level(logging.WARNING, logger=_BOOT_LOGGER),
+        ):
+            result = detect_source_dir(tmp_path)
+
+        assert result == ""
+        messages = [r.getMessage() for r in caplog.records]
+        assert (
+            f"YAML source_dir '../evil' escapes repo root {tmp_path} — ignored"
+            in messages
+        )
+
+    def test_does_not_exist_warning_exact_message(
+        self, tmp_path: Path, caplog,
+    ) -> None:
+        """In-repo but non-directory source_dir logs the exact warning
+        (kills source_candidate->None and the message XX-wrap / lowercase)."""
+        self._write_config(tmp_path)
+        with (
+            patch("yaml.safe_load", return_value={"source_dir": "ghost"}),
+            caplog.at_level(logging.WARNING, logger=_BOOT_LOGGER),
+        ):
+            result = detect_source_dir(tmp_path)
+
+        assert result == ""
+        source_candidate = tmp_path / "ghost"
+        messages = [r.getMessage() for r in caplog.records]
+        assert (
+            f"YAML source_dir 'ghost' does not exist as directory in "
+            f"{source_candidate}" in messages
+        )
+
+    def test_yaml_read_failure_exact_message(self, tmp_path: Path, caplog) -> None:
+        """A parse failure logs the config path exactly (kills project_config
+        ->None and the dropped-argument mutants)."""
+        config = self._write_config(tmp_path)
+        with (
+            patch("yaml.safe_load", side_effect=ValueError("bad yaml")),
+            caplog.at_level(logging.WARNING, logger=_BOOT_LOGGER),
+        ):
+            detect_source_dir(tmp_path)
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert f"Failed to read project config {config}" in messages
+
+    def test_package_dirs_called_with_repo(self, tmp_path: Path) -> None:
+        """Step 3 resolves packages from the given repo (kills package_dirs(None))."""
+        with patch(
+            "harness_quality_gate.adapters.base.package_dirs", return_value=["solo"],
+        ) as mock_pkg:
+            result = detect_source_dir(tmp_path)
+
+        assert result == "solo"
+        mock_pkg.assert_called_once_with(tmp_path)
+
+
+class TestWriteManifestWiring:
+    """write_manifest passes the repo through to its collaborators."""
+
+    def test_ensure_venv_and_verify_tools_called_with_repo(
+        self, tmp_path: Path,
+    ) -> None:
+        """Kills ensure_venv(None) and verify_tools(None) passthrough mutants."""
+        (tmp_path / ".venv").mkdir()
+        with (
+            patch("harness_quality_gate.bootstrap.ensure_venv") as mock_ev,
+            patch(
+                "harness_quality_gate.bootstrap.verify_tools", return_value=[],
+            ) as mock_vt,
+        ):
+            write_manifest(tmp_path)
+
+        mock_ev.assert_called_once_with(tmp_path)
+        mock_vt.assert_called_once_with(tmp_path)
+
+
+# ===================================================================
+# Mutant killers (full-board): exact log messages + collaborator wiring
+# for ensure_venv / install_tools / detect_source_dir / verify_tools.
+# ===================================================================
+
+
+class TestEnsureVenvLogs:
+    def test_creation_message_exact(self, tmp_path: Path, caplog) -> None:
+        """Creating a venv logs the exact repo path (kills repo->None, drop, wrap)."""
+        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
+        with patch("subprocess.run"):
+            ensure_venv(tmp_path)
+        assert f"Creating .venv in {tmp_path}" in [
+            r.getMessage() for r in caplog.records
+        ]
+
+    def test_permission_error_logs_exact_and_raises(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """PermissionError logs the exact venv path + error and re-raises."""
+        caplog.set_level(logging.ERROR, logger=_BOOT_LOGGER)
+        with patch("subprocess.run", side_effect=PermissionError("denied")):
+            with pytest.raises(RuntimeError):
+                ensure_venv(tmp_path)
+        venv_dir = tmp_path / ".venv"
+        assert f"Permission denied creating .venv at {venv_dir}: denied" in [
+            r.getMessage() for r in caplog.records
+        ]
+
+    def test_timeout_logs_exact(self, tmp_path: Path, caplog) -> None:
+        """A venv creation timeout logs the exact warning with the exception."""
+        caplog.set_level(logging.WARNING, logger=_BOOT_LOGGER)
+        exc = subprocess.TimeoutExpired(cmd="venv", timeout=60)
+        with patch("subprocess.run", side_effect=exc):
+            ensure_venv(tmp_path)
+        assert f"venv creation timed out after 60s at {tmp_path / '.venv'}: {exc}" in [
+            r.getMessage() for r in caplog.records
+        ]
+
+
+class TestInstallToolsFailureLog:
+    def test_failure_log_exact_and_truncated_to_200(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """Each failed install logs 'Failed to install <tool>: <stderr[:200]>'."""
+        (tmp_path / ".venv").mkdir()
+        caplog.set_level(logging.ERROR, logger=_BOOT_LOGGER)
+        with (
+            patch("shutil.which", return_value="/fake/uv"),
+            patch(
+                "subprocess.run",
+                return_value=_FakeCompletedProcess(returncode=1, stderr="E" * 300),
+            ),
+        ):
+            install_tools(tmp_path)
+        messages = [r.getMessage() for r in caplog.records]
+        # 'ruff' is the first tool; the stderr is truncated to exactly 200 chars.
+        assert f"Failed to install ruff: {'E' * 200}" in messages
+
+
+class TestDetectSourceDirRealYaml:
+    def test_real_yaml_source_dir_round_trips(self, tmp_path: Path) -> None:
+        """A real YAML config is actually read (kills safe_load(read_bytes())->safe_load(None))."""
+        cfg = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("source_dir: mypkg\n", encoding="utf-8")
+        (tmp_path / "mypkg").mkdir()
+        assert detect_source_dir(tmp_path) == "mypkg"
+
+    def test_dict_without_source_dir_does_not_warn(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """A dict lacking source_dir is skipped, not KeyError'd (kills and->or)."""
+        cfg = tmp_path / "_quality-gate" / "quality-gate.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("other: value\n", encoding="utf-8")
+        caplog.set_level(logging.WARNING, logger=_BOOT_LOGGER)
+        result = detect_source_dir(tmp_path)
+        assert result == ""
+        assert not any(
+            "Failed to read project config" in r.getMessage()
+            for r in caplog.records
+        )
+
+
+class TestVerifyToolsGetVersionWiring:
+    def test_get_version_receives_resolved_binary(self, tmp_path: Path) -> None:
+        """_get_version is called with the resolved binary, never None."""
+        fake_bin = Path("/bin/fake")
+        with (
+            patch(
+                "harness_quality_gate.bootstrap.resolve_tool", return_value=fake_bin,
+            ),
+            patch(
+                "harness_quality_gate.bootstrap._get_version", return_value="1.0",
+            ) as mock_gv,
+        ):
+            verify_tools(tmp_path)
+        assert mock_gv.call_args_list == [call(fake_bin)] * len(mock_gv.call_args_list)
+        assert mock_gv.call_args_list  # non-empty
+        assert all(c == call(fake_bin) for c in mock_gv.call_args_list)

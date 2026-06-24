@@ -2992,3 +2992,192 @@ class TestInvokeMutants:
             f"duration_seconds must be float (not default 0.0 from mutmut_112). "
             f"Got {type(result.duration_seconds)}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _parse_single_output__mutmut_8 — 'and'→'or' truth table (§H4)
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestParseSingleOutputTruthTable:
+    """Kill mutmut_8: `start >= 0 and end > start` → `start >= 0 or end > start`.
+
+    §H4: Truth table minima — cada operando decide SOLO.
+    Los casos (F, T) y (T, F) son los que diferencian `and` de `or`.
+    """
+
+    @pytest.mark.parametrize(
+        "input_text,start,end,expected_len",
+        [
+            # (T, T) valid JSON in brackets — both enter → parse → [1 finding]
+            pytest.param(
+                "[{\"file\":\"t.php\",\"line\":1}]",
+                0, 36, 1,
+                id="valid_json",
+            ),
+            # (T, F) start>=0 but end=-1 — and skips, or enters→json.loads→[]
+            pytest.param(
+                "prefix [no-closing-bracket",
+                7, -1, 0,
+                id="T_F_start_open_no_close",
+            ),
+            # (T, F) start=0 but end=-1 — same pattern
+            pytest.param(
+                "[",
+                0, -1, 0,
+                id="T_F_bracket_only",
+            ),
+            # (F, T) start=-1 (no '[') — and skips, or enters→json.loads("]")→[]
+            pytest.param(
+                "]",
+                -1, 0, 0,
+                id="F_T_bracket_only",
+            ),
+            # (F, F) no brackets at all — both skip → []
+            pytest.param(
+                "no brackets at all",
+                -1, -1, 0,
+                id="F_F_no_brackets",
+            ),
+            # (F, T) ']' before '[' — end>start but start<0
+            pytest.param(
+                "]before[after",
+                -1, 6, 0,
+                id="F_T_brackets_reversed",
+            ),
+            # (F, F) empty string
+            pytest.param(
+                "",
+                -1, -1, 0,
+                id="F_F_empty",
+            ),
+        ],
+    )
+    def test_parse_single_output_truth_table(
+        self, input_text, start, end, expected_len
+    ) -> None:
+        """Verifica la tabla de verdad completa para and vs or.
+
+        El mutante 'and'→'or' cambia el comportamiento en los casos
+        (F, T) [start<0, end>start] y (T, F) [start>=0, end<=start].
+        En ambos casos el resultado observable es [] (json.loads falla),
+        pero los caminos de código difieren.
+        """
+        result = PhpWeakTestAdapter._parse_single_output(input_text)
+        assert isinstance(result, list)
+        assert len(result) == expected_len
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# KILL _invoke__mutmut_60 — ensure_ascii=False → ensure_ascii=None (§5.C)
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestEnsureAsciiNonAscii:
+    """Kill mutmut_60: ensure_ascii=False → ensure_ascii=None.
+
+    ensure_ascii=None es el gemelo falsy de ensure_ascii=False en json.dumps —
+    pero solo son idénticos cuando all_findings NO contiene caracteres no-ASCII.
+    Para datos con unicode (é, å, 日本語), ensure_ascii=None produce
+    '\\u00e9' mientras que ensure_ascii=False conserva 'é'.
+    """
+
+    def test_invoke_preserves_non_ascii_in_json_output(self, tmp_path: Path) -> None:
+        """When findings contain non-ASCII chars, stdout has literal unicode —
+        killed if ensure_ascii becomes None (escapes as \\uXXXX).
+
+        Kills mutmut_60: `ensure_ascii=False` → `ensure_ascii=None`
+        changes non-ASCII to \\uXXXX escape sequences in JSON output.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "FooTest.php"
+        test_file.touch()
+
+        # Findings with non-ASCII characters
+        mock_stdout = json.dumps([
+            {
+                "file": "tests/Caf\u00e9Test.php",
+                "line": 42,
+                "rule_id": "A1",
+                "message": "Assertion en espa\u00f1ol",
+                "severity": "warning",
+            },
+            {
+                "file": "tests/\u65e5\u672c\u8a9e.php",
+                "line": 10,
+                "rule_id": "A5",
+                "message": "\u26a0 markTestSkipped detectado \u26a0",
+                "severity": "error",
+            },
+        ])
+
+        with patch.object(
+            PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file],
+        ):
+            with patch("subprocess.run") as mock_run:
+                completed = MagicMock()
+                completed.returncode = 0
+                completed.stdout = mock_stdout
+                completed.stderr = ""
+                mock_run.return_value = completed
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+        # With ensure_ascii=False (original), non-ASCII chars preserved as literals.
+        # With ensure_ascii=None (mutant), char é → \\u00e9 (escaped).
+        # Check that the raw stdout contains literal é (U+00E9).
+        assert "\u00e9" in result.stdout, (
+            f"mutmut_60: stdout must contain literal é (ensure_ascii=False). "
+            f"Got: {result.stdout[:200]!r}"
+        )
+        # Also check Spanish ñ
+        assert "\u00f1" in result.stdout, (
+            f"mutmut_60: stdout must contain literal ñ. "
+            f"Got: {result.stdout[:200]!r}"
+        )
+        # Also check Japanese kanji
+        assert "\u65e5" in result.stdout, (
+            f"mutmut_60: stdout must contain literal 日. "
+            f"Got: {result.stdout[:200]!r}"
+        )
+
+    def test_invoke_json_serialization_ascii_findings(self, tmp_path: Path) -> None:
+        """Pure ASCII findings → ensure_ascii=False and None produce identical output.
+
+        This confirms the only difference from mutmut_60 is in unicode preservation.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "ASCIIOnlyTest.php"
+        test_file.touch()
+
+        from harness_quality_gate.adapters.php import weak_test_php as wt_module
+        original_path = wt_module.Path
+
+        class FakeVisitorsPath:
+            def __init__(self, *args, **kwargs):
+                pass
+            def resolve(self):
+                return self
+            @property
+            def parent(self):
+                return self
+            def __truediv__(self, other):
+                return self
+            def __str__(self):
+                return "/fake/visitors"
+            def is_file(self):
+                return False
+
+        try:
+            wt_module.Path = FakeVisitorsPath
+
+            with patch.object(
+                PhpWeakTestAdapter, "_collect_test_files", return_value=[test_file],
+            ):
+                result = PhpWeakTestAdapter().invoke(tmp_path, [])
+
+            # With no visitor scripts, output is empty JSON array
+            output = json.loads(result.stdout)
+            assert output == []
+            assert all(ord(c) < 128 for c in result.stdout)
+        finally:
+            wt_module.Path = original_path

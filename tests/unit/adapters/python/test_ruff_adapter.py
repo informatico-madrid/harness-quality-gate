@@ -322,16 +322,21 @@ class TestRuffInvokeBinaryNotFound:
     """
 
     @patch("harness_quality_gate.adapters.python.ruff_adapter.resolve_tool", side_effect=ToolNotAvailable("ruff"))
-    def test_invoke_returns_infra_when_ruff_missing(self, mock_which):
+    def test_invoke_returns_infra_when_ruff_missing(self, mock_which, tmp_path):
         """Binary not found → return ToolInvocation with exitcode=3.
 
         Kills:
           - Remove `if binary is None: return ...` early return
           - Return None instead of ToolInvocation (if _run removed)
           - Change exitcode=3 to other values
+          - ``binary = str(resolve_tool(...))`` → ``binary = str(None)``: that
+            mutant bypasses resolve_tool entirely, so a real tmp_path repo (not
+            a MagicMock, which would feed an endless stream to yaml in
+            detect_source_dir) makes the command actually run and the
+            "ruff not found" assertions fail.
         """
         result = RuffAdapter().invoke(
-            repo=MagicMock(),
+            repo=tmp_path,
             args=[],
             env=None,
         )

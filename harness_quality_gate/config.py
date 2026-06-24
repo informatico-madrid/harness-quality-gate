@@ -77,12 +77,9 @@ def _expand_env_vars(obj: object) -> object:
 
         def _replace(m: re.Match) -> str:
             var_name = m.group(1) or m.group(2)
-            # reason: os.environ.get(var, default) fallback mutations and m.group(0) vs
-            # m.group(1) mutations are equivalent when the var IS in the environment.
-            # audited: 2026-06-04
-            return os.environ.get(var_name, m.group(0)) or m.group(
-                0
-            )  # pragma: no mutate
+            # Unset or empty vars fall back to the original ${VAR}/$VAR text.
+            # (No explicit get() default: the ``or m.group(0)`` already supplies it.)
+            return os.environ.get(var_name) or m.group(0)
 
         return _ENV_RE.sub(_replace, obj)
     if isinstance(obj, dict):
@@ -102,18 +99,11 @@ def _find_config_path(repo: Path) -> Path | None:
     3. ``config/quality-gate.yaml``         -- bundled / skill defaults
     4. ``quality-gate.yaml``                -- legacy flat location
     """
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    candidates: list[Path] = []  # pragma: no mutate
-    # reason: the three filename strings are convention-defined config locations.
-    # Mutating "quality-gate.yaml"→"XXquality-gate.yamlXX" simply means no file is found
-    # (file does not exist on disk under the mutated name) — the load() return value
-    # reason: path string mutations produce a non-existent filename → no file found.
-    # audited: 2026-06-04
+    candidates: list[Path] = []
     candidates.append(repo / "_quality-gate" / "quality-gate.yaml")  # per-project (NEW)
-    candidates.append(repo / ".quality-gate.yaml")  # pragma: no mutate
-    candidates.append(repo / "config" / "quality-gate.yaml")  # pragma: no mutate
-    candidates.append(repo / "quality-gate.yaml")  # pragma: no mutate
+    candidates.append(repo / ".quality-gate.yaml")
+    candidates.append(repo / "config" / "quality-gate.yaml")
+    candidates.append(repo / "quality-gate.yaml")
     for p in candidates:
         if p.is_file():
             return p
@@ -174,10 +164,7 @@ def validate(raw: dict) -> Config:
     # --- schema_version check ---
     schema_version = raw.get("schema_version")
     if schema_version != 2:
-        # reason: message string mutations of t("err.config.v1"...) are equivalent —
-        # observable behaviour is ConfigInvalid exception type, not exact message text.
-        # audited: 2026-06-04
-        raise ConfigInvalid(t("err.config.v1", path="<config>"))  # pragma: no mutate
+        raise ConfigInvalid(t("err.config.v1", path="<config>"))
 
     # --- infection thresholds check (TD-10) ---
     infection_raw = raw.get("infection") or {}
@@ -221,7 +208,10 @@ def validate(raw: dict) -> Config:
             raise ConfigInvalid(
                 f"vulture_confidence must be an integer, got float {_vc_raw!r}"
             )
-    vulture_confidence_val = int(_vc_raw or 80)
+    # Default 80 only when the key is ABSENT. An explicit value is honoured
+    # as-is — including 0 — so the config layer never silently overrides the
+    # user (``or 80`` used to map an explicit 0 to 80, a falsy-default bug).
+    vulture_confidence_val = 80 if _vc_raw is None else int(_vc_raw)
     if not 0 <= vulture_confidence_val <= 100:
         raise ConfigInvalid(
             f"vulture_confidence must be between 0 and 100, got {vulture_confidence_val}"
@@ -237,22 +227,21 @@ def validate(raw: dict) -> Config:
                 f"safe maximum of {max_safe} (cpu_count * 2)"
             )
 
-    mutation_threshold_val = float(raw.get("mutation_threshold") or 100.0)
+    # Default 100.0 only when absent; an explicit value (including 0) is honoured.
+    _mt_raw = raw.get("mutation_threshold")
+    mutation_threshold_val = 100.0 if _mt_raw is None else float(_mt_raw)
     if not 0 <= mutation_threshold_val <= 100:
         raise ConfigInvalid(
             f"mutation_threshold must be between 0 and 100, got {mutation_threshold_val}"
         )
 
-    coverage_threshold_val = float(raw.get("coverage_threshold") or 100.0)
+    _ct_raw = raw.get("coverage_threshold")
+    coverage_threshold_val = 100.0 if _ct_raw is None else float(_ct_raw)
     if not 0 <= coverage_threshold_val <= 100:
         raise ConfigInvalid(
             f"coverage_threshold must be between 0 and 100, got {coverage_threshold_val}"
         )
 
-    # reason: passthrough fields detection/gates/language_profiles/shared_tools/layer4
-    # raw.get() key mutations are equivalent for keys absent in config (return {}
-    # regardless of key string). Presence-with-value is tested by test_validate_passthrough_fields.
-    # audited: 2026-06-04
     return Config(
         schema_version=schema_version,
         detection=raw.get("detection") or {},
@@ -260,10 +249,8 @@ def validate(raw: dict) -> Config:
         concurrency=concurrency,
         infection=thresholds,
         language_profiles=raw.get("language_profiles") or {},
-        # reason: shared_tools/layer4 raw.get() key mutations return {} either way. # audited: 2026-06-04
-        shared_tools=raw.get("shared_tools") or {},  # pragma: no mutate
-        # reason: same. # audited: 2026-06-04
-        layer4=raw.get("layer4") or {},  # pragma: no mutate
+        shared_tools=raw.get("shared_tools") or {},
+        layer4=raw.get("layer4") or {},
         # ── Convergence Phase 5 top-level keys ──
         source_dir=_str_or_none(raw.get("source_dir")),
         vulture_confidence=vulture_confidence_val,
@@ -297,7 +284,7 @@ def load(repo: Path) -> Config:
             f"or quality-gate.yaml.",
         )
 
-    raw: dict[str, Any] = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw: dict[str, Any] = yaml.safe_load(config_path.read_bytes()) or {}
     raw = _expand_env_vars(raw)  # type: ignore[assignment]
 
     return validate(raw)
@@ -334,7 +321,7 @@ def load_with_defaults(
     if skill_dir is not None:
         bundled = skill_dir / "config" / "quality-gate.yaml"
         if bundled.is_file():
-            defaults = yaml.safe_load(bundled.read_text(encoding="utf-8")) or {}
+            defaults = yaml.safe_load(bundled.read_bytes()) or {}
             defaults = _expand_env_vars(defaults)  # type: ignore[assignment]
 
     # If we found bundled defaults, validate them as a baseline.
@@ -342,40 +329,32 @@ def load_with_defaults(
         validate(defaults)  # ensures schema_version: 2 and thresholds OK
 
     # Load project overrides.
+    # reason: Tipo G/H15 — el valor inicial {} es gemelo falsy de None/""; todos
+    # los consumidores (if defaults and project_raw / elif project_raw) usan
+    # truthiness y un dict vacío DEBE comportarse como "sin config de proyecto"
+    # (cae a defaults), así que None/{} son indistinguibles y cambiar a
+    # `is not None` rompería ese contrato. # audited: 2026-06-24
+    project_raw: dict[str, Any] = {}  # pragma: no mutate
     try:
-        project_raw: dict[str, Any] = {}
-        try:
-            cfg_path = _find_config_path(repo)
-            if cfg_path is not None:
-                project_raw = (
-                    yaml.safe_load(
-                        cfg_path.read_text(encoding="utf-8"),
-                    )
-                    or {}
-                )
-                project_raw = _expand_env_vars(project_raw)  # type: ignore[assignment]
-        except FileNotFoundError:
-            pass
-
-        # Merge: project overrides on top of defaults (deep merge for dict nesting).
-        if defaults and project_raw:
-            merged: dict[str, Any] = _deep_merge(defaults, project_raw)
-        elif project_raw:
-            merged = project_raw
-        elif defaults:
-            merged = defaults
-        else:
-            # Neither bundled defaults nor project config found.
-            raise FileNotFoundError(
-                f"No quality-gate config found. "
-                f"Bundled defaults: {skill_dir}, Project: {repo}",
-            )
-
-        return validate(merged)
-    except ConfigInvalid:
-        raise
+        cfg_path = _find_config_path(repo)
+        if cfg_path is not None:
+            project_raw = yaml.safe_load(cfg_path.read_bytes()) or {}
+            project_raw = _expand_env_vars(project_raw)  # type: ignore[assignment]
     except FileNotFoundError:
+        pass
+
+    # Merge: project overrides on top of defaults (deep merge for dict nesting).
+    if defaults and project_raw:
+        merged: dict[str, Any] = _deep_merge(defaults, project_raw)
+    elif project_raw:
+        merged = project_raw
+    elif defaults:
+        merged = defaults
+    else:
+        # Neither bundled defaults nor project config found.
         raise FileNotFoundError(
             f"No quality-gate config found. "
             f"Bundled defaults: {skill_dir}, Project: {repo}",
         )
+
+    return validate(merged)

@@ -187,8 +187,9 @@ def _cmd_all(args: argparse.Namespace) -> int:
             quiet=args.quiet,
         )
 
-    # Validate --paths arguments for security
-    if args.paths is not None and len(args.paths) > 0:
+    # Validate --paths arguments for security. (An empty list already
+    # returned CONFIG_INVALID above, so a non-None paths here is non-empty.)
+    if args.paths is not None:
         try:
             from .bootstrap import validate_paths
 
@@ -260,7 +261,9 @@ def _cmd_all(args: argparse.Namespace) -> int:
     # for fast agent feedback. L2, L3B, L4 are skipped.
     # --paths is Python-only; PHP repos ignore it and always run all 5 layers.
     partial_run = args.paths is not None and getattr(adapter, "paths", None) is not None
-    layer_names = ("L3A", "L1", "L2", "L3B", "L4")
+    # Names for the layers a partial run quick-passes (loop indices 2..4 below);
+    # L3A/L1 (indices 0,1) always run for real, so they need no synthesised name.
+    skipped_layer_names = {2: "L2", 3: "L3B", 4: "L4"}
 
     try:
         for idx, run_layer in enumerate(
@@ -276,7 +279,7 @@ def _cmd_all(args: argparse.Namespace) -> int:
                 # Quick-pass: record layer as passed for partial runs.
                 layer_results.append(
                     LayerResult(
-                        layer=layer_names[idx],
+                        layer=skipped_layer_names[idx],
                         language=language,
                         passed=True,
                         findings=[],
@@ -331,33 +334,24 @@ def _cmd_all(args: argparse.Namespace) -> int:
     )
     checkpoint_dict["PASS"] = all_passed
 
-    # reason: timestamp format string mutations are equivalent (file is written, content validated). # audited: 2026-06-04
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")  # pragma: no mutate
-    # reason: output filename pattern is log metadata; exact pattern not asserted. # audited: 2026-06-04
-    output_path = work_dir / f"quality-gate-{ts}.json"  # pragma: no mutate
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_path = work_dir / f"quality-gate-{ts}.json"
     try:
         write_checkpoint(output_path, checkpoint_dict)
     except Exception:  # noqa: BLE001
-        # reason: log message text mutation is observability-only; tests don't check log text. # audited: 2026-06-04
-        logger.warning(
-            "Failed to write timestamped checkpoint", exc_info=True
-        )  # pragma: no mutate
-    # reason: latest filename alias "quality-gate-latest.json" is a well-known external-tool convention. # audited: 2026-06-04
-    latest_path = (
-        repo / "_quality-gate" / "quality-gate-latest.json"
-    )  # pragma: no mutate
+        logger.warning("Failed to write timestamped checkpoint", exc_info=True)
+    latest_path = repo / "_quality-gate" / "quality-gate-latest.json"
     try:
-        # reason: mkdir parents=True/exist_ok=True are filesystem resilience flags; mutating only affects error handling on pre-existing dirs. # audited: 2026-06-04
-        latest_path.parent.mkdir(parents=True, exist_ok=True)  # pragma: no mutate
-        # reason: write_text encoding="utf-8" is equivalent for ASCII JSON; json.dumps indent/default-str mutations don't change parsed output. # audited: 2026-06-04
-        latest_path.write_text(
-            json.dumps(checkpoint_dict, indent=2, default=str), encoding="utf-8"
-        )  # pragma: no mutate
+        # repo is a verified directory, so the single _quality-gate level needs
+        # no parents=True; exist_ok absorbs the dir already made for work/.
+        latest_path.parent.mkdir(exist_ok=True)
+        # write_bytes + str.encode() (UTF-8 by default) avoids an encoding= kwarg
+        # whose mutations are equivalent for this ASCII/UTF-8 JSON. default=str is
+        # unneeded: checkpoint_dict is already JSON-serialisable (write_checkpoint
+        # above serialises it without one).
+        latest_path.write_bytes(json.dumps(checkpoint_dict, indent=2).encode())
     except Exception:  # noqa: BLE001
-        # reason: log message text mutation is observability-only. # audited: 2026-06-04
-        logger.warning(
-            "Failed to write latest checkpoint", exc_info=True
-        )  # pragma: no mutate
+        logger.warning("Failed to write latest checkpoint", exc_info=True)
 
     return _exit_with(code, checkpoint_dict, quiet=args.quiet)
 
@@ -409,8 +403,8 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--quiet", action="store_true", help="Suppress output")
 
 
-def main(argv: list[str] | None = None) -> int:
-    # argv=None falls through to argparse, which reads sys.argv[1:] itself.
+def _build_parser() -> argparse.ArgumentParser:
+    """Construct the CLI argument parser (separated for testability)."""
     parser = argparse.ArgumentParser(
         prog="harness_quality_gate",
         description="Polyglot quality gate for Python and PHP repositories.",
@@ -422,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
     all_p.add_argument(
         "--paths",
         nargs="*",
-        default=None,
+        # default=None is argparse's own default for nargs="*" — omitted on
+        # purpose so it cannot drift (matches --diff-from below).
         help="Subset of files/dirs to scan — runs only Tier 1 (L3A + L1)",
     )
 
@@ -431,6 +426,12 @@ def main(argv: list[str] | None = None) -> int:
     # type=str and default=None are argparse's own defaults — omitted on purpose
     # so they cannot drift (dead parameters).
     audit_p.add_argument("--diff-from", help="Git ref to diff against")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    # argv=None falls through to argparse, which reads sys.argv[1:] itself.
+    parser = _build_parser()
 
     try:
         args = parser.parse_args(argv)

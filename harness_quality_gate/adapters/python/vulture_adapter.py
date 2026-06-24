@@ -69,12 +69,10 @@ class VultureAdapter(ToolAdapter):
                 str(repo)
             ]
         else:
-            # No src/ — fall back to package dirs, excluding tests/
-            targets = [
-                p if isinstance(p, str) else str(p)
-                for p in package_dirs(repo)
-                if "test" not in str(p).lower()
-            ]
+            # No src/ — fall back to package dirs, excluding test packages.
+            # (package_dirs returns str names and already drops exact test/tests;
+            # this also drops names like "mytests"/"test_utils".)
+            targets = [p for p in package_dirs(repo) if "test" not in p.lower()]
             if not targets:
                 targets = [str(repo)]
         cmd = [binary, "--min-confidence", str(min_confidence)]
@@ -99,10 +97,9 @@ class VultureAdapter(ToolAdapter):
             return findings
 
         for line in stdout.splitlines():
-            # rstrip() redundant: regex ends with \s*$, absorbing trailing ws.
-            # reason: mutation-resistant by design — see funccomment
-            # audited: 2026-06-18
-            m = _LINE_RE.match(line.rstrip())  # pragma: no mutate
+            # No strip needed: the regex anchors ^…\s*$, so it absorbs any
+            # trailing whitespace itself (and leading ws is part of the path group).
+            m = _LINE_RE.match(line)
             if m is None:
                 continue
             path = m.group("path")

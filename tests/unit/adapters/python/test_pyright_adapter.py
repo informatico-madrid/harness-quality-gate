@@ -265,15 +265,19 @@ class TestInvokeBinaryNotFound:
     """
 
     @patch("harness_quality_gate.adapters.python.pyright_adapter.resolve_tool", side_effect=ToolNotAvailable("pyright"))
-    def test_invoke_returns_exitcode_3_when_pyright_missing(self, mock_which, adapter):
+    def test_invoke_returns_exitcode_3_when_pyright_missing(self, mock_which, adapter, tmp_path):
         """Binary missing → ToolInvocation with exitcode=3, no subprocess call.
 
         Kills:
           - Remove `if binary is None: return ...` early return
           - Return None instead of ToolInvocation if _run removed
+          - ``binary = str(resolve_tool(...))`` → ``str(None)``: a real tmp_path
+            repo (not a MagicMock, which would make detect_source_dir feed an
+            endless stream to yaml) lets the bypassed path run and fail the
+            "pyright not found" assertions.
         """
         result = adapter.invoke(
-            repo=MagicMock(),
+            repo=tmp_path,
             args=[],
             env=None,
         )

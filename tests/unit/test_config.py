@@ -537,11 +537,20 @@ def test_load_with_defaults_rejects_v1_schema(tmp_path: Path) -> None:
 
 
 def test_load_with_defaults_no_bundled_no_project(tmp_path: Path) -> None:
-    """No bundled defaults and no project config → FileNotFoundError."""
+    """No bundled defaults and no project config → FileNotFoundError.
+
+    Asserts the exact message (not just the type) so that any mutation of the
+    message string — including replacing it with ``None`` — is caught.
+    """
     project_path = tmp_path / "project"
     project_path.mkdir()
-    with pytest.raises(FileNotFoundError):
-        load_with_defaults(project_path, skill_dir=tmp_path / "nonexistent")
+    skill_dir = tmp_path / "nonexistent"
+    with pytest.raises(FileNotFoundError) as exc_info:
+        load_with_defaults(project_path, skill_dir=skill_dir)
+    assert str(exc_info.value) == (
+        f"No quality-gate config found. "
+        f"Bundled defaults: {skill_dir}, Project: {project_path}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -598,13 +607,17 @@ class TestBoundsValidation:
         with pytest.raises(ConfigInvalid, match="vulture_confidence must be between 0 and 100"):
             validate(cfg)
 
-    def test_vulture_confidence_0_ok(self) -> None:
-        """vulture_confidence: 0 is accepted (within bounds, no ConfigInvalid)."""
+    def test_vulture_confidence_0_is_honoured_not_defaulted(self) -> None:
+        """vulture_confidence: 0 is accepted AND kept as 0 (not silently → 80).
+
+        An explicit 0 is the user's choice (vulture --min-confidence 0). Pinning
+        the exact lower boundary also kills the boundary mutants on
+        ``0 <= vulture_confidence_val``: with 0 reachable, ``1 <= …`` and
+        ``0 < …`` would wrongly reject this valid config.
+        """
         cfg = _make_v2_config({"vulture_confidence": 0})
         config = validate(cfg)
-        # 0 is within bounds so validation passes.
-        # (it maps to the configured default 80 via `or 80` pattern — separate from bounds check)
-        assert config.vulture_confidence == 80
+        assert config.vulture_confidence == 0
 
     def test_vulture_confidence_100_ok(self) -> None:
         """vulture_confidence: 100 is accepted at boundary."""
@@ -617,6 +630,18 @@ class TestBoundsValidation:
         cfg = _make_v2_config({"vulture_confidence": 50.5})
         with pytest.raises(ConfigInvalid, match="must be an integer, got float"):
             validate(cfg)
+
+    def test_vulture_confidence_integer_valued_float_ok(self) -> None:
+        """vulture_confidence: 80.0 (a float whose value is integral) is accepted.
+
+        The guard is ``isinstance(_vc_raw, float) and not _vc_raw.is_integer()``.
+        80.0 is a float (first operand True) but ``is_integer()`` is True
+        (second operand False), so ``and`` keeps it valid. This pins the ``and``:
+        the ``or`` mutant would reject 80.0 because the first operand alone is True.
+        """
+        cfg = _make_v2_config({"vulture_confidence": 80.0})
+        config = validate(cfg)
+        assert config.vulture_confidence == 80
 
     def test_vulture_confidence_bool_true_raises(self) -> None:
         """vulture_confidence: True (YAML `true`) → ConfigInvalid."""
@@ -643,13 +668,15 @@ class TestBoundsValidation:
         with pytest.raises(ConfigInvalid, match="mutation_threshold must be between 0 and 100"):
             validate(cfg)
 
-    def test_mutation_threshold_0_ok(self) -> None:
-        """mutation_threshold: 0 is accepted (within bounds, no ConfigInvalid)."""
+    def test_mutation_threshold_0_is_honoured_not_defaulted(self) -> None:
+        """mutation_threshold: 0 is accepted AND kept as 0 (not silently → 100).
+
+        Pinning the exact lower boundary also kills the ``0 <= …`` boundary
+        mutants: with 0 reachable, ``1 <= …`` / ``0 < …`` would wrongly reject it.
+        """
         cfg = _make_v2_config({"mutation_threshold": 0})
         config = validate(cfg)
-        # 0 is within bounds so validation passes.
-        # (it maps to the configured default 100.0 via `or 100.0` pattern)
-        assert config.mutation_threshold == 100.0
+        assert config.mutation_threshold == 0.0
 
     def test_mutation_threshold_100_ok(self) -> None:
         """mutation_threshold: 100 is accepted at boundary."""
@@ -672,12 +699,10 @@ class TestBoundsValidation:
             validate(cfg)
 
     def test_coverage_threshold_0_ok(self) -> None:
-        """coverage_threshold: 0 is accepted (within bounds, no ConfigInvalid)."""
+        """coverage_threshold: 0 is accepted AND kept as 0 (explicit value honoured)."""
         cfg = _make_v2_config({"coverage_threshold": 0})
         config = validate(cfg)
-        # 0 is within bounds so validation passes.
-        # (it maps to the configured default 100.0 via `or 100.0` pattern)
-        assert config.coverage_threshold == 100.0
+        assert config.coverage_threshold == 0.0
 
     def test_coverage_threshold_100_ok(self) -> None:
         """coverage_threshold: 100 is accepted at boundary."""
@@ -791,3 +816,46 @@ def test_merge_list_keys_noop() -> None:
     # The function is a no-op, so merged should be unchanged.
     assert merged == {"key": ["a"]}
 
+
+
+# ---------------------------------------------------------------------------
+# Full-board mutant killers: exact v1 message, _str_or_none, _deep_merge,
+# cpu_count fallback, explicit-0 thresholds.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_v1_message_exact() -> None:
+    """The v1-rejection message is exact (kills key/path-arg/string mutants)."""
+    with pytest.raises(ConfigInvalid) as exc:
+        validate({"schema_version": 1})
+    assert str(exc.value) == "Configuración v1 obsoleta: <config>. Actualice a v2."
+
+
+def test_source_dir_empty_string_becomes_none() -> None:
+    """source_dir: '' normalises to None (kills _str_or_none '' check mutation)."""
+    config = validate(_make_v2_config({"source_dir": ""}))
+    assert config.source_dir is None
+
+
+def test_source_dir_value_preserved() -> None:
+    """A non-empty source_dir survives untouched (guards the same branch)."""
+    config = validate(_make_v2_config({"source_dir": "src"}))
+    assert config.source_dir == "src"
+
+
+def test_deep_merge_new_key_with_dict_value() -> None:
+    """A dict value under a key absent from base is assigned, not merged.
+
+    Kills the middle ``and -> or``: under ``or`` the code would try to deep-merge
+    into the missing key and raise KeyError.
+    """
+    result = _deep_merge({"a": 1}, {"b": {"x": 2}})
+    assert result == {"a": 1, "b": {"x": 2}}
+
+
+def test_mutmut_max_children_cpu_fallback_when_count_unknown() -> None:
+    """When os.cpu_count() is None the fallback is 1 → max_safe 2 (kills 'or 1'->'or 2')."""
+    cfg = _make_v2_config({"mutmut_max_children": 3})
+    with patch("os.cpu_count", return_value=None):
+        with pytest.raises(ConfigInvalid, match="exceeds"):
+            validate(cfg)

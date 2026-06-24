@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Mapping
@@ -23,7 +24,7 @@ from ..base import ToolAdapter, ToolInvocation
 
 # reason: logger name mutation doesn't change observability; only the __name__ label differs.
 # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 # Visitor scripts live alongside this module.
 VISITORS_DIR = Path(__file__).resolve().parent / "visitors"
@@ -183,12 +184,11 @@ class VisitorRunnerAdapter(ToolAdapter):
         """
         if not isinstance(item, dict):
             return None
-        # reason: Tipo C — `""` és gemelo falsy de `None` (y de implícito).
-        # Cuando "file"/"path" faltan: raw_path="" → isinstance("", str)=True → filepath=""
-        #                          raw_path=None → isinstance(None, str)=False → filepath=""
-        # Ambas vías convergen al mismo filepath; ningún test puede observar la diferencia.
-        # Las variantes removal/False las matan los tests de null_file. # audited: 2026-06-16
-        raw_path = item.get("file", item.get("path", ""))  # pragma: no mutate
+        # No inner default: a missing "file"/"path" yields None, which the
+        # isinstance normalisation below collapses to "" just like any other
+        # non-string value (JSON null, numbers). Keeping an explicit "" default
+        # here would be a dead branch (and a phantom equivalent mutant).
+        raw_path = item.get("file", item.get("path"))
         # JSON "file": null (or non-string garbage) must not leak into node
         filepath = raw_path if isinstance(raw_path, str) else ""
         line = item.get("line")
@@ -216,8 +216,9 @@ class VisitorRunnerAdapter(ToolAdapter):
     @staticmethod
     def _merge_findings(all_findings: list[dict]) -> str:
         """Serialize merged findings to JSON string."""
-        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
-        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
+        # reason: Tipo G — ensure_ascii=None es gemelo falsy de False (json lo
+        # evalúa por truthiness), inobservable y sin forma sin literal falsy.
+        # audited: 2026-06-24
         return json.dumps(all_findings, ensure_ascii=False)  # pragma: no mutate
 
     @staticmethod
@@ -266,17 +267,16 @@ class VisitorRunnerAdapter(ToolAdapter):
         except json.JSONDecodeError:
             pass
 
-        # Graceful fallback: try to find a JSON array in the output.
-        # Some visitors may print a warning on stderr or a note on stdout
-        # before the JSON. Try to extract the first '[' ... ']'.
-        start = text.find("[")
-        end = text.rfind("]")
-        # reason: Tipo B — '[' y ']' nunca comparten índice (end==start inalcanzable)
-        # y con un solo corchete el slice degenerado cae igualmente al warning;
-        # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
-        if start >= 0 and end > start:  # pragma: no mutate
+        # Graceful fallback: some visitors print a warning before the JSON.
+        # Extract the outermost ``[...]`` span (first "[" to last "]", across
+        # newlines) and try to parse it. The regex states the intent directly
+        # and avoids the equivalent boundary mutants a compound index check
+        # leaves behind (end==start is unreachable; degenerate slices fail
+        # json.loads anyway).
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
             try:
-                return json.loads(text[start : end + 1])
+                return json.loads(match.group(0))
             except json.JSONDecodeError:
                 pass
 

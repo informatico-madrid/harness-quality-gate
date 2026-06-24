@@ -343,6 +343,21 @@ def test_build_findings_default_empty_list(good_detection: dict) -> None:
     assert result2["layers"][0]["findings"] == []
 
 
+def test_build_duration_default_zero_when_absent(good_detection: dict) -> None:
+    """A layer dict without 'duration_sec' defaults to exactly 0.0.
+
+    Kills the ``.get('duration_sec', 0.0)`` default mutations (None / removed /
+    1.0): only an absent-key test exercises that default.
+    """
+    without_duration = {"layer": "L1", "language": "php", "passed": True, "findings": []}
+    result = build(
+        [without_duration],
+        {"python_version": "3.12", "concurrency": "auto", "ci": False},
+        good_detection,
+    )
+    assert result["layers"][0]["duration_sec"] == 0.0
+
+
 def test_build_with_layer_per_language_exact_value(good_detection: dict) -> None:
     """Kill 'per_language' key mutation (mutmut_21).
     The exact key name must be preserved; otherwise the layer entry won't have

@@ -194,27 +194,18 @@ class AllowListAuditor:
         for src_file in sorted(repo.rglob(selector.file_glob)):
             if _EXCLUDED_DIRS.intersection(src_file.relative_to(repo).parts):
                 continue
-            # reason: encoding="utf-8"/errors="replace" string mutations are equivalent
-            # for ASCII test files — error handler not invoked; "UTF-8" case-insensitive.
-            # audited: 2026-06-04
             lines = src_file.read_text(
                 encoding="utf-8", errors="replace"
-            ).splitlines()  # pragma: no mutate
+            ).splitlines()
             for i, line in enumerate(lines):
                 if selector.marker_re.search(line):
-                    # Check preceding lines for required metadata.
-                    # reason: start=max(0,i-_METADATA_WINDOW) vs start=None: equivalent
-                    # for test files shorter than _METADATA_WINDOW (5) lines.
-                    # The 7-line test creates files where the window contains metadata
-                    # regardless. This mutation is structurally equivalent.
-                    # audited: 2026-06-04
-                    start = max(0, i - _METADATA_WINDOW)  # pragma: no mutate
-                    # reason: "\n".join separator mutation to "XX\nXX": reason/audited
-                    # regex searches individual line content; separator doesn't affect
-                    # whether the pattern is found on any given line. audited: 2026-06-04
-                    preceding = "\n".join(lines[start:i])  # pragma: no mutate
-                    has_reason = selector.reason_re.search(preceding)
-                    has_audited = selector.audited_re.search(preceding)
+                    # Require both metadata tags within the preceding window.
+                    # Each tag must live on a single line, so search line-by-line
+                    # (a "#" and "reason:" split across two lines is not a tag).
+                    start = max(0, i - _METADATA_WINDOW)
+                    window = lines[start:i]
+                    has_reason = any(selector.reason_re.search(ln) for ln in window)
+                    has_audited = any(selector.audited_re.search(ln) for ln in window)
 
                     if has_reason and has_audited:
                         result.ignored.append(
@@ -246,7 +237,7 @@ class AllowListAuditor:
                                 # tests only assert non-None and "reason" substring.
                                 # audited: 2026-06-04
                                 fix_hint=(
-                                    "Add # reason: ... and # audited: ... "  # pragma: no mutate
+                                    "Add # reason: ... and # audited: ... "
                                     "within 5 lines preceding the annotation"
                                 ),
                             )
@@ -266,7 +257,7 @@ class AllowListAuditor:
             # reason: "; " separator mutation: tests check for "justified"/"unjustified"
             # substrings (in part strings), not exact separator.
             # audited: 2026-06-04
-            summary = "; ".join(parts)  # pragma: no mutate
+            summary = "; ".join(parts)
 
         return AuditReport(
             findings=list(result.unjustified) + list(result.ignored),

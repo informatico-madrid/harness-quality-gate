@@ -23,7 +23,7 @@ from ..base import ToolAdapter, ToolInvocation
 
 # reason: logger name mutation does not change observability; only the __name__ label differs.
 # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 
 class SecurityCheckerAdapter(ToolAdapter):
@@ -192,7 +192,5 @@ class SecurityCheckerAdapter(ToolAdapter):
     @staticmethod
     def _normalise_severity(severity: str | None) -> str:
         if severity is None:
-            # reason: Tipo C — el valor de relleno es gemelo falsy: cualquier string
-            # fuera del _severity_map produce el mismo fallback "warning". # audited: 2026-06-11
-            severity = ""  # pragma: no mutate
+            return "warning"
         return SecurityCheckerAdapter._severity_map.get(severity.lower(), "warning")

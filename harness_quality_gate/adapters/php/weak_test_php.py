@@ -25,7 +25,7 @@ from .visitor_runner_adapter import VisitorRunnerAdapter
 
 # reason: logger name mutation does not change observability; only the __name__ label differs.
 # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 # Weak-test visitor names (matches weak_test_a{1..8}.php in visitors/)
 _WEAK_TEST_VISITORS = [
@@ -157,11 +157,10 @@ class PhpWeakTestAdapter(ToolAdapter):
                 all_findings.extend(parsed)
 
         duration = time.monotonic() - t0
-        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
-        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
-        merged_stdout = json.dumps(
-            all_findings, ensure_ascii=False
-        )  # pragma: no mutate
+        # reason: Tipo G — ensure_ascii=None es gemelo falsy de False (json lo
+        # evalúa por truthiness), inobservable y sin forma sin literal falsy.
+        # audited: 2026-06-24
+        merged_stdout = json.dumps(all_findings, ensure_ascii=False)  # pragma: no mutate
         merged_stderr = "\n".join(stderr_parts) if stderr_parts else ""
 
         return ToolInvocation(
@@ -260,15 +259,15 @@ class PhpWeakTestAdapter(ToolAdapter):
         except json.JSONDecodeError:
             pass
 
-        # Graceful fallback: try to extract JSON array from mixed output.
-        start = text.find("[")
-        end = text.rfind("]")
-        # reason: Tipo B — '[' y ']' nunca comparten índice (end==start inalcanzable)
-        # y con un solo corchete el slice degenerado cae igualmente al warning;
-        # las variantes and→or / >=→> son estructuralmente equivalentes. # audited: 2026-06-11
-        if start >= 0 and end > start:  # pragma: no mutate
+        # Graceful fallback: extract the outermost ``[...]`` span (first "["
+        # to last "]", across newlines) and try to parse it. A single index
+        # comparison here used to leave equivalent boundary mutants alive
+        # (end==start is unreachable; degenerate slices fail json.loads anyway);
+        # the regex expresses the intent directly and has no such phantom.
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
             try:
-                return json.loads(text[start : end + 1])
+                return json.loads(match.group(0))
             except json.JSONDecodeError:
                 pass
 

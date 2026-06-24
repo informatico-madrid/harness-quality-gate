@@ -23,7 +23,7 @@ from .visitor_runner_adapter import VisitorRunnerAdapter
 
 # reason: logger name mutation does not change observability; only the __name__ label differs.
 # audited: 2026-06-04
-logger = logging.getLogger(__name__)  # pragma: no mutate
+logger = logging.getLogger(__name__)
 
 # PHPMD covers 13 distinct antipattern categories across its 6 rulesets.
 # The visitor runner covers 4 PoC patterns (god_class, feature_envy,
@@ -224,11 +224,10 @@ class PhpAntipatternTierAAdapter(ToolAdapter):
                     visitor_stdout[:200],
                 )
 
-        # reason: Tipo C — ensure_ascii=None es gemelo falsy de False (runtime idéntico);
-        # las variantes True/removal las matan los tests unicode. # audited: 2026-06-11
-        merged_stdout = json.dumps(
-            merged_findings, ensure_ascii=False
-        )  # pragma: no mutate
+        # reason: Tipo G — ensure_ascii=None es gemelo falsy de False (json lo
+        # evalúa por truthiness), inobservable y sin forma sin literal falsy.
+        # audited: 2026-06-24
+        merged_stdout = json.dumps(merged_findings, ensure_ascii=False)  # pragma: no mutate
 
         all_stderr_parts: list[str] = []
         if phpmd_stderr:

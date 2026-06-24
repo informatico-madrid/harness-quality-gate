@@ -69,9 +69,7 @@ def resolve_tool(name: str, repo: Path) -> Path:
     """
     # 1. Check .venv/bin/<name> first
     venv_bin = repo / ".venv" / "bin" / name
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):  # pragma: no mutate
+    if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
         return venv_bin.resolve()
 
     # 2. Fallback to system PATH
@@ -135,24 +133,18 @@ def detect_source_dir(repo: Path) -> str:
         try:
             import yaml
 
-            raw = (
-                yaml.safe_load(project_config.read_text(encoding="utf-8")) or {}
-            # reason: mutation-resistant by design — see funccomment
-            # audited: 2026-06-18
-            )  # pragma: no mutate
-            if isinstance(raw, dict) and "source_dir" in raw:  # pragma: no mutate
+            raw = yaml.safe_load(project_config.read_bytes()) or {}
+            if isinstance(raw, dict) and "source_dir" in raw:
                 source_dir_str = str(raw["source_dir"])
                 source_candidate = repo / source_dir_str
                 # Safety: reject source_dir that escapes the repo root.
                 try:
-                    resolved = source_candidate.resolve(strict=False)
-                    repo_resolved = repo.resolve(strict=False)
+                    resolved = source_candidate.resolve()
+                    repo_resolved = repo.resolve()
                     if (
                         not str(resolved).startswith(str(repo_resolved) + "/")
                         and resolved != repo_resolved
-                    # reason: mutation-resistant by design — see funccomment
-                    # audited: 2026-06-18
-                    ):  # pragma: no mutate
+                    ):
                         logger.warning(
                             "YAML source_dir %r escapes repo root %s — ignored",
                             source_dir_str,
@@ -174,9 +166,7 @@ def detect_source_dir(repo: Path) -> str:
         except Exception:
             logger.warning(
                 "Failed to read project config %s", project_config
-            # reason: mutation-resistant by design — see funccomment
-            # audited: 2026-06-18
-            )  # pragma: no mutate
+            )
 
     # Step 2: Default src/ check
     if (repo / "src").is_dir():
@@ -186,9 +176,7 @@ def detect_source_dir(repo: Path) -> str:
     try:
         from .adapters.base import package_dirs
 
-        # reason: mutation-resistant by design — see funccomment
-        # audited: 2026-06-18
-        pkgs = package_dirs(repo)  # pragma: no mutate
+        pkgs = package_dirs(repo)
         if len(pkgs) == 1:
             return pkgs[0]
         if pkgs:
@@ -214,11 +202,11 @@ def suggest_max_children() -> int:
         ``cpu_count`` — that is the caller's responsibility (PythonAdapter
         or CLI).
     """
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    cpus = os.cpu_count() or 2  # pragma: no mutate
-    suggested = max(1, cpus // 2)
-    return suggested
+    cpus = os.cpu_count()
+    if not cpus:
+        # CPU count unknown → conservative single child.
+        return 1
+    return max(1, cpus // 2)
 
 
 def ensure_venv(repo: Path) -> Path:
@@ -234,9 +222,7 @@ def ensure_venv(repo: Path) -> Path:
     if venv_dir.is_dir():
         return venv_dir
 
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    logger.info("Creating .venv in %s", repo)  # pragma: no mutate
+    logger.info("Creating .venv in %s", repo)
     try:
         subprocess.run(
             [sys.executable, "-m", "venv", str(venv_dir)],
@@ -269,16 +255,12 @@ def install_tools(repo: Path) -> dict[str, str]:
     results: dict[str, str] = {}
 
     # Find uv or fall back to pip
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    uv_bin = shutil.which("uv")  # pragma: no mutate
+    uv_bin = shutil.which("uv")
     pip_cmd = [str(venv_python), "-m", "pip"] if not uv_bin else [uv_bin, "pip"]
 
     for tool_name, package in PYTHON_TOOLS.items():
         try:
-            # reason: mutation-resistant by design — see funccomment
-            # audited: 2026-06-18
-            cmd = [*pip_cmd, "install", package]  # pragma: no mutate
+            cmd = [*pip_cmd, "install", package]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode == 0:
                 results[tool_name] = "installed"
@@ -315,10 +297,8 @@ def verify_tools(repo: Path) -> list[ToolCheckResult]:
 
     for name in all_tools:
         try:
-            # reason: mutation-resistant by design — see funccomment
-            # audited: 2026-06-18
-            binary = resolve_tool(name, repo)  # pragma: no mutate
-            version = _get_version(binary)  # pragma: no mutate
+            binary = resolve_tool(name, repo)
+            version = _get_version(binary)
             checks.append(
                 ToolCheckResult(
                     name=name,
@@ -379,10 +359,8 @@ def write_manifest(repo: Path) -> Path:
     Returns:
         Path to the written manifest file.
     """
-    # reason: mutation-resistant by design — see funccomment
-    # audited: 2026-06-18
-    ensure_venv(repo)  # pragma: no mutate
-    checks = verify_tools(repo)  # pragma: no mutate
+    ensure_venv(repo)
+    checks = verify_tools(repo)
     manifest = [
         {
             "name": c.name,
@@ -395,10 +373,8 @@ def write_manifest(repo: Path) -> Path:
     manifest_path = repo / ".venv" / "hqg-tools-manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, indent=2),
-        # reason: mutation-resistant by design — see funccomment
-        # audited: 2026-06-18
-        encoding="utf-8",  # pragma: no mutate
-    )  # pragma: no mutate
+        encoding="utf-8",
+    )
     return manifest_path
 
 

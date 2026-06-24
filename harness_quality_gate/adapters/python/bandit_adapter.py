@@ -58,12 +58,8 @@ class BanditAdapter(ToolAdapter):
                 str(repo)
             ]
         else:
-            # No src/ — fall back to package dirs, excluding tests/
-            targets = [
-                p if isinstance(p, str) else str(p)
-                for p in package_dirs(repo)
-                if "test" not in str(p).lower()
-            ]
+            # No src/ — fall back to package dirs, excluding test packages.
+            targets = [p for p in package_dirs(repo) if "test" not in p.lower()]
             if not targets:
                 targets = [str(repo)]
         cmd = [binary, "-r", "-q", "--format", "json", *targets]

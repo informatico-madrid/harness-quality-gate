@@ -10,8 +10,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from harness_quality_gate.checkpoint import build, write
 
 
@@ -73,15 +71,19 @@ class TestCheckpointBuildKillers:
 
 
 class TestConfigLoadKillers:
-    def test_load_reads_utf8(self, tmp_path: Path) -> None:
+    def test_load_decodes_utf8_content(self, tmp_path: Path) -> None:
+        """Config bytes decode as UTF-8 (PyYAML auto-detects from ``read_bytes``).
+
+        Behaviour pin (not an implementation-detail spy): a non-ASCII value must
+        round-trip through ``load``. Any decoding regression — or YAML being fed
+        the wrong bytes — corrupts ``source_dir`` and fails this assertion.
+        """
         (tmp_path / ".quality-gate.yaml").write_text(
-            "schema_version: 2\n", encoding="utf-8",
+            "schema_version: 2\nsource_dir: configuración\n", encoding="utf-8",
         )
-        original = Path.read_text
-        with patch.object(Path, "read_text", autospec=True, side_effect=original) as spy:
-            from harness_quality_gate.config import load
-            load(tmp_path)
-        assert spy.call_args.kwargs == {"encoding": "utf-8"}
+        from harness_quality_gate.config import load
+        cfg = load(tmp_path)
+        assert cfg.source_dir == "configuración"
 
     def test_validate_ci_env_vars_passthrough_and_empty_default(self) -> None:
         from harness_quality_gate.config import validate
@@ -139,3 +141,45 @@ class TestCheckpointTimestampedEncoding:
         with patch.object(Path, "write_text", autospec=True, side_effect=original) as spy:
             write(tmp_path / "quality-gate-latest.json", _valid_data())
         assert spy.call_args.kwargs == {"encoding": "utf-8"}
+
+
+class TestAllowListMetadataWindow:
+    """The reason/audited tags must sit WITHIN the preceding window."""
+
+    def test_metadata_outside_window_is_unjustified(self, tmp_path: Path) -> None:
+        """Tags more than _METADATA_WINDOW lines before the pragma don't count.
+
+        Kills ``start = max(0, i - _METADATA_WINDOW)`` -> ``start = None`` (which
+        would scan ALL preceding lines and wrongly accept far-away metadata).
+        """
+        from harness_quality_gate.allow_list_auditor import AllowListAuditor
+
+        (tmp_path / "m.py").write_text(
+            "# reason: equivalent\n"
+            "# audited: 2026-06-24\n"
+            "a = 1\n"
+            "b = 2\n"
+            "c = 3\n"
+            "d = 4\n"
+            "e = 5\n"
+            "x = 6  # pragma: " "no mutate\n",
+            encoding="utf-8",
+        )
+        report = AllowListAuditor(language="python").audit(tmp_path)
+        # The pragma (line 8) is 7 lines below the metadata → outside the
+        # 5-line window → unjustified.
+        assert report.exit_code == 1
+        assert any("Unjustified" in f.message for f in report.findings)
+
+    def test_metadata_inside_window_is_justified(self, tmp_path: Path) -> None:
+        """Tags within the window justify the pragma (guards the same branch)."""
+        from harness_quality_gate.allow_list_auditor import AllowListAuditor
+
+        (tmp_path / "m.py").write_text(
+            "# reason: equivalent\n"
+            "# audited: 2026-06-24\n"
+            "x = 6  # pragma: " "no mutate\n",
+            encoding="utf-8",
+        )
+        report = AllowListAuditor(language="python").audit(tmp_path)
+        assert report.exit_code == 0
