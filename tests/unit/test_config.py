@@ -992,47 +992,62 @@ class TestParseToolOverrides:
 
     def test_non_dict_input_rejected(self) -> None:
         """tool_overrides must be a dict at the top level (kills list→dict
-        type-check mutant)."""
+        type-check mutant and the ``type(raw).__name__`` → ``type(None).__name__``
+        XX-wrap mutant — H14 of MUTANT_KILLING_GUIDE)."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
-        with pytest.raises(ConfigInvalid, match="must be a dict"):
+        with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides(["python", "ruff"])  # type: ignore[arg-type]
+        # Exact equality per §4.3: the actual type name "list" must appear,
+        # not "NoneType" (the mutated form). Equality kills the XX-wrap
+        # trap where "must be a dict" is a substring of both messages.
+        assert str(exc.value) == "tool_overrides must be a dict, got list"
 
     def test_non_dict_language_value_rejected(self) -> None:
-        """Each language value must be a dict."""
+        """Each language value must be a dict. Exact equality kills the
+        ``type(tools).__name__`` → ``type(None).__name__`` mutation."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
-        with pytest.raises(ConfigInvalid, match=r"tool_overrides\.python must be a dict"):
+        with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides({"python": "not-a-dict"})  # type: ignore[arg-type]
+        # "got str" anchors the literal — original "got str" survives,
+        # mutated "got NoneType" fails this assertion.
+        assert str(exc.value) == "tool_overrides.python must be a dict, got str"
 
     def test_non_string_path_rejected(self) -> None:
-        """Each path must be a string (kills the 'isinstance(path, str)' removal
-        mutant — would silently accept numbers)."""
+        """Each path must be a string. Exact equality kills the
+        ``type(path).__name__`` → ``type(None).__name__`` mutation."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
-        with pytest.raises(ConfigInvalid, match=r"must be a string"):
+        with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides({"python": {"ruff": 42}})  # type: ignore[arg-type]
+        # "got int" anchors the type name — kills XX-wrap.
+        assert str(exc.value) == "tool_overrides.python.ruff must be a string, got int"
 
     def test_empty_path_rejected(self) -> None:
         """Empty string path is invalid (the falsy check kills XX-wrap mutants)."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
-        with pytest.raises(ConfigInvalid, match="must be non-empty"):
+        with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides({"python": {"ruff": ""}})
+        # Exact equality on the message also kills any "type(None).__name__"
+        # XX-wrap mutation in the prior line.
+        assert str(exc.value) == "tool_overrides.python.ruff must be non-empty"
 
     def test_null_byte_in_path_rejected(self) -> None:
         """Paths containing null bytes are rejected (security: same check
         that :func:`validate_paths` uses)."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
-        with pytest.raises(ConfigInvalid, match="null byte"):
+        with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides({"python": {"ruff": "/opt/ruff\x00bad"}})
+        assert str(exc.value) == "tool_overrides.python.ruff contains null byte"
 
     def test_error_message_includes_path_for_debugging(self) -> None:
         """The ConfigInvalid message includes the offending key path so the
-        user knows which override to fix (kills '.format' removal mutants)."""
+        user knows which override to fix. Exact equality on the path
+        components (kills `.format` removal mutants)."""
         from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
         with pytest.raises(ConfigInvalid) as exc:
             _parse_tool_overrides({"python": {"ruff": 42}})  # type: ignore[arg-type]
-        # Exact path components present in the error message.
-        assert "tool_overrides" in str(exc.value)
-        assert "python" in str(exc.value)
-        assert "ruff" in str(exc.value)
+        # Exact equality on the complete message — strongest pattern per
+        # §4.3 ("Mensajes de error: ... assert str(exc.value) == '...'").
+        assert str(exc.value) == "tool_overrides.python.ruff must be a string, got int"
 
 
 class TestConfigGetToolOverride:
