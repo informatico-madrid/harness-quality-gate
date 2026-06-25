@@ -194,14 +194,24 @@ class TestFindToolCandidates:
         assert result[1].provenance == "vendor"
 
     def test_vendor_bin_param_relative_resolution(self, tmp_path: Path) -> None:
-        """vendor_bin is relative to repo (not cwd)."""
+        """vendor_bin is relative to repo (not cwd).
+
+        The contract: ``vendor_bin`` is resolved against ``repo``, not against
+        ``os.getcwd()``. If the code used cwd, the result would be empty
+        (no such file at ``<cwd>/vendor/bin/ruff``); instead it returns
+        the file under ``tmp_path``.
+
+        We do NOT patch ``os.getcwd`` here because mutmut's trampoline
+        calls ``os.getcwd`` during import — patching it breaks the
+        sandbox. The test still proves the point: the result is under
+        ``tmp_path`` (the explicit repo), which cannot happen if the
+        code resolved against any other directory.
+        """
         _make_executable(tmp_path / "vendor" / "bin" / "ruff")
-        # Use a different cwd to confirm resolution is against repo, not cwd.
-        with patch("shutil.which", return_value=None), patch(
-            "os.getcwd", return_value="/"
-        ):
+        with patch("shutil.which", return_value=None):
             result = find_tool_candidates("ruff", tmp_path, vendor_bin="vendor/bin")
         assert len(result) == 1
+        assert result[0].path.resolve() == (tmp_path / "vendor" / "bin" / "ruff").resolve()
         assert result[0].provenance == "vendor"
 
     def test_vendor_bin_skipped_when_unset(self, tmp_path: Path) -> None:
@@ -230,16 +240,20 @@ class TestFindToolCandidates:
         assert result[2].provenance == "PATH"
 
     def test_preferred_relative_path_resolved_against_repo(self, tmp_path: Path) -> None:
-        """preferred relative path is resolved against repo, not cwd."""
+        """preferred relative path is resolved against repo, not cwd.
+
+        Same contract as ``test_vendor_bin_param_relative_resolution``:
+        we do NOT patch ``os.getcwd`` (breaks mutmut's trampoline) and
+        instead prove the point by asserting the result lives under the
+        explicit ``tmp_path`` repo root.
+        """
         override_bin = _make_executable(tmp_path / "tools" / "ruff")
-        with patch("shutil.which", return_value=None), patch(
-            "os.getcwd", return_value="/"
-        ):
+        with patch("shutil.which", return_value=None):
             result = find_tool_candidates(
                 "ruff", tmp_path, preferred="tools/ruff"
             )
         assert len(result) == 1
-        assert result[0].path == override_bin.resolve()
+        assert result[0].path.resolve() == override_bin.resolve()
         assert result[0].provenance == "override"
 
     def test_preferred_pathobject_input(self, tmp_path: Path) -> None:
@@ -507,13 +521,17 @@ class TestResolveTool:
         assert str(tmp_path / "vendor" / "bin" / "missing") in tried_strs
 
     def test_preferred_relative_path_resolved_against_repo(self, tmp_path: Path) -> None:
-        """preferred relative path is resolved against repo (not cwd)."""
+        """preferred relative path is resolved against repo (not cwd).
+
+        Same contract as the find_tool_candidates twin: assertion is on
+        the resolved path living under the explicit ``tmp_path`` repo,
+        not under whatever cwd might be. We do NOT patch ``os.getcwd``
+        (it would break mutmut's trampoline at import time).
+        """
         override_bin = _make_executable(tmp_path / "tools" / "ruff")
-        with patch("shutil.which", return_value=None), patch(
-            "os.getcwd", return_value="/"
-        ):
+        with patch("shutil.which", return_value=None):
             result = resolve_tool("ruff", tmp_path, preferred="tools/ruff")
-        assert result == override_bin.resolve()
+        assert result.resolve() == override_bin.resolve()
 
     def test_preferred_path_object_input(self, tmp_path: Path) -> None:
         """preferred accepts a Path object too."""
