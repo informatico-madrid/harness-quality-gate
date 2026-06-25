@@ -14,7 +14,8 @@
    (`pip uninstall -y mutmut && pip install "mutmut>=3.5"`) — regla del
    proyecto, confirmada de nuevo el 2026-06-11.
 5. La verdad por archivo está en `mutants/<ruta>.py.meta`
-   (`exit_code_by_key`: 0=survived, 1=killed, -24=ver H16);
+   (`exit_code_by_key`: 0=survived, 1=killed, -24=ver H16/H17, exit=3=
+   `MemoryError`/pytest INTERNAL ERROR — ver H17);
    `scripts/extract_survivors.py` la resume por método.
 6. **Captura los diffs ANTES de `clean-mutmut`**: la limpieza destruye TODOS
    los metas (también los de archivos que no ibas a re-medir). Vuelca primero
@@ -22,3 +23,13 @@
    `mutmut show <id>` en bucle → `/tmp/survivors.txt` — y luego limpia.
    Corolario: un `mutation-path` tras un clean repuebla SOLO el filtro pedido;
    el resto del board queda vacío hasta el siguiente run amplio.
+7. **Un `.coverage` parcial INFRA-cuenta el board dramáticamente.** Con
+   `mutate_only_covered_lines = true`, si el `.coverage` se generó desde un
+   SUBCONJUNTO de tests (lo dejó un `mutation-path`, un run de un solo archivo,
+   o una sesión interrumpida), mutmut solo muta esas líneas: el board muestra
+   muchísimos menos mutantes y supervivientes de los reales. Caso real
+   (2026-06-24): el board visible decía **60 supervivientes**; tras regenerar
+   `.coverage` desde la suite COMPLETA, eran **111** (de 8786 mutantes). Un
+   board "limpio" tras un run parcial es una **mentira**. → Antes de fiarte de
+   cualquier conteo: `pytest tests/unit/ --cov=harness_quality_gate
+   --cov-report=` con el scope COMPLETO, luego `make clean-mutmut` y run amplio.

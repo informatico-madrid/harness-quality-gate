@@ -26,3 +26,10 @@ def test_run_l3a_logs(adapter, caplog, monkeypatch):
 - Si también muta el argumento (`len(x)` → otra cosa): el mensaje interpolado
   exacto con un conteo ≥2 lo cubre (usa 2 findings, no 0 ni 1 — ver §4.6).
 - Mutación del NIVEL (`logger.info` → mutado): asserta `r.levelno == logging.INFO`.
+- **`exc_info=True` → `exc_info=False` (o quitarlo):** el `LogRecord` guarda la
+  tupla `(tipo, valor, tb)` con `exc_info=True`, pero con `exc_info=False` deja
+  `record.exc_info` en **`False`** (¡no `None`!). Por eso
+  `assert record.exc_info is not None` NO mata el mutante `True→False`
+  (`False is not None` → `True`). Usa `assert isinstance(record.exc_info,
+  tuple)` (matas `False`, `None` y la eliminación del kwarg de golpe). Dispara
+  la rama con `pytest.raises`/`side_effect` dentro del `except` que loguea.

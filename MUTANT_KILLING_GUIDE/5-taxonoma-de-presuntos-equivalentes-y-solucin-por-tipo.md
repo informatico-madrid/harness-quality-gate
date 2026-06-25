@@ -37,6 +37,24 @@ La mutación de `X` no es observable porque el camino del default nunca se ejecu
   cuando el default debe aplicar también a valores falsy (`""`, `None` del JSON).
   OJO: solo es válido si `0`/`""`/`False` no son valores legítimos de la clave.
 - Kwarg default que ninguna ruta usa → elimina el default y hazlo obligatorio.
+- **El equivalente se crea AGUAS ABAJO.** Un `dict.get(k) or X` / `... or []`
+  en una función *downstream* normaliza `None`/falsy → valor por defecto, lo que
+  vuelve equivalente un mutante *upstream* que produce ese vacío. Caso real:
+  `build_checkpoint` hacía `lr.get("findings") or []`, así que el mutante
+  upstream `findings=[]→None` era inobservable (ambos → `[]`). El kill limpio
+  está en la función downstream, no en el sitio del mutante: índice directo
+  `lr["findings"]` si la clave es obligatoria por contrato, **o** `lr.get(k, X)`
+  + un test de **clave ausente** que ejerza `X`. OJO al trade-off: `or X` hace
+  matable el upstream pero deja el default-twin; `.get(k, X)` mata el upstream
+  pero su default solo se prueba con la clave ausente. Elige según qué claves
+  pueden faltar de verdad.
+- **Filtro/guarda redundante con uno upstream.** `[p for p in package_dirs(repo)
+  if "test" not in p.lower()]` es equivalente si `package_dirs` ya excluye los
+  nombres `test`/`tests` exactos: el filtro local no quita nada → sus mutantes
+  de string/case son inobservables. Para hacerlo observable, da un input que
+  *pase* el filtro upstream pero *dispare* el local (ej. un paquete `mytests`:
+  contiene "test" pero no es exactamente `tests`). Si de verdad es 100%
+  redundante → elimínalo (código muerto).
 
 ## Tipo D — Código defensivo inalcanzable (ramas `else` imposibles, re-raise genéricos)
 

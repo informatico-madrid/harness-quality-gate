@@ -58,7 +58,7 @@ Cada entrada enlaza al shard correspondiente. Las primeras secciones de introduc
 
 ---
 
-## PARTE II — Casos difíciles (H1–H16)
+## PARTE II — Casos difíciles (H1–H17)
 
 Casos con supervivientes reales de este repo. Cada caso incluye: diff, por qué
 sobrevive, y receta exacta.
@@ -79,6 +79,7 @@ sobrevive, y receta exacta.
 - [H14. La trampa del XX-wrap: el substring ingenuo NO mata strings](MUTANT_KILLING_GUIDE/h14-la-trampa-del-xx-wrap-el-substring-ingenuo-no-mata-strings.md)
 - [H15. Gemelos falsy en inicializadores](MUTANT_KILLING_GUIDE/h15-gemelos-falsy-en-inicializadores-none-falsenone-none.md)
 - [H16. Exit -24 (SIGXCPU) en runs paralelos](MUTANT_KILLING_GUIDE/h16-exit-24-sigxcpu-en-runs-paralelos-casi-siempre-es-flake-no-timeout.md)
+- [H17. Inputs sobre-mockeados que se vuelven bombas de memoria bajo mutación 💣](MUTANT_KILLING_GUIDE/h17-inputs-sobre-mockeados-que-se-vuelven-bombas-de-memoria-bajo-mutacion.md) — *el `MagicMock` que un mutante arrastra a un OOM de 46 GB*
 
 ---
 
