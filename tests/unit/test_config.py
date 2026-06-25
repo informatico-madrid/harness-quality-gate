@@ -536,6 +536,86 @@ def test_load_with_defaults_rejects_v1_schema(tmp_path: Path) -> None:
         load_with_defaults(project_path, skill_dir=bundled_path)
 
 
+def test_load_with_defaults_no_bundled_only_project(tmp_path: Path) -> None:
+    """No bundled config but a project config → `elif project_raw` branch
+    (line 428 in config.py: `merged = project_raw`). Pre-existing gap closed
+    to keep the project's ``fail_under = 100`` coverage gate green."""
+    # skill_dir that does NOT contain config/quality-gate.yaml → defaults = None.
+    empty_skill_dir = tmp_path / "empty_skill"
+    empty_skill_dir.mkdir()
+
+    project_path = tmp_path / "project"
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", {
+        "schema_version": 2,
+        "source_dir": "lib",
+    })
+
+    config = load_with_defaults(project_path, skill_dir=empty_skill_dir)
+    # The project config is taken as-is (no merge, no defaults).
+    assert config.source_dir == "lib"
+
+
+def test_load_with_defaults_no_config_anywhere_raises(tmp_path: Path) -> None:
+    """Neither bundled defaults nor project config → FileNotFoundError."""
+    empty_skill_dir = tmp_path / "empty_skill"
+    empty_skill_dir.mkdir()
+
+    empty_project = tmp_path / "empty_project"
+    empty_project.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="No quality-gate config found"):
+        load_with_defaults(empty_project, skill_dir=empty_skill_dir)
+
+
+def test_load_with_defaults_skill_dir_none_with_claude_skill_dir_env(
+    tmp_path: Path,
+) -> None:
+    """skill_dir=None + CLAUDE_SKILL_DIR env set → env-derived skill_dir
+    is used (kills the `if skill_dir_str:` True-branch).
+
+    The bundled file at the env-derived path is created, so this also
+    exercises the `bundled.is_file()` True-branch in one shot.
+    """
+    skill_dir = tmp_path / "from_env"
+    skill_dir.mkdir()
+    _write_yaml(skill_dir, "config/quality-gate.yaml", {
+        "schema_version": 2,
+        "source_dir": "env_source",
+    })
+
+    project_path = tmp_path / "project"
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", {
+        "schema_version": 2,
+    })
+
+    with patch.dict(os.environ, {"CLAUDE_SKILL_DIR": str(skill_dir)}):
+        config = load_with_defaults(project_path)  # skill_dir defaults to None
+    assert config.source_dir == "env_source"
+
+
+def test_load_with_defaults_skill_dir_none_no_env_uses_project_only(
+    tmp_path: Path,
+) -> None:
+    """skill_dir=None + CLAUDE_SKILL_DIR unset → `defaults` stays None,
+    exercising the `if skill_dir is not None:` False-branch. The
+    `elif project_raw` branch takes the project config as-is.
+    """
+    env_before = os.environ.pop("CLAUDE_SKILL_DIR", None)
+
+    project_path = tmp_path / "project"
+    _write_yaml(project_path, "_quality-gate/quality-gate.yaml", {
+        "schema_version": 2,
+        "source_dir": "project_only",
+    })
+
+    try:
+        config = load_with_defaults(project_path)  # skill_dir defaults to None
+        assert config.source_dir == "project_only"
+    finally:
+        if env_before is not None:
+            os.environ["CLAUDE_SKILL_DIR"] = env_before
+
+
 def test_load_with_defaults_no_bundled_no_project(tmp_path: Path) -> None:
     """No bundled defaults and no project config → FileNotFoundError.
 
@@ -859,3 +939,158 @@ def test_mutmut_max_children_cpu_fallback_when_count_unknown() -> None:
     with patch("os.cpu_count", return_value=None):
         with pytest.raises(ConfigInvalid, match="exceeds"):
             validate(cfg)
+
+
+# ---------------------------------------------------------------------------
+# tool_overrides — per-language, per-tool path overrides
+# ---------------------------------------------------------------------------
+
+
+class TestParseToolOverrides:
+    """_parse_tool_overrides(raw) — config parser for the tool_overrides block."""
+
+    def test_none_returns_empty_dict(self) -> None:
+        """Missing key (None) parses to an empty dict (no overrides configured)."""
+        from harness_quality_gate.config import _parse_tool_overrides
+        assert _parse_tool_overrides(None) == {}
+
+    def test_empty_dict_returns_empty(self) -> None:
+        """Explicit empty dict also yields empty result."""
+        from harness_quality_gate.config import _parse_tool_overrides
+        assert _parse_tool_overrides({}) == {}
+
+    def test_single_language_single_tool(self) -> None:
+        """One language, one tool → flat mapping."""
+        from harness_quality_gate.config import _parse_tool_overrides
+        result = _parse_tool_overrides({"python": {"ruff": "/opt/ruff"}})
+        assert result == {"python": {"ruff": "/opt/ruff"}}
+
+    def test_multiple_languages(self) -> None:
+        """Each language is preserved with its own tool map."""
+        from harness_quality_gate.config import _parse_tool_overrides
+        raw = {
+            "python": {"ruff": "/opt/ruff", "pyright": "/opt/pyright"},
+            "php": {"infection": "vendor/bin/infection"},
+        }
+        result = _parse_tool_overrides(raw)
+        # Exact equality — kills swap/reverse mutants in the merge.
+        assert result == {
+            "python": {"ruff": "/opt/ruff", "pyright": "/opt/pyright"},
+            "php": {"infection": "vendor/bin/infection"},
+        }
+
+    def test_language_with_empty_tools_dict_is_omitted(self) -> None:
+        """A language whose tools dict is empty is dropped from the result.
+
+        This lets callers distinguish "no override configured" from "empty
+        override block" via ``language in cfg.tool_overrides``.
+        """
+        from harness_quality_gate.config import _parse_tool_overrides
+        result = _parse_tool_overrides({"python": {}, "php": {"infection": "x"}})
+        assert "python" not in result
+        assert result["php"] == {"infection": "x"}
+
+    def test_non_dict_input_rejected(self) -> None:
+        """tool_overrides must be a dict at the top level (kills list→dict
+        type-check mutant)."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid, match="must be a dict"):
+            _parse_tool_overrides(["python", "ruff"])  # type: ignore[arg-type]
+
+    def test_non_dict_language_value_rejected(self) -> None:
+        """Each language value must be a dict."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid, match=r"tool_overrides\.python must be a dict"):
+            _parse_tool_overrides({"python": "not-a-dict"})  # type: ignore[arg-type]
+
+    def test_non_string_path_rejected(self) -> None:
+        """Each path must be a string (kills the 'isinstance(path, str)' removal
+        mutant — would silently accept numbers)."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid, match=r"must be a string"):
+            _parse_tool_overrides({"python": {"ruff": 42}})  # type: ignore[arg-type]
+
+    def test_empty_path_rejected(self) -> None:
+        """Empty string path is invalid (the falsy check kills XX-wrap mutants)."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid, match="must be non-empty"):
+            _parse_tool_overrides({"python": {"ruff": ""}})
+
+    def test_null_byte_in_path_rejected(self) -> None:
+        """Paths containing null bytes are rejected (security: same check
+        that :func:`validate_paths` uses)."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid, match="null byte"):
+            _parse_tool_overrides({"python": {"ruff": "/opt/ruff\x00bad"}})
+
+    def test_error_message_includes_path_for_debugging(self) -> None:
+        """The ConfigInvalid message includes the offending key path so the
+        user knows which override to fix (kills '.format' removal mutants)."""
+        from harness_quality_gate.config import _parse_tool_overrides, ConfigInvalid
+        with pytest.raises(ConfigInvalid) as exc:
+            _parse_tool_overrides({"python": {"ruff": 42}})  # type: ignore[arg-type]
+        # Exact path components present in the error message.
+        assert "tool_overrides" in str(exc.value)
+        assert "python" in str(exc.value)
+        assert "ruff" in str(exc.value)
+
+
+class TestConfigGetToolOverride:
+    """Config.get_tool_override(language, tool_name) — lookup helper."""
+
+    def test_default_is_empty_dict(self) -> None:
+        """A config without tool_overrides has an empty dict (no KeyError)."""
+        config = validate(_make_v2_config())
+        assert config.tool_overrides == {}
+
+    def test_hit_returns_path(self) -> None:
+        """Configured override is returned verbatim (no path resolution here)."""
+        config = validate(_make_v2_config({
+            "tool_overrides": {"python": {"ruff": "/opt/company/ruff"}},
+        }))
+        assert config.get_tool_override("python", "ruff") == "/opt/company/ruff"
+
+    def test_miss_on_tool_returns_none(self) -> None:
+        """Language present but tool absent → None (not KeyError)."""
+        config = validate(_make_v2_config({
+            "tool_overrides": {"python": {"ruff": "/opt/company/ruff"}},
+        }))
+        assert config.get_tool_override("python", "pyright") is None
+
+    def test_miss_on_language_returns_none(self) -> None:
+        """Language absent entirely → None."""
+        config = validate(_make_v2_config({
+            "tool_overrides": {"python": {"ruff": "/opt/ruff"}},
+        }))
+        assert config.get_tool_override("php", "ruff") is None
+
+    def test_miss_on_empty_config_returns_none(self) -> None:
+        """Empty tool_overrides dict → None for any (language, tool)."""
+        config = validate(_make_v2_config({"tool_overrides": {}}))
+        assert config.get_tool_override("python", "ruff") is None
+        assert config.get_tool_override("php", "infection") is None
+
+    def test_validate_keeps_tool_overrides_field(self) -> None:
+        """The full tool_overrides dict survives the validate() pipeline
+        (kills dict-pop / dict-clear mutants)."""
+        raw_overrides = {
+            "python": {"ruff": "/opt/ruff", "pyright": "/opt/pyright"},
+            "php": {"infection": "vendor/bin/infection"},
+        }
+        config = validate(_make_v2_config({"tool_overrides": raw_overrides}))
+        # Exact equality — guards against partial-overwrite mutants.
+        assert config.tool_overrides == raw_overrides
+
+
+class TestConfigToolOverridesValidationIntegration:
+    """End-to-end: validate() rejects bad tool_overrides with a clear message."""
+
+    def test_validate_propagates_non_dict_error(self) -> None:
+        """validate() surfaces the same ConfigInvalid raised by _parse_tool_overrides."""
+        with pytest.raises(ConfigInvalid, match="must be a dict"):
+            validate({"schema_version": 2, "tool_overrides": "bad"})
+
+    def test_validate_propagates_empty_path_error(self) -> None:
+        """validate() surfaces the empty-path ConfigInvalid."""
+        with pytest.raises(ConfigInvalid, match="non-empty"):
+            validate({"schema_version": 2, "tool_overrides": {"python": {"ruff": ""}}})

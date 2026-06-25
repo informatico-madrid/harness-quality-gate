@@ -15,6 +15,20 @@ mutmut_max_children: null          # auto: os.cpu_count() // 2
 mutation_threshold: 100.0
 coverage_threshold: 100.0
 
+# Tool resolution overrides — see steps/step-00-install.md §0.9.
+# When a tool is installed in a non-standard location OR multiple
+# candidates exist for the same tool, the LLM can persist the user's
+# choice here. The schema is: language → tool_name → path string.
+# Path may be absolute or relative to the repo root.
+# Example:
+# tool_overrides:
+#   python:
+#     ruff: /opt/company/bin/ruff
+#     pyright: vendor/python/pyright
+#   php:
+#     infection: vendor/bin/infection
+tool_overrides: {}
+
 # Layer 1: Test Execution
 layer1:
   coverage_threshold: 85.0

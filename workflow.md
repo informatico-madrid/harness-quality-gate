@@ -297,7 +297,10 @@ If no config found, use defaults:
 
 ### 2. First Step Execution
 
-Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
+If the target repo may not have the required tools installed, read first:
+`./steps/step-00-install.md` (LLM-driven installation guide).
+
+Then read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 
 **Important**: After initialization, the workflow proceeds to `./steps/step-03a-layer3a.md` (L3A smoke test), NOT to step-02-layer1.md (L1). This is the execution order: L3A → L1 → L2 → L3B → L4 → Checkpoint.
 
@@ -307,6 +310,7 @@ Read fully and follow: `./steps/step-01-init.md` to begin the workflow.
 
 | File | Purpose |
 |------|---------|
+| `steps/step-00-install.md` | LLM-driven tool installation guide (no subcommand) |
 | `steps/step-01-init.md` | Initialization and state setup |
 | `steps/step-03a-layer3a.md` | Layer 3A: Tier A smoke test (first after init) |
 | `steps/step-02-layer1.md` | Layer 1: Test execution |

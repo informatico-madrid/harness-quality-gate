@@ -529,7 +529,8 @@ class PhpAdapter(BaseAdapter):
                             message=(
                                 "Infection mutation gate required but unavailable "
                                 "(HARNESS_INFECTION_REQUIRED=1). "
-                                "Ensure Infection is installed via install-tools."
+                                "Install via `composer require --dev infection/infection` "
+                                "or see references/security-tools-guide-php.md."
                             ),
                             tool="infection",
                             layer="L1",

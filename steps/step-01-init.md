@@ -130,7 +130,8 @@ fi
 export PYTHON_RUNNER
 ```
 
-**Then run checks:**
+**Then run checks (use the candidate-aware API when more than one
+candidate exists for a tool — see `steps/step-00-install.md` §0.8):**
 
 ```bash
 # Core tools (L3A, L1, L2, L3B) — check venv first
@@ -144,7 +145,26 @@ $PYTHON_RUNNER -c "import bandit" 2>/dev/null && echo "bandit=OK" || echo "bandi
 $PYTHON_RUNNER -c "import safety" 2>/dev/null && echo "safety=OK" || echo "safety=MISSING"
 which gitleaks 2>/dev/null && echo "gitleaks=OK" || echo "gitleaks=MISSING"
 ```
+
+**Candidate-aware disambiguation (when something is MISSING or
+multiple candidates exist):**
+
+```bash
+$PYTHON_RUNNER -c "
+from harness_quality_gate.bootstrap import find_tool_candidates
+from pathlib import Path
+import json
+repo = Path('{project-root}')
+for name in ('ruff', 'pyright', 'pytest', 'mutmut', 'bandit', 'safety'):
+    cs = find_tool_candidates(name, repo)
+    print(name, json.dumps([(c.provenance, str(c.path)) for c in cs]))
+"
 ```
+
+The output lists every place the LLM should look. If the user has
+multiple installations of the same tool, this is the structured data
+the agent uses to present a clear choice (see §0.8 in
+`steps/step-00-install.md`).
 
 Store availability in state for conditional execution.
 

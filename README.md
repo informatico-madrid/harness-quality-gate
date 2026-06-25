@@ -522,14 +522,36 @@ pip install semgrep checkov deptry vulture trivy
 
 ### Install as Skill
 
-```bash
-# Option 1: Local link
-cd ~/.roo/skills
-ln -s /path/to/quality-gate quality-gate
+The skill is **agent-agnostic**. Drop the `SKILL.md` into whichever path
+your agent scans for skills. The agent itself is the installer — see
+`steps/step-00-install.md` for the LLM-driven tool install flow.
 
-# Option 2: Copy
-cp -r /path/to/quality-gate ~/.roo/skills/
+| Agent | Skill path (project) | Skill path (user-global) |
+|-------|----------------------|--------------------------|
+| opencode | `.opencode/skills/harness-quality-gate/` | `~/.config/opencode/skills/harness-quality-gate/` |
+| Claude Code | `.claude/skills/harness-quality-gate/` | `~/.claude/skills/harness-quality-gate/` |
+| Roo Code | `.roo/skills/harness-quality-gate/` | `~/.roo/skills/harness-quality-gate/` |
+| Continue.dev | `.continue/skills/harness-quality-gate/` | `~/.continue/skills/harness-quality-gate/` |
+
+Examples:
+
+```bash
+# opencode (project-local)
+mkdir -p .opencode/skills
+cp -r /path/to/harness-quality-gate .opencode/skills/
+
+# Roo Code (user-global link)
+mkdir -p ~/.roo/skills
+ln -s /path/to/harness-quality-gate ~/.roo/skills/harness-quality-gate
+
+# Claude Code (user-global copy)
+mkdir -p ~/.claude/skills
+cp -r /path/to/harness-quality-gate ~/.claude/skills/
 ```
+
+After install, the agent reads `SKILL.md` and follows it. There is no
+`install-tools` subcommand — the agent installs missing tools itself
+following `steps/step-00-install.md`.
 
 ---
 
@@ -538,21 +560,32 @@ cp -r /path/to/quality-gate ~/.roo/skills/
 ### Basic Usage
 
 ```bash
-# Run the full quality gate
+# Run the full quality gate (deterministic 5-layer run)
 cd /path/to/project
-python3 -m harness_quality_gate full .
+python3 -m harness_quality_gate all .
 
-# Or follow the workflow manually
-# 1. Read step-01-init.md
-# 2. Follow steps in sequence L3A → L1 → L2 → L3B → L4
+# Or follow the workflow manually (LLM-driven, layer by layer)
+# 1. Read steps/step-00-install.md (if tools may be missing)
+# 2. Read steps/step-01-init.md
+# 3. Follow steps in sequence L3A → L1 → L2 → L3B → L4
 ```
 
-### Initial Configuration
+### CLI Subcommands
 
-```bash
-# Auto-detect project structure and configure
-python3 -m harness_quality_gate.configurator
-```
+The CLI exposes only **two** subcommands (per
+`specs/php-support/decisions.md` §1, ratified 2026-06-11):
+
+| Subcommand | Purpose |
+|------------|---------|
+| `all <repo>` | Run the full 5-layer quality gate against `<repo>` |
+| `audit-ignores <repo>` | Scan for unjustified suppression annotations |
+
+The historical subcommands from the original design (`detect`, `doctor`,
+`install-tools`, `configure`, `layer3a`, `layer1`, `layer2`, `layer3b`,
+`layer4`, `checkpoint`) were **deliberately not restored** after the
+refactor — the skill is consumed by an LLM, not driven from a terminal.
+The LLM reads the `steps/*.md` files and orchestrates the non-deterministic
+parts (Tier B, fix validation) itself.
 
 ### Configure Thresholds
 
@@ -576,7 +609,7 @@ Contributions are welcome! If this skill proves useful to you, please consider g
 
 1. **Fork** the repository
 2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
-3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate full .`)
+3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate all .`)
 4. **Run the full quality gate before pushing**:
    - `ruff check harness_quality_gate/ tests/`
    - `pytest tests/unit/ -q --cov=harness_quality_gate --cov-fail-under=100 -p no:randomly`

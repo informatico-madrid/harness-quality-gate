@@ -1,60 +1,363 @@
 """Unit tests for harness_quality_gate.bootstrap.
 
-Covers all public APIs: resolve_tool, detect_source_dir, suggest_max_children,
-ensure_venv, install_tools, verify_tools, write_manifest, _get_version,
-plus ToolNotAvailable and ToolCheckResult.
+Covers the public API: ToolCandidate, find_tool_candidates, resolve_tool,
+validate_paths, detect_source_dir, suggest_max_children, and
+ToolNotAvailable. The bootstrap module no longer installs or verifies
+tools (per ``specs/php-support/decisions.md`` §1 — the LLM agent is the
+installer; see ``steps/step-00-install.md`` §0.8 for the disambiguation
+flow when multiple candidates exist).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import subprocess
-import sys
-from dataclasses import fields as dataclass_fields
+from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import call, patch
 
 import pytest
 
 from harness_quality_gate.bootstrap import (
-    PYTHON_TOOLS,
-    ToolCheckResult,
+    PROVENANCE_OVERRIDE,
+    PROVENANCE_PATH,
+    PROVENANCE_VENDOR,
+    PROVENANCE_VENV,
+    VENV_BIN_DIR,
+    ToolCandidate,
     ToolNotAvailable,
-    _get_version,
     detect_source_dir,
-    ensure_venv,
-    install_tools,
+    find_tool_candidates,
     resolve_tool,
     suggest_max_children,
     validate_paths,
-    verify_tools,
-    write_manifest,
 )
 
 
 # ===================================================================
-# Test helpers
+# ToolCandidate value object
 # ===================================================================
 
 
-class _FakeCompletedProcess:
-    """A minimal mock for subprocess.CompletedProcess."""
+class TestToolCandidate:
+    """ToolCandidate(path, provenance) — frozen dataclass."""
 
-    def __init__(self, returncode=0, stdout="", stderr="") -> None:
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+    def test_construction_and_access(self) -> None:
+        """Attributes are readable after construction."""
+        c = ToolCandidate(path=Path("/usr/bin/ruff"), provenance="PATH")
+        assert c.path == Path("/usr/bin/ruff")
+        assert c.provenance == "PATH"
+
+    def test_frozen_blocks_mutation(self) -> None:
+        """Attempting to mutate raises FrozenInstanceError."""
+        c = ToolCandidate(path=Path("/bin/x"), provenance="PATH")
+        with pytest.raises(FrozenInstanceError):
+            c.path = Path("/other")  # type: ignore[misc]
+
+    def test_equality(self) -> None:
+        """Two candidates with same path+provenance are equal (frozen → hashable)."""
+        a = ToolCandidate(path=Path("/bin/x"), provenance="PATH")
+        b = ToolCandidate(path=Path("/bin/x"), provenance="PATH")
+        assert a == b
+        assert hash(a) == hash(b)
+        assert len({a, b}) == 1  # set semantics prove hash works
+
+    def test_inequality_on_path(self) -> None:
+        """Different path → not equal."""
+        a = ToolCandidate(path=Path("/bin/x"), provenance="PATH")
+        b = ToolCandidate(path=Path("/bin/y"), provenance="PATH")
+        assert a != b
+
+    def test_inequality_on_provenance(self) -> None:
+        """Different provenance → not equal (kills XX-wrap mutants)."""
+        a = ToolCandidate(path=Path("/bin/x"), provenance="PATH")
+        b = ToolCandidate(path=Path("/bin/x"), provenance=".venv")
+        assert a != b
+        # Exact strings, not substrings — kills "PATH"→"XXPATHXX" mutants.
+        assert a.provenance == "PATH"
+        assert b.provenance == ".venv"
+        assert a.provenance != "XXPATHXX"
 
 
 # ===================================================================
-# resolve_tool
+# ToolNotAvailable — extended with `tried` list
+# ===================================================================
+
+
+class TestToolNotAvailableTried:
+    """ToolNotAvailable now carries a `tried` list of checked paths."""
+
+    def test_backward_compat_no_tried(self) -> None:
+        """Constructor with only tool_name keeps the original message format."""
+        exc = ToolNotAvailable("ruff")
+        assert exc.tool_name == "ruff"
+        assert exc.tried == []
+        # Exact match — kills the "Tool not available: {tool_name!r}" XX-wrap
+        # mutant (would become "XXTool not available: {tool_name!r}XX").
+        assert str(exc) == "Tool not available: 'ruff'"
+
+    def test_with_empty_tried_list(self) -> None:
+        """Explicit empty tried list behaves like the no-arg case."""
+        exc = ToolNotAvailable("ruff", tried=[])
+        assert exc.tried == []
+        assert str(exc) == "Tool not available: 'ruff'"
+
+    def test_with_single_tried_path(self) -> None:
+        """Single tried path is included in the message."""
+        tried = [Path("/opt/custom/ruff")]
+        exc = ToolNotAvailable("ruff", tried=tried)
+        assert exc.tried == tried
+        msg = str(exc)
+        assert "Tool not available: 'ruff'" in msg
+        # Exact path appears in the message.
+        assert "/opt/custom/ruff" in msg
+        # Format suffix marker is exact (kills "(tried: {paths})" mutants).
+        assert "(tried: /opt/custom/ruff)" in msg
+
+    def test_with_multiple_tried_paths_joined(self) -> None:
+        """Multiple tried paths are joined with ", " in the message."""
+        tried = [Path("/a/ruff"), Path("/b/ruff"), Path("/c/ruff")]
+        exc = ToolNotAvailable("ruff", tried=tried)
+        assert exc.tried == tried
+        msg = str(exc)
+        # Exact joined string — kills the ", " separator mutant.
+        assert "(tried: /a/ruff, /b/ruff, /c/ruff)" in msg
+
+    def test_is_runtime_error_subclass(self) -> None:
+        """ToolNotAvailable stays a RuntimeError for back-compat with callers."""
+        assert issubclass(ToolNotAvailable, RuntimeError)
+
+
+# ===================================================================
+# find_tool_candidates
+# ===================================================================
+
+
+def _make_executable(path: Path) -> Path:
+    """Create an executable file at *path* and return the resolved path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(mode=0o755, exist_ok=True)
+    return path.resolve()
+
+
+class TestFindToolCandidates:
+    """find_tool_candidates(name, repo, *, preferred=None, vendor_bin=None)."""
+
+    def test_no_candidates_returns_empty_list(self, tmp_path: Path) -> None:
+        """Nothing on disk and nothing on PATH → empty list."""
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ghost", tmp_path)
+        assert result == []
+
+    def test_venv_only(self, tmp_path: Path) -> None:
+        """Only .venv/bin/<name> exists → one .venv candidate."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ruff", tmp_path)
+        assert len(result) == 1
+        assert result[0] == ToolCandidate(path=venv_bin, provenance=".venv")
+
+    def test_path_only(self, tmp_path: Path) -> None:
+        """Only system PATH has it → one PATH candidate (must be executable)."""
+        system_bin = _make_executable(tmp_path / "system" / "ruff")
+        with patch("shutil.which", return_value=str(system_bin)):
+            result = find_tool_candidates("ruff", tmp_path)
+        assert len(result) == 1
+        assert result[0] == ToolCandidate(
+            path=system_bin.resolve(),
+            provenance="PATH",
+        )
+
+    def test_venv_and_path_precedence(self, tmp_path: Path) -> None:
+        """Both venv and PATH exist → venv first, PATH second."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        system_bin = _make_executable(tmp_path / "system" / "ruff")
+        with patch("shutil.which", return_value=str(system_bin)):
+            result = find_tool_candidates("ruff", tmp_path)
+        assert len(result) == 2
+        # Exact order — kills reverse() and swap mutants.
+        assert result[0].path == venv_bin
+        assert result[0].provenance == ".venv"
+        assert result[1].path == system_bin.resolve()
+        assert result[1].provenance == "PATH"
+
+    def test_vendor_bin_param(self, tmp_path: Path) -> None:
+        """vendor_bin param adds a vendor candidate after venv."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        vendor_bin = _make_executable(tmp_path / "vendor" / "bin" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ruff", tmp_path, vendor_bin="vendor/bin")
+        assert len(result) == 2
+        assert result[0].path == venv_bin
+        assert result[0].provenance == ".venv"
+        assert result[1].path == vendor_bin
+        assert result[1].provenance == "vendor"
+
+    def test_vendor_bin_param_relative_resolution(self, tmp_path: Path) -> None:
+        """vendor_bin is relative to repo (not cwd)."""
+        _make_executable(tmp_path / "vendor" / "bin" / "ruff")
+        # Use a different cwd to confirm resolution is against repo, not cwd.
+        with patch("shutil.which", return_value=None), patch(
+            "os.getcwd", return_value="/"
+        ):
+            result = find_tool_candidates("ruff", tmp_path, vendor_bin="vendor/bin")
+        assert len(result) == 1
+        assert result[0].provenance == "vendor"
+
+    def test_vendor_bin_skipped_when_unset(self, tmp_path: Path) -> None:
+        """vendor_bin=None → no vendor candidate even if vendor/bin/<name> exists."""
+        _make_executable(tmp_path / "vendor" / "bin" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ruff", tmp_path)
+        assert result == []
+
+    def test_preferred_absolute_path(self, tmp_path: Path) -> None:
+        """preferred with absolute path takes precedence over venv and PATH."""
+        override_bin = _make_executable(tmp_path / "opt" / "my-ruff")
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        system_bin = _make_executable(tmp_path / "system" / "ruff")
+        with patch("shutil.which", return_value=str(system_bin)):
+            result = find_tool_candidates(
+                "ruff", tmp_path, preferred=str(override_bin)
+            )
+        assert len(result) == 3
+        # Exact precedence: override > .venv > PATH.
+        assert result[0].path == override_bin.resolve()
+        assert result[0].provenance == "override"
+        assert result[1].path == venv_bin
+        assert result[1].provenance == ".venv"
+        assert result[2].path == system_bin.resolve()
+        assert result[2].provenance == "PATH"
+
+    def test_preferred_relative_path_resolved_against_repo(self, tmp_path: Path) -> None:
+        """preferred relative path is resolved against repo, not cwd."""
+        override_bin = _make_executable(tmp_path / "tools" / "ruff")
+        with patch("shutil.which", return_value=None), patch(
+            "os.getcwd", return_value="/"
+        ):
+            result = find_tool_candidates(
+                "ruff", tmp_path, preferred="tools/ruff"
+            )
+        assert len(result) == 1
+        assert result[0].path == override_bin.resolve()
+        assert result[0].provenance == "override"
+
+    def test_preferred_pathobject_input(self, tmp_path: Path) -> None:
+        """preferred accepts a Path object, not just a string."""
+        override_bin = _make_executable(tmp_path / "opt" / "my-ruff")
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates(
+                "ruff", tmp_path, preferred=override_bin
+            )
+        assert len(result) == 1
+        assert result[0].path == override_bin.resolve()
+        assert result[0].provenance == "override"
+
+    def test_preferred_nonexistent_is_filtered(self, tmp_path: Path) -> None:
+        """A preferred path that doesn't exist is silently dropped."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates(
+                "ruff", tmp_path, preferred="/nonexistent/ruff"
+            )
+        # Falls through to venv.
+        assert len(result) == 1
+        assert result[0].path == venv_bin
+        assert result[0].provenance == ".venv"
+
+    def test_preferred_nonexecutable_is_filtered(self, tmp_path: Path) -> None:
+        """A preferred path that exists but isn't executable is dropped."""
+        # Venv entry is non-executable.
+        non_exec = tmp_path / ".venv" / "bin" / "ruff"
+        non_exec.parent.mkdir(parents=True, exist_ok=True)
+        non_exec.touch(mode=0o644)
+        # And pretend shutil.which returns the same path non-resolved.
+        # (Edge case: the tool IS on PATH but our touch made it non-exec.)
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ruff", tmp_path, preferred=str(non_exec))
+        # Preferred is non-executable → filtered. Venv is non-executable → filtered.
+        # shutil.which returns None → empty list.
+        assert result == []
+
+    def test_dedup_when_venv_points_to_path(self, tmp_path: Path) -> None:
+        """Same resolved path from two sources → only the highest-precedence entry."""
+        # Create a single file. Pretend shutil.which returns the same path
+        # (resolved to the venv file).
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        with patch("shutil.which", return_value=str(venv_bin)):
+            result = find_tool_candidates("ruff", tmp_path)
+        # Deduplicated: only the .venv candidate, not the PATH duplicate.
+        assert len(result) == 1
+        assert result[0].provenance == ".venv"
+
+    def test_dedup_preserves_first_seen_provenance(self, tmp_path: Path) -> None:
+        """When the same file appears in venv and vendor, venv wins (its provenance
+        is the first-seen one)."""
+        shared_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        # Symlink vendor/bin/ruff → same venv file.
+        vendor_path = tmp_path / "vendor" / "bin" / "ruff"
+        vendor_path.parent.mkdir(parents=True, exist_ok=True)
+        vendor_path.symlink_to(shared_bin)
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates(
+                "ruff", tmp_path, vendor_bin="vendor/bin"
+            )
+        # The symlink resolves to the same Path as the venv file → deduplicated.
+        assert len(result) == 1
+        assert result[0].provenance == ".venv"
+
+    def test_venv_file_non_executable_filtered(self, tmp_path: Path) -> None:
+        """A .venv/bin/<name> file without the executable bit is filtered out."""
+        non_exec = tmp_path / ".venv" / "bin" / "ruff"
+        non_exec.parent.mkdir(parents=True, exist_ok=True)
+        non_exec.touch(mode=0o644)
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("ruff", tmp_path)
+        assert result == []
+
+    def test_vendor_file_non_executable_filtered(self, tmp_path: Path) -> None:
+        """A vendored file without the executable bit is filtered out."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        non_exec_vendor = tmp_path / "vendor" / "bin" / "ruff"
+        non_exec_vendor.parent.mkdir(parents=True, exist_ok=True)
+        non_exec_vendor.touch(mode=0o644)
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates(
+                "ruff", tmp_path, vendor_bin="vendor/bin"
+            )
+        # Only venv passes the executable check.
+        assert len(result) == 1
+        assert result[0] == ToolCandidate(path=venv_bin, provenance=".venv")
+
+    def test_shutil_which_returning_none_for_phantom(self, tmp_path: Path) -> None:
+        """shutil.which returns None → no PATH candidate."""
+        with patch("shutil.which", return_value=None):
+            result = find_tool_candidates("phantom", tmp_path)
+        assert result == []
+
+    def test_shutil_which_called_with_exact_name(self, tmp_path: Path) -> None:
+        """Kills "ruff"→"XXruffXX" mutants — the literal name is passed."""
+        with patch("shutil.which", return_value=None) as mock_which:
+            find_tool_candidates("ruff", tmp_path)
+        mock_which.assert_called_once_with("ruff")
+
+    def test_provenance_constants_values(self) -> None:
+        """PROVENANCE_* constants have exact expected values (kills XX-wrap
+        mutants in the module-level constants)."""
+        assert PROVENANCE_OVERRIDE == "override"
+        assert PROVENANCE_VENV == ".venv"
+        assert PROVENANCE_VENDOR == "vendor"
+        assert PROVENANCE_PATH == "PATH"
+        assert VENV_BIN_DIR == ".venv/bin"
+
+
+# ===================================================================
+# resolve_tool (extended with preferred and vendor_bin kwargs)
 # ===================================================================
 
 
 class TestResolveTool:
-    """resolve_tool(name, repo) -> Path."""
+    """resolve_tool(name, repo, *, preferred=None, vendor_bin=None) -> Path."""
 
     def test_prefers_venv_bin(self, tmp_path: Path) -> None:
         """Should return .venv/bin/<name> when it exists and is executable."""
@@ -66,57 +369,172 @@ class TestResolveTool:
         assert result == tool_bin.resolve()
 
     def test_fallback_to_system_path(self, tmp_path: Path) -> None:
-        """Should fallback to shutil.which when .venv/bin/<name> is missing."""
-        with patch("shutil.which", return_value="/usr/bin/ruff"):
+        """Should fallback to shutil.which when .venv/bin/<name> is missing.
+
+        New contract (post-candidate-aware refactor): the PATH hit must
+        pass the executability check too. We mock shutil.which to point
+        at a real executable we create in tmp_path.
+        """
+        system_bin = _make_executable(tmp_path / "system" / "ruff")
+        with patch("shutil.which", return_value=str(system_bin)):
             result = resolve_tool("ruff", tmp_path)
 
-        assert result == Path("/usr/bin/ruff").resolve()
+        assert result == system_bin.resolve()
 
     def test_raises_when_not_found(self, tmp_path: Path) -> None:
         """Should raise ToolNotAvailable when tool is not in .venv or system PATH."""
-        with (
-            patch.object(Path, "is_file", return_value=False),
-            patch("os.access", return_value=False),
-            patch("shutil.which", return_value=None),
-        ):
+        with patch("shutil.which", return_value=None):
             with pytest.raises(ToolNotAvailable) as exc_info:
                 resolve_tool("bandit", tmp_path)
             assert "bandit" in str(exc_info.value)
 
     def test_venv_file_not_executable(self, tmp_path: Path) -> None:
-        """Should fallback when .venv/bin/<name> exists but is not executable."""
+        """Should fallback when .venv/bin/<name> exists but is not executable.
+
+        New contract: the PATH candidate must also pass the executability
+        check (we mock it to point at a real executable in tmp_path).
+        """
         tool_bin = tmp_path / ".venv" / "bin" / "ruff"
         tool_bin.parent.mkdir(parents=True, exist_ok=True)
         tool_bin.touch(mode=0o644)  # not executable
-
-        with patch("shutil.which", return_value="/usr/bin/ruff"):
+        system_bin = _make_executable(tmp_path / "system" / "ruff")
+        with patch("shutil.which", return_value=str(system_bin)):
             result = resolve_tool("ruff", tmp_path)
 
-        assert result == Path("/usr/bin/ruff").resolve()
+        assert result == system_bin.resolve()
 
     def test_called_with_exact_args(self) -> None:
-        """resolve_tool calls os.access with exact (path, X_OK) on success."""
+        """resolve_tool calls os.access with the venv path AND with the PATH
+        candidate (when both pass the executability check). The exact
+        args (path, X_OK) matter for killing argument-passthrough mutants.
+        """
         fake_repo = Path("/fake/repo")
-        fake_bin = fake_repo / ".venv" / "bin" / "ruff"
+        fake_venv_bin = fake_repo / ".venv" / "bin" / "ruff"
+        fake_path_bin = Path("/fake/sys/ruff")
+
+        def fake_is_file(self: Path) -> bool:
+            return str(self) in (str(fake_venv_bin), str(fake_path_bin))
 
         with (
-            patch.object(Path, "is_file", return_value=True),
+            patch.object(Path, "is_file", fake_is_file),
             patch("os.access", return_value=True) as mock_access,
+            patch("shutil.which", return_value=str(fake_path_bin)),
         ):
             resolve_tool("ruff", fake_repo)
 
-        mock_access.assert_called_once_with(str(fake_bin), os.X_OK)
+        # Both candidates are checked with exact (str, os.X_OK) args.
+        expected_calls = [
+            call(str(fake_venv_bin), os.X_OK),
+            call(str(fake_path_bin), os.X_OK),
+        ]
+        assert mock_access.call_args_list == expected_calls
 
     def test_raises_on_missing_venv_with_path_in_error(self) -> None:
         """ToolNotAvailable message contains the tool name."""
-        with (
-            patch.object(Path, "is_file", return_value=False),
-            patch("os.access", return_value=False),
-            patch("shutil.which", return_value=None),
-        ):
+        with patch("shutil.which", return_value=None):
             with pytest.raises(ToolNotAvailable) as exc_info:
                 resolve_tool("vulture", Path("/x"))
             assert "vulture" in exc_info.value.tool_name
+
+    def test_preferred_overrides_venv(self, tmp_path: Path) -> None:
+        """preferred (when valid) wins over .venv and PATH."""
+        override_bin = _make_executable(tmp_path / "opt" / "my-ruff")
+        _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        with patch("shutil.which", return_value="/usr/bin/ruff"):
+            result = resolve_tool("ruff", tmp_path, preferred=str(override_bin))
+        assert result == override_bin.resolve()
+
+    def test_preferred_invalid_falls_through_to_venv(self, tmp_path: Path) -> None:
+        """preferred pointing to a non-existent path falls through to other candidates."""
+        venv_bin = _make_executable(tmp_path / ".venv" / "bin" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = resolve_tool(
+                "ruff", tmp_path, preferred="/nope/ruff"
+            )
+        assert result == venv_bin.resolve()
+
+    def test_preferred_invalid_no_other_candidates_raises(self, tmp_path: Path) -> None:
+        """preferred invalid AND no other candidates → ToolNotAvailable with
+        `tried` listing preferred first then venv then PATH (none)."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(ToolNotAvailable) as exc_info:
+                resolve_tool("ghost", tmp_path, preferred="/nope/ghost")
+        assert exc_info.value.tool_name == "ghost"
+        # The tried list has at least the preferred path.
+        assert any(str(p) == "/nope/ghost" for p in exc_info.value.tried)
+
+    def test_vendor_bin_kwarg_resolves_vendored(self, tmp_path: Path) -> None:
+        """vendor_bin kwarg locates a tool in <repo>/<vendor_bin>/<name>."""
+        vendor_bin = _make_executable(tmp_path / "tools" / "ruff")
+        with patch("shutil.which", return_value=None):
+            result = resolve_tool(
+                "ruff", tmp_path, vendor_bin="tools"
+            )
+        assert result == vendor_bin.resolve()
+
+    def test_no_candidates_raises_with_full_tried_list(self, tmp_path: Path) -> None:
+        """When nothing exists anywhere, the exception's tried list contains
+        venv path, vendor path (if vendor_bin), and PATH path (if shutil.which
+        returns non-None). Exact ordering matters for the LLM-facing message."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(ToolNotAvailable) as exc_info:
+                resolve_tool("missing", tmp_path)
+        assert exc_info.value.tool_name == "missing"
+        # Tried contains the venv location first.
+        tried_strs = [str(p) for p in exc_info.value.tried]
+        assert tried_strs[0] == str(tmp_path / ".venv" / "bin" / "missing")
+
+    def test_no_candidates_with_shutil_which_hit(self, tmp_path: Path) -> None:
+        """When shutil.which returns a path but no other source matches, the
+        tried list still includes the PATH hit (so the LLM can show it)."""
+        with patch("shutil.which", return_value="/usr/bin/ghost"):
+            # .venv/bin/ghost does not exist, vendor_bin not set, but shutil.which hit.
+            with pytest.raises(ToolNotAvailable) as exc_info:
+                resolve_tool("ghost", tmp_path)
+        tried_strs = [str(p) for p in exc_info.value.tried]
+        # The PATH hit should appear (the find_tool_candidates filter rejects it
+        # because Path("/usr/bin/ghost").is_file() is False on this test box,
+        # but _build_tried_list still surfaces it).
+        assert any("/usr/bin/ghost" in s for s in tried_strs)
+
+    def test_no_candidates_with_vendor_bin(self, tmp_path: Path) -> None:
+        """When vendor_bin is set, its location is included in the tried list."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(ToolNotAvailable) as exc_info:
+                resolve_tool("missing", tmp_path, vendor_bin="vendor/bin")
+        tried_strs = [str(p) for p in exc_info.value.tried]
+        assert str(tmp_path / ".venv" / "bin" / "missing") in tried_strs
+        assert str(tmp_path / "vendor" / "bin" / "missing") in tried_strs
+
+    def test_preferred_relative_path_resolved_against_repo(self, tmp_path: Path) -> None:
+        """preferred relative path is resolved against repo (not cwd)."""
+        override_bin = _make_executable(tmp_path / "tools" / "ruff")
+        with patch("shutil.which", return_value=None), patch(
+            "os.getcwd", return_value="/"
+        ):
+            result = resolve_tool("ruff", tmp_path, preferred="tools/ruff")
+        assert result == override_bin.resolve()
+
+    def test_preferred_path_object_input(self, tmp_path: Path) -> None:
+        """preferred accepts a Path object too."""
+        override_bin = _make_executable(tmp_path / "opt" / "my-ruff")
+        result = resolve_tool("ruff", tmp_path, preferred=override_bin)
+        assert result == override_bin.resolve()
+
+    def test_exception_carries_tried_paths_for_llm_disambiguation(
+        self, tmp_path: Path
+    ) -> None:
+        """The exception's tried list is exactly what the LLM needs to
+        present the user with the full picture — kills
+        `_build_tried_list(...)` arg-passthrough mutants."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(ToolNotAvailable) as exc_info:
+                resolve_tool("missing", tmp_path, preferred="custom/path")
+        # Preferred path appears first in the tried list.
+        tried_strs = [str(p) for p in exc_info.value.tried]
+        assert tried_strs[0] == str(tmp_path / "custom" / "path")
+        # venv path also appears.
+        assert str(tmp_path / ".venv" / "bin" / "missing") in tried_strs
 
 
 # ===================================================================
@@ -229,398 +647,6 @@ class TestSuggestMaxChildren:
 
 
 # ===================================================================
-# ensure_venv
-# ===================================================================
-
-
-class TestEnsureVenv:
-    """ensure_venv(repo) -> Path."""
-
-    def test_returns_existing_venv(self, tmp_path: Path) -> None:
-        """When .venv already exists, return it without side effects."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir()
-
-        result = ensure_venv(tmp_path)
-        assert result == venv_dir
-
-    def test_creates_venv_when_missing(self, tmp_path: Path) -> None:
-        """When .venv is missing, create it via python -m venv."""
-        venv_dir = tmp_path / ".venv"
-
-        with patch("subprocess.run") as mock_run:
-            result = ensure_venv(tmp_path)
-
-        assert result == venv_dir
-        mock_run.assert_called_once_with(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
-
-    def test_logs_creation_message(self, tmp_path: Path, caplog) -> None:
-        """Should log an info message when creating the venv."""
-        venv_dir = tmp_path / ".venv"
-
-        with patch("subprocess.run"):
-            with caplog.at_level("INFO"):
-                ensure_venv(tmp_path)
-                assert any("Creating .venv" in record.message for record in caplog.records)
-
-    def test_does_not_call_venv_twice(self, tmp_path: Path) -> None:
-        """Existing .venv should not trigger subprocess."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir()
-
-        with patch("subprocess.run") as mock_run:
-            ensure_venv(tmp_path)
-        mock_run.assert_not_called()
-
-
-# ===================================================================
-# install_tools
-# ===================================================================
-
-
-class TestInstallTools:
-    """install_tools(repo) -> dict."""
-
-    def test_skips_if_uv_not_found(self, tmp_path: Path) -> None:
-        """When uv is not found, fall back to pip."""
-        venv_dir = tmp_path / ".venv"
-        venv_python = venv_dir / "bin" / "python"
-        venv_python.parent.mkdir(parents=True, exist_ok=True)
-        venv_python.touch()
-
-        with (
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)),
-            patch("shutil.which", return_value=None),
-            patch("sys.executable", str(venv_python)),
-        ):
-            results = install_tools(tmp_path)
-
-        assert all(v == "installed" for v in results.values())
-        assert list(results.keys()) == list(PYTHON_TOOLS.keys())
-
-    def test_installs_with_uv_when_found(self, tmp_path: Path) -> None:
-        """When uv is found, use it instead of pip."""
-        venv_dir = tmp_path / ".venv"
-        venv_python = venv_dir / "bin" / "python"
-        venv_python.parent.mkdir(parents=True, exist_ok=True)
-        venv_python.touch()
-        uv_bin = Path("/usr/local/bin/uv")
-        uv_bin.parent.mkdir(exist_ok=True)
-
-        with (
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)),
-            patch("shutil.which", return_value=str(uv_bin)),
-            patch("sys.executable", str(venv_python)),
-        ):
-            results = install_tools(tmp_path)
-
-        assert "installed" in results.values()
-
-    def test_failure_included_in_results(self, tmp_path: Path) -> None:
-        """Failed installs should include error message."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(
-                returncode=1, stderr=b"error: cannot find package",
-            )),
-        ):
-            results = install_tools(tmp_path)
-
-        assert any("failed:" in msg for msg in results.values())
-
-    def test_failure_message_format(self, tmp_path: Path) -> None:
-        """Error output should be trimmed to 200 chars with 'failed:' prefix
-        (catches mutmut_40: [:200]→[:201])."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-        long_stderr = "x" * 300
-
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(
-                returncode=1, stderr=long_stderr,
-            )),
-        ):
-            results = install_tools(tmp_path)
-
-        for name, msg in results.items():
-            assert msg.startswith("failed: ")
-            content = msg[len("failed: "):]
-            assert len(content) == 200  # trimmed to exactly 200 chars
-
-    def test_subprocess_run_calls_exact_commands(self, tmp_path: Path) -> None:
-        """All subprocess.run calls must have correct command structure.
-        Catches mutmut_2~11 (venv_python path string mutations),
-        mutmut_14 (None in pip_cmd), mutmut_15~21 (pip_cmd string mutations),
-        mutmut_25,26 (install string mutations)."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-        uv_bin = str(tmp_path / "bin" / "uv")
-
-        with (
-            patch("shutil.which", return_value=uv_bin),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)) as mock_run,
-        ):
-            install_tools(tmp_path)
-
-        # ensure_venv already sees .venv exists, so all calls are from install loop
-        assert len(mock_run.call_args_list) == len(PYTHON_TOOLS)
-
-        for i, run_call in enumerate(mock_run.call_args_list):
-            cmd = run_call.args[0]
-            assert len(cmd) == 4, f"Call {i}: expected 4 args [uv pip install pkg], got {len(cmd)}: {cmd}"
-            assert cmd[1] == "pip"       # catches mutmut_15 (XX-mXX), mutmut_16 (-M)
-            assert cmd[2] == "install"   # catches mutmut_17 (XXpipXX), mutmut_18 (PIP)
-            assert cmd[3] in PYTHON_TOOLS.values(), f"Call {i}: unexpected package {cmd[3]}"
-            assert run_call.kwargs["capture_output"] is True
-            assert run_call.kwargs["text"] is True
-            assert run_call.kwargs["timeout"] == 120
-
-    def test_subprocess_run_calls_exact_commands_when_fallback_pip(self, tmp_path: Path) -> None:
-        """When uv is missing, pip_cmd uses venv_python -m pip path.
-        Catches mutmut_7~9 (venv_python path string mutations in pip fallback),
-        mutmut_27 (cmd arg removed), mutmut_40 (stderr slice bound)."""
-        venv_dir = tmp_path / ".venv"
-        venv_python = venv_dir / "bin" / "python"
-        venv_python.parent.mkdir(parents=True, exist_ok=True)
-        venv_python.touch()
-
-        with (
-            patch("shutil.which", return_value=None),
-            patch("sys.executable", str(venv_python)),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)) as mock_run,
-        ):
-            install_tools(tmp_path)
-
-        assert len(mock_run.call_args_list) == len(PYTHON_TOOLS)
-
-        for i, run_call in enumerate(mock_run.call_args_list):
-            cmd = run_call.args[0]
-            assert len(cmd) == 5, f"Call {i}: expected 5 args [python -m pip install pkg], got {len(cmd)}: {cmd}"
-            assert cmd[0] == str(venv_python)      # catches mutmut_2 (None), mutmut_6~9 (path mutations)
-            assert cmd[1] == "-m"                   # catches mutmut_15 (XX-mXX), mutmut_16 (-M)
-            assert cmd[2] == "pip"                  # catches mutmut_17 (XXpipXX), mutmut_18 (PIP)
-            assert cmd[4] in PYTHON_TOOLS.values()  # catches mutmut_25,26 (XXpkgXX, Pkg)
-            assert run_call.kwargs["capture_output"] is True
-            assert run_call.kwargs["text"] is True
-            assert run_call.kwargs["timeout"] == 120
-
-    def test_subprocess_run_has_exact_kwargs(self, tmp_path: Path) -> None:
-        """install_tools calls subprocess.run with exact keyword arguments."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)) as mock_run,
-        ):
-            install_tools(tmp_path)
-
-        for run_call in mock_run.call_args_list:
-            assert "capture_output" in run_call.kwargs
-            assert run_call.kwargs["capture_output"] is True
-            assert run_call.kwargs["text"] is True
-            assert "timeout" in run_call.kwargs
-            assert run_call.kwargs["timeout"] == 120
-
-    def test_exception_handled(self, tmp_path: Path) -> None:
-        """Exceptions during install should be caught and stored."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", side_effect=OSError("timeout")),
-        ):
-            results = install_tools(tmp_path)
-
-        assert any("failed:" in msg and "timeout" in msg for msg in results.values())
-
-
-# ===================================================================
-# verify_tools
-# ===================================================================
-
-
-class TestVerifyTools:
-    """verify_tools(repo) -> list."""
-
-    def test_returns_list_of_all_tools(self, tmp_path: Path) -> None:
-        """Should return exactly len(PYTHON_TOOLS) + 1 results."""
-        fake_path = Path("/bin/fake")
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
-        ):
-            results = verify_tools(tmp_path)
-
-        assert len(results) == len(PYTHON_TOOLS) + 1
-
-    def test_includes_pyright_name(self, tmp_path: Path) -> None:
-        """Result names must include exact 'pyright' (catches mutmut_5: XXpyrightXX,
-        mutmut_6: PYRIGHT)."""
-        fake_path = Path("/bin/fake")
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
-        ):
-            results = verify_tools(tmp_path)
-
-        names = {r.name for r in results}
-        assert "pyright" in names
-        assert "PYRIGHT" not in names
-        assert "XXpyrightXX" not in names
-
-    def test_available_true_for_found_tools(self, tmp_path: Path) -> None:
-        """Tools found via resolve_tool should have available=True."""
-        fake_path = Path("/bin/fake")
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
-        ):
-            results = verify_tools(tmp_path)
-
-        for r in results:
-            assert r.available is True
-
-    def test_result_fields(self, tmp_path: Path) -> None:
-        """Check that all fields are populated correctly.
-        Catches mutmut_17: path=str(binary) -> str(None)."""
-        fake_path = Path("/bin/fake")
-        fake_str = str(fake_path)
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.2.3"),
-        ):
-            results = verify_tools(tmp_path)
-
-        for r in results:
-            assert r.name is not None
-            assert r.version is not None
-            assert r.path is not None
-            # str(None) returns the string "None", verify path is actual string from binary
-            assert r.path == fake_str, f"Expected {fake_str!r} but got {r.path!r}"
-
-    def test_available_true_with_path_content(self, tmp_path: Path) -> None:
-        """Tools found via resolve_tool should have correct path and available=True.
-        Catches str(None) mutations in verify_tools available branch."""
-        fake_path = Path("/bin/fake")
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
-        ):
-            results = verify_tools(tmp_path)
-
-        for r in results:
-            assert r.available is True
-            assert r.path is not None and r.path != "None"
-
-    def test_unavailable_tool_handled(self, tmp_path: Path) -> None:
-        """Unavailable tools should have available=False."""
-        with patch("harness_quality_gate.bootstrap.resolve_tool", side_effect=ToolNotAvailable("missing")):
-            results = verify_tools(tmp_path)
-
-        assert any(not r.available for r in results)
-
-    def test_unavailable_tool_has_non_none_name_and_available(self, tmp_path: Path) -> None:
-        """Unavailable tool entries must have name and available as proper types
-        (catches mutmut_19: name=None, mutmut_20: available=None)."""
-        with patch("harness_quality_gate.bootstrap.resolve_tool", side_effect=ToolNotAvailable("missing")):
-            results = verify_tools(tmp_path)
-
-        for r in results:
-            assert r.name is not None and not isinstance(r.name, type(None).__class__), \
-                f"ToolEntry {r.name} has None name (mutmut_19)"
-            assert r.available is not None and isinstance(r.available, bool), \
-                f"ToolEntry {r.name} has None available (mutmut_20)"
-            assert not r.available
-            assert r.version is None
-            assert r.path is None
-
-
-# ===================================================================
-# _get_version
-# ===================================================================
-
-
-class TestGetVersion:
-    """_get_version(binary) -> str or None."""
-
-    def test_returns_first_line(self) -> None:
-        """Should return the first line of --version output."""
-        fake_binary = Path("/bin/fake")
-
-        with patch("subprocess.run", return_value=_FakeCompletedProcess(
-            stdout="ruff 0.8.0\nruff-something-else",
-        )):
-            result = _get_version(fake_binary)
-
-        assert result == "ruff 0.8.0"
-
-    def test_returns_none_on_failure(self) -> None:
-        """Should return None when both stdout and stderr are empty (no output at all)."""
-        fake_binary = Path("/bin/fake")
-
-        with patch("subprocess.run", return_value=_FakeCompletedProcess(
-            returncode=1, stdout="", stderr="",
-        )):
-            result = _get_version(fake_binary)
-
-        assert result is None
-
-    def test_returns_none_on_exception(self) -> None:
-        """Should return None when subprocess raises."""
-        fake_binary = Path("/bin/fake")
-
-        with patch("subprocess.run", side_effect=OSError("boom")):
-            result = _get_version(fake_binary)
-
-        assert result is None
-
-    def test_subprocess_run_called_with_exact_args(self) -> None:
-        """Verify exact subprocess.run command and all kwargs
-        (catches mutmut_2:cmd→None, _5:timeout→None, _6:cmd removed,
-        _10:str(None), _11:XX--versionXX, _12:--VERSION, _15:timeout=11)."""
-        fake_path = Path("/bin/test")
-
-        with (
-            patch("subprocess.run", return_value=_FakeCompletedProcess(stdout="0.1.0")) as mock_run,
-        ):
-            _get_version(fake_path)
-
-        mock_run.assert_called_once_with(
-            [str(fake_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-    def test_falls_back_to_stderr(self) -> None:
-        """When stdout is empty, should fallback to stderr and return first line."""
-        fake_binary = Path("/bin/fake")
-
-        with patch("subprocess.run", return_value=_FakeCompletedProcess(
-            returncode=0, stdout="", stderr="version 1.0.0\nextra",
-        )):
-            result = _get_version(fake_binary)
-
-        assert result == "version 1.0.0"
-
-
-# ===================================================================
 # ToolNotAvailable
 # ===================================================================
 
@@ -637,220 +663,6 @@ class TestToolNotAvailable:
     def test_is_runtime_error(self) -> None:
         """ToolNotAvailable should be a subclass of RuntimeError."""
         assert issubclass(ToolNotAvailable, RuntimeError)
-
-
-# ===================================================================
-# ToolCheckResult
-# ===================================================================
-
-
-class TestToolCheckResult:
-    """ToolCheckResult dataclass."""
-
-    def test_has_expected_fields(self) -> None:
-        """Should have name, available, version, path fields."""
-        field_names = {f.name for f in dataclass_fields(ToolCheckResult)}
-        assert field_names == {"name", "available", "version", "path"}
-
-    def test_serialization(self) -> None:
-        """Should behave like a standard dataclass."""
-        result = ToolCheckResult(name="ruff", available=True, version="1.0", path="/bin/ruff")
-        assert result.name == "ruff"
-        assert result.available is True
-
-    def test_none_fields_allowed(self) -> None:
-        """version and path can be None."""
-        result = ToolCheckResult(name="ruff", available=False, version=None, path=None)
-        assert result.version is None
-        assert result.path is None
-
-
-# ===================================================================
-# write_manifest
-# ===================================================================
-
-
-class TestWriteManifest:
-    """write_manifest(repo) -> path, writes JSON."""
-
-    def test_writes_correct_json_structure(self, tmp_path: Path) -> None:
-        """Manifest JSON has correct key names and structure."""
-        checks = [
-            ToolCheckResult(name="ruff", available=True, version="0.8.0", path="/.venv/bin/ruff"),
-            ToolCheckResult(name="pyright", available=False, version=None, path=None),
-        ]
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv", return_value=venv_dir),
-            patch("harness_quality_gate.bootstrap.verify_tools", return_value=checks),
-        ):
-            result_path = write_manifest(tmp_path)
-
-        assert result_path.exists()
-        assert result_path == tmp_path / ".venv" / "hqg-tools-manifest.json"
-
-        data = json.loads(result_path.read_text(encoding="utf-8"))
-        assert isinstance(data, list)
-        assert len(data) == 2
-
-        ruff_entry = data[0]
-        assert ruff_entry["name"] == "ruff"
-        assert ruff_entry["version"] == "0.8.0"
-        assert ruff_entry["path"] == "/.venv/bin/ruff"
-        assert ruff_entry["available"] is True
-
-        pyright_entry = data[1]
-        assert pyright_entry["name"] == "pyright"
-        assert pyright_entry["version"] is None
-        assert pyright_entry["path"] is None
-        assert pyright_entry["available"] is False
-
-    def test_returns_manifest_path(self, tmp_path: Path) -> None:
-        """Must return the exact path to the manifest file."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        checks = [ToolCheckResult(name="ruff", available=True, version=None, path=None)]
-
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv", return_value=venv_dir),
-            patch("harness_quality_gate.bootstrap.verify_tools", return_value=checks),
-        ):
-            result = write_manifest(tmp_path)
-
-        assert isinstance(result, Path)
-        assert result == tmp_path / ".venv" / "hqg-tools-manifest.json"
-
-    def test_manifest_indentation(self, tmp_path: Path) -> None:
-        """Manifest uses indent=2 for pretty printing."""
-        checks = [
-            ToolCheckResult(name="ruff", available=True, version="1.0", path="/bin/ruff")
-        ]
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv", return_value=venv_dir),
-            patch("harness_quality_gate.bootstrap.verify_tools", return_value=checks),
-        ):
-            result = write_manifest(tmp_path)
-
-        assert isinstance(result, Path)
-        assert result == tmp_path / ".venv" / "hqg-tools-manifest.json"
-
-        content = (tmp_path / ".venv" / "hqg-tools-manifest.json").read_text()
-        # indent=2 produces "\n  {" pattern, indent=3 would produce "\n   {"
-        # Check for the indented opening brace
-        lines = content.split("\n")
-        first_indented = next((l for l in lines if l.startswith("  ")), None)
-        assert first_indented is not None
-        # Must start with exactly 2 spaces, not 3 or more
-        stripped = first_indented.lstrip(" ")
-        leading = len(first_indented) - len(stripped)
-        assert leading == 2
-
-    def test_manifest_contains_all_tool_entries(self, tmp_path: Path) -> None:
-        """write_manifest should produce JSON with entries for every tool."""
-        checks = []
-        for tool_name in PYTHON_TOOLS:
-            checks.append(ToolCheckResult(name=tool_name, available=True, version="1.0", path="/b/x"))
-        checks.append(ToolCheckResult(name="pyright", available=True, version="2.0", path="/b/pyright"))
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv", return_value=venv_dir),
-            patch("harness_quality_gate.bootstrap.verify_tools", return_value=checks),
-        ):
-            manifest_path = write_manifest(tmp_path)
-
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        names = {entry["name"] for entry in data}
-        for tool_name in PYTHON_TOOLS:
-            assert tool_name in names
-        assert "pyright" in names
-
-    def test_manifest_encode_lowercase_utf8(self, tmp_path: Path) -> None:
-        """Must use lowercase 'utf-8' encoding key (catches mutmut_23: 'utf-8'→'UTF-8').
-        Intercepts write_text to capture the encoding value."""
-        # We need to intercept write_text to verify the encoding kwarg.
-        # Mutmut mutation: encoding="utf-8" → encoding="UTF-8"
-        write_calls = []
-
-        original_write_text = Path.write_text
-        def capture_write_text(self, content, *args, **kwargs):
-            write_calls.append(kwargs)
-            return original_write_text(self, content, *args, **kwargs)
-
-        checks = [
-            ToolCheckResult(name="ruff", available=True, version="0.8.0", path="/.venv/bin/ruff"),
-        ]
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv", return_value=venv_dir),
-            patch("harness_quality_gate.bootstrap.verify_tools", return_value=checks),
-            patch("pathlib.Path.write_text", capture_write_text),
-        ):
-            write_manifest(tmp_path)
-
-        # find the write call for the manifest file
-        encoding_used = None
-        for kwargs in write_calls:
-            # write_calls captures all write_text calls, include venv dir creation
-            if "encoding" in kwargs:
-                encoding_used = kwargs["encoding"]
-
-        # The key test: encoding must be lowercase "utf-8"
-        # If mutmut_23 is active, it would be "UTF-8" and we assert differently
-        # Since both are byte-equivalent, we assert the literal string to catch the mutation
-        assert encoding_used == "utf-8", f"Expected 'utf-8' but got {encoding_used!r}"
-
-
-# ===================================================================
-# Integration-style: end-to-end flow of public APIs
-# ===================================================================
-
-
-class TestEndToEndFlow:
-    """Test that public functions compose correctly together."""
-
-    def test_install_tools_produces_dict_with_all_keys(self, tmp_path: Path) -> None:
-        """Return dict must contain all PYTHON_TOOLS keys."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(parents=True, exist_ok=True)
-        venv_python = venv_dir / "bin" / "python"
-        venv_python.parent.mkdir(parents=True, exist_ok=True)
-        venv_python.touch()
-
-        def mock_run(cmd, *args, **kwargs):
-            return _FakeCompletedProcess(returncode=0)
-
-        with (
-            patch("subprocess.run", side_effect=mock_run),
-            patch("sys.executable", str(venv_python)),
-        ):
-            results = install_tools(tmp_path)
-
-        for key in PYTHON_TOOLS:
-            assert key in results
-
-    def test_verify_tools_with_mocked_resolve(self, tmp_path: Path) -> None:
-        """verify_tools should return exactly len(PYTHON_TOOLS) + 1 results."""
-        fake_path = Path("/bin/fake")
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="0.0.0"),
-        ):
-            results = verify_tools(tmp_path)
-
-        assert len(results) == len(PYTHON_TOOLS) + 1
-        for r in results:
-            assert r.available is True
-            assert r.version == "0.0.0"
 
 
 # ===================================================================
@@ -955,79 +767,8 @@ class TestDetectSourceDirContainment:
 
 
 # ===================================================================
-# New tests for fixes (timeout, PermissionError, logging, validation)
+# New tests for fixes (logging, validation)
 # ===================================================================
-
-
-class TestEnsureVenvTimeout:
-    """ensure_venv handles TimeoutExpired gracefully."""
-
-    def test_timeout_expired_logs_warning_and_returns(self, tmp_path: Path, caplog) -> None:
-        """subprocess.TimeoutExpired should log a warning and still return venv_dir."""
-        venv_dir = tmp_path / ".venv"
-
-        with (
-            patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["python", "-m", "venv"], timeout=60)),
-            caplog.at_level("WARNING"),
-        ):
-            result = ensure_venv(tmp_path)
-
-        assert result == venv_dir
-        assert any("timed out" in record.message for record in caplog.records)
-
-
-class TestEnsureVenvPermissionError:
-    """ensure_venv raises RuntimeError on PermissionError."""
-
-    def test_permission_error_raises_clear_runtime_error(self, tmp_path: Path) -> None:
-        """PermissionError from subprocess.run should raise RuntimeError with clear message."""
-        venv_dir = tmp_path / ".venv"
-
-        with patch("subprocess.run", side_effect=PermissionError("Permission denied")):
-            with pytest.raises(RuntimeError) as exc_info:
-                ensure_venv(tmp_path)
-
-        assert "Cannot create venv" in str(exc_info.value)
-        assert "writable" in str(exc_info.value).lower()
-
-
-class TestInstallToolsLogging:
-    """install_tools logs errors on individual failures."""
-
-    def test_logger_error_called_on_tool_failure(self, tmp_path: Path, caplog) -> None:
-        """When a tool install fails (non-zero returncode), logger.error is called."""
-        venv_dir = tmp_path / ".venv"
-        venv_dir.mkdir(exist_ok=True)
-
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=1, stderr=b"no such package")),
-            caplog.at_level("ERROR"),
-        ):
-            results = install_tools(tmp_path)
-
-        # Results have failures, and logger.error was called for each tool
-        assert all(msg.startswith("failed:") for msg in results.values())
-        assert any("Failed to install" in record.message for record in caplog.records)
-
-
-class TestVerifyToolsLogging:
-    """verify_tools logs a summary at info level."""
-
-    def test_logger_info_calls_summary_on_verify(self, tmp_path: Path, caplog) -> None:
-        """verify_tools should log summary: 'Verified N tools: M available, K unavailable'."""
-        fake_path = Path("/bin/fake")
-
-        with (
-            patch("harness_quality_gate.bootstrap.resolve_tool", return_value=fake_path),
-            patch("harness_quality_gate.bootstrap._get_version", return_value="1.0.0"),
-            caplog.at_level("INFO"),
-        ):
-            results = verify_tools(tmp_path)
-
-        assert any("Verified" in record.message for record in caplog.records)
-        assert any("available" in record.message for record in caplog.records)
-        assert any("unavailable" in record.message for record in caplog.records)
 
 
 class TestDetectSourceDirValidation:
@@ -1072,112 +813,6 @@ class TestDetectSourceDirValidation:
 # ===================================================================
 
 _BOOT_LOGGER = "harness_quality_gate.bootstrap"
-
-
-class TestInstallToolsSummaryAndWiring:
-    """install_tools: exact summary counts + shutil.which("uv") wiring."""
-
-    def test_summary_log_has_exact_installed_and_failed_counts(
-        self, tmp_path: Path, caplog,
-    ) -> None:
-        """The completion log pins installed/total/failed counts exactly.
-
-        Kills the count mutants (sum(1)->None / sum(2) / ==!=) and the
-        "installed"/"failed:" string mutants: a substring assertion would let
-        any of them through, exact interpolated text does not.
-        """
-        (tmp_path / ".venv").mkdir()
-        total = len(PYTHON_TOOLS)
-        n_ok = 4
-        # First n_ok installs succeed, the rest fail with a non-empty stderr.
-        seq = [_FakeCompletedProcess(returncode=0)] * n_ok + [
-            _FakeCompletedProcess(returncode=1, stderr="boom")
-            for _ in range(total - n_ok)
-        ]
-        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch("subprocess.run", side_effect=seq),
-        ):
-            install_tools(tmp_path)
-
-        messages = [r.getMessage() for r in caplog.records]
-        assert (
-            f"install_tools complete: {n_ok}/{total} tools installed, "
-            f"{total - n_ok} failed"
-        ) in messages
-
-    def test_shutil_which_called_with_exact_uv_name(self, tmp_path: Path) -> None:
-        """uv lookup uses the literal "uv" (kills "uv"->"UV"/"XXuvXX")."""
-        (tmp_path / ".venv").mkdir()
-        with (
-            patch("shutil.which", return_value="/fake/uv") as mock_which,
-            patch("subprocess.run", return_value=_FakeCompletedProcess(returncode=0)),
-        ):
-            install_tools(tmp_path)
-        mock_which.assert_called_once_with("uv")
-
-
-class TestVerifyToolsSummaryAndWiring:
-    """verify_tools: exact summary counts + resolve_tool(name, repo) wiring."""
-
-    def test_resolve_tool_called_with_each_name_and_repo(
-        self, tmp_path: Path,
-    ) -> None:
-        """Every tool is resolved with its own name AND the repo (positional).
-
-        Kills resolve_tool(None, repo) / resolve_tool(name, None) and the
-        dropped-argument mutants — a fixed-return mock would otherwise swallow
-        the wrong arguments silently (H1).
-        """
-        with (
-            patch(
-                "harness_quality_gate.bootstrap.resolve_tool",
-                return_value=Path("/bin/fake"),
-            ) as mock_resolve,
-            patch(
-                "harness_quality_gate.bootstrap._get_version", return_value="1.0.0",
-            ),
-        ):
-            verify_tools(tmp_path)
-
-        expected = [
-            call(name, tmp_path)
-            for name in (list(PYTHON_TOOLS.keys()) + ["pyright"])
-        ]
-        assert mock_resolve.call_args_list == expected
-
-    def test_summary_log_has_exact_available_counts(
-        self, tmp_path: Path, caplog,
-    ) -> None:
-        """The summary log pins total/available/unavailable counts exactly.
-
-        Kills sum(1)->sum(2), the `not c.available`->`c.available` flip, and
-        the "Verified %d tools..." XX-wrap.
-        """
-        all_tools = list(PYTHON_TOOLS.keys()) + ["pyright"]
-        total = len(all_tools)
-        n_unavailable = 2
-        # Last two tools raise ToolNotAvailable; the rest resolve.
-        side: list = [Path("/bin/fake")] * (total - n_unavailable) + [
-            ToolNotAvailable(name) for name in all_tools[total - n_unavailable:]
-        ]
-        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
-        with (
-            patch(
-                "harness_quality_gate.bootstrap.resolve_tool", side_effect=side,
-            ),
-            patch(
-                "harness_quality_gate.bootstrap._get_version", return_value="1.0.0",
-            ),
-        ):
-            verify_tools(tmp_path)
-
-        messages = [r.getMessage() for r in caplog.records]
-        assert (
-            f"Verified {total} tools: {total - n_unavailable} available, "
-            f"{n_unavailable} unavailable"
-        ) in messages
 
 
 class TestDetectSourceDirExactWarnings:
@@ -1250,86 +885,6 @@ class TestDetectSourceDirExactWarnings:
         mock_pkg.assert_called_once_with(tmp_path)
 
 
-class TestWriteManifestWiring:
-    """write_manifest passes the repo through to its collaborators."""
-
-    def test_ensure_venv_and_verify_tools_called_with_repo(
-        self, tmp_path: Path,
-    ) -> None:
-        """Kills ensure_venv(None) and verify_tools(None) passthrough mutants."""
-        (tmp_path / ".venv").mkdir()
-        with (
-            patch("harness_quality_gate.bootstrap.ensure_venv") as mock_ev,
-            patch(
-                "harness_quality_gate.bootstrap.verify_tools", return_value=[],
-            ) as mock_vt,
-        ):
-            write_manifest(tmp_path)
-
-        mock_ev.assert_called_once_with(tmp_path)
-        mock_vt.assert_called_once_with(tmp_path)
-
-
-# ===================================================================
-# Mutant killers (full-board): exact log messages + collaborator wiring
-# for ensure_venv / install_tools / detect_source_dir / verify_tools.
-# ===================================================================
-
-
-class TestEnsureVenvLogs:
-    def test_creation_message_exact(self, tmp_path: Path, caplog) -> None:
-        """Creating a venv logs the exact repo path (kills repo->None, drop, wrap)."""
-        caplog.set_level(logging.INFO, logger=_BOOT_LOGGER)
-        with patch("subprocess.run"):
-            ensure_venv(tmp_path)
-        assert f"Creating .venv in {tmp_path}" in [
-            r.getMessage() for r in caplog.records
-        ]
-
-    def test_permission_error_logs_exact_and_raises(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        """PermissionError logs the exact venv path + error and re-raises."""
-        caplog.set_level(logging.ERROR, logger=_BOOT_LOGGER)
-        with patch("subprocess.run", side_effect=PermissionError("denied")):
-            with pytest.raises(RuntimeError):
-                ensure_venv(tmp_path)
-        venv_dir = tmp_path / ".venv"
-        assert f"Permission denied creating .venv at {venv_dir}: denied" in [
-            r.getMessage() for r in caplog.records
-        ]
-
-    def test_timeout_logs_exact(self, tmp_path: Path, caplog) -> None:
-        """A venv creation timeout logs the exact warning with the exception."""
-        caplog.set_level(logging.WARNING, logger=_BOOT_LOGGER)
-        exc = subprocess.TimeoutExpired(cmd="venv", timeout=60)
-        with patch("subprocess.run", side_effect=exc):
-            ensure_venv(tmp_path)
-        assert f"venv creation timed out after 60s at {tmp_path / '.venv'}: {exc}" in [
-            r.getMessage() for r in caplog.records
-        ]
-
-
-class TestInstallToolsFailureLog:
-    def test_failure_log_exact_and_truncated_to_200(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        """Each failed install logs 'Failed to install <tool>: <stderr[:200]>'."""
-        (tmp_path / ".venv").mkdir()
-        caplog.set_level(logging.ERROR, logger=_BOOT_LOGGER)
-        with (
-            patch("shutil.which", return_value="/fake/uv"),
-            patch(
-                "subprocess.run",
-                return_value=_FakeCompletedProcess(returncode=1, stderr="E" * 300),
-            ),
-        ):
-            install_tools(tmp_path)
-        messages = [r.getMessage() for r in caplog.records]
-        # 'ruff' is the first tool; the stderr is truncated to exactly 200 chars.
-        assert f"Failed to install ruff: {'E' * 200}" in messages
-
-
 class TestDetectSourceDirRealYaml:
     def test_real_yaml_source_dir_round_trips(self, tmp_path: Path) -> None:
         """A real YAML config is actually read (kills safe_load(read_bytes())->safe_load(None))."""
@@ -1353,21 +908,3 @@ class TestDetectSourceDirRealYaml:
             "Failed to read project config" in r.getMessage()
             for r in caplog.records
         )
-
-
-class TestVerifyToolsGetVersionWiring:
-    def test_get_version_receives_resolved_binary(self, tmp_path: Path) -> None:
-        """_get_version is called with the resolved binary, never None."""
-        fake_bin = Path("/bin/fake")
-        with (
-            patch(
-                "harness_quality_gate.bootstrap.resolve_tool", return_value=fake_bin,
-            ),
-            patch(
-                "harness_quality_gate.bootstrap._get_version", return_value="1.0",
-            ) as mock_gv,
-        ):
-            verify_tools(tmp_path)
-        assert mock_gv.call_args_list == [call(fake_bin)] * len(mock_gv.call_args_list)
-        assert mock_gv.call_args_list  # non-empty
-        assert all(c == call(fake_bin) for c in mock_gv.call_args_list)

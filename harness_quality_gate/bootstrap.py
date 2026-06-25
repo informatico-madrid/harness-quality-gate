@@ -1,21 +1,47 @@
-"""Self-bootstrap module for harness-quality-gate.
+"""Tool resolution and source-dir detection helpers for harness-quality-gate.
 
-Ensures venv, installs/verifies tools, resolves binary paths,
-detects source directories, and suggests CPU concurrency settings.
+Public API: :class:`ToolNotAvailable`, :class:`ToolCandidate`,
+:func:`find_tool_candidates`, :func:`resolve_tool`, :func:`validate_paths`,
+:func:`detect_source_dir`, :func:`suggest_max_children`.
+
+Per ``specs/php-support/decisions.md`` §1, installation is **not** a CLI
+subcommand — the LLM agent is the installer and follows
+``steps/step-00-install.md``. This module only resolves binaries that are
+already on disk (``.venv/bin/``, project vendored dirs, or system
+``PATH``); it does not install anything.
+
+When multiple candidates exist for a tool (e.g. ``.venv/bin/ruff`` and
+``/usr/local/bin/ruff``), :func:`find_tool_candidates` returns ALL of them
+with provenance so the calling agent can present the options to the user
+or pick deterministically via :func:`resolve_tool`'s ``preferred`` kwarg.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Subdirectory under ``repo`` where Python tools are usually installed
+#: when the project uses a venv. Public so callers can refer to it
+#: symbolically instead of hardcoding the string.
+VENV_BIN_DIR = ".venv/bin"
+
+#: Provenance values for :class:`ToolCandidate`. Kept as module constants
+#: (not Enum) so callers can compare against plain strings without import.
+PROVENANCE_OVERRIDE = "override"  # explicit preferred= (config-driven)
+PROVENANCE_VENV = ".venv"        # <repo>/.venv/bin/<name>
+PROVENANCE_VENDOR = "vendor"     # <repo>/<vendor_bin>/<name>
+PROVENANCE_PATH = "PATH"          # shutil.which()
 
 
 # ---------------------------------------------------------------------------
@@ -24,60 +50,210 @@ logger = logging.getLogger(__name__)
 
 
 class ToolNotAvailable(RuntimeError):
-    """Raised when a required tool binary cannot be resolved anywhere."""
+    """Raised when a required tool binary cannot be resolved anywhere.
 
-    def __init__(self, tool_name: str) -> None:
+    Attributes:
+        tool_name: The binary name that was requested.
+        tried: Absolute paths checked (in order) before giving up. The
+            list always contains the *would-have-been* candidates, not
+            only the valid ones, so the LLM can present the full picture
+            to the user (see ``steps/step-00-install.md`` §0.8).
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        tried: list[Path] | None = None,
+    ) -> None:
         self.tool_name = tool_name
-        super().__init__(f"Tool not available: {tool_name!r}")
+        self.tried: list[Path] = tried if tried is not None else []
+        msg = f"Tool not available: {tool_name!r}"
+        if self.tried:
+            paths = ", ".join(str(p) for p in self.tried)
+            msg += f" (tried: {paths})"
+        super().__init__(msg)
 
 
 # ---------------------------------------------------------------------------
-# Tool manifest
-# ---------------------------------------------------------------------------
-
-# Tool manifest: name -> pip package (for ``uv pip install``).
-PYTHON_TOOLS: dict[str, str] = {
-    "ruff": "ruff",
-    "bandit": "bandit",
-    "vulture": "vulture",
-    "deptry": "deptry",
-    "mutmut": "mutmut",
-    "pytest": "pytest",
-}
-
-# Pyright is npm-only; not installed via pip.
-# ``pyright`` is resolved via system PATH (npm global).
-
-
-# ---------------------------------------------------------------------------
-# Public API
+# Value object
 # ---------------------------------------------------------------------------
 
 
-def resolve_tool(name: str, repo: Path) -> Path:
-    """Resolve a tool binary: prefer ``.venv/bin/``, fallback to system PATH.
+@dataclass(frozen=True)
+class ToolCandidate:
+    """A single candidate path for a tool, with provenance.
+
+    A candidate is "valid" by construction: the path is guaranteed to be
+    a file and executable. Use :func:`find_tool_candidates` to obtain
+    these; do not construct instances manually for unknown paths.
+
+    Attributes:
+        path: Absolute, resolved path to the candidate binary.
+        provenance: Where this candidate came from. One of the
+            ``PROVENANCE_*`` module constants.
+    """
+
+    path: Path
+    provenance: str
+
+
+# ---------------------------------------------------------------------------
+# Candidate detection
+# ---------------------------------------------------------------------------
+
+
+def _is_executable(path: Path) -> bool:
+    """Return True if *path* is a file and has the executable bit set.
+
+    Centralised so :func:`find_tool_candidates` and the per-source
+    pre-checks share the exact same predicate (DRY).
+    """
+    return path.is_file() and os.access(str(path), os.X_OK)
+
+
+def find_tool_candidates(
+    name: str,
+    repo: Path,
+    *,
+    preferred: str | Path | None = None,
+    vendor_bin: str | None = None,
+) -> list[ToolCandidate]:
+    """Return ALL valid candidate paths for *name*, ordered by precedence.
+
+    Precedence (first match wins in :func:`resolve_tool`):
+
+    1. ``preferred`` — explicit override (config-driven). Resolved against
+       *repo* when relative.
+    2. ``.venv/bin/<name>`` — project virtualenv.
+    3. ``<vendor_bin>/<name>`` — when *vendor_bin* is given (e.g. PHP
+       ``vendor/bin`` or any project-local vendored layout).
+    4. ``shutil.which(name)`` — system PATH.
+
+    Candidates are deduplicated by resolved path: if the same file
+    appears in two sources (e.g. a venv symlink pointing to a PATH
+    binary), only the highest-precedence copy is returned. Candidates
+    that do not exist or are not executable are filtered out — the
+    return value never contains invalid paths.
+
+    Args:
+        name: Binary name (e.g. ``"ruff"``, ``"pyright"``).
+        repo: Repository root path.
+        preferred: Explicit override path (absolute or relative to
+            *repo*). When given and valid, it appears first in the
+            result. When given and INVALID, it is silently dropped —
+            this matches the existing venv-fallback behaviour (a
+            non-executable venv entry falls through to PATH).
+        vendor_bin: Optional relative directory inside *repo* to check
+            after ``.venv``. Common value: ``"vendor/bin"`` for PHP
+            composer dependencies.
+
+    Returns:
+        Ordered list of valid :class:`ToolCandidate` (may be empty).
+    """
+    candidates: list[ToolCandidate] = []
+    seen_resolved: set[Path] = set()
+
+    def _add(candidate_path: Path, provenance: str) -> None:
+        """Append a candidate iff it is valid and not already seen."""
+        if not _is_executable(candidate_path):
+            return
+        resolved = candidate_path.resolve()
+        if resolved in seen_resolved:
+            return
+        seen_resolved.add(resolved)
+        candidates.append(ToolCandidate(path=resolved, provenance=provenance))
+
+    # 1. preferred (config override; resolved against repo if relative)
+    if preferred is not None:
+        preferred_path = Path(preferred)
+        if not preferred_path.is_absolute():
+            preferred_path = repo / preferred_path
+        _add(preferred_path, PROVENANCE_OVERRIDE)
+
+    # 2. project venv
+    _add(repo / VENV_BIN_DIR / name, PROVENANCE_VENV)
+
+    # 3. project vendored layout
+    if vendor_bin:
+        _add(repo / vendor_bin / name, PROVENANCE_VENDOR)
+
+    # 4. system PATH
+    system_bin = shutil.which(name)
+    if system_bin is not None:
+        _add(Path(system_bin), PROVENANCE_PATH)
+
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Single-path resolution
+# ---------------------------------------------------------------------------
+
+
+def _build_tried_list(
+    name: str,
+    repo: Path,
+    preferred: str | Path | None,
+    vendor_bin: str | None,
+) -> list[Path]:
+    """Build the ordered list of paths that *would have been* candidates.
+
+    Used only for the error message in :func:`resolve_tool` when no
+    valid candidate exists. Includes paths even when they do not exist
+    on disk, so the LLM can show the user exactly what was checked.
+    """
+    tried: list[Path] = []
+    if preferred is not None:
+        preferred_path = Path(preferred)
+        if not preferred_path.is_absolute():
+            preferred_path = repo / preferred_path
+        tried.append(preferred_path)
+    tried.append(repo / VENV_BIN_DIR / name)
+    if vendor_bin:
+        tried.append(repo / vendor_bin / name)
+    system_bin = shutil.which(name)
+    if system_bin is not None:
+        tried.append(Path(system_bin))
+    return tried
+
+
+def resolve_tool(
+    name: str,
+    repo: Path,
+    *,
+    preferred: str | Path | None = None,
+    vendor_bin: str | None = None,
+) -> Path:
+    """Resolve *name* to a single absolute executable path.
+
+    Thin wrapper over :func:`find_tool_candidates` that returns the
+    highest-precedence candidate. The full candidate list (for LLM
+    disambiguation) is available via :func:`find_tool_candidates`.
 
     Args:
         name: Binary name (e.g. ``"bandit"``, ``"ruff"``, ``"pyright"``).
-        repo: Repository root path (must contain or get a ``.venv/``).
+        repo: Repository root path.
+        preferred: Optional override (config-driven or LLM-supplied).
+        vendor_bin: Optional relative dir to check (e.g. PHP vendor/bin).
 
     Returns:
-        Absolute :class:`Path` to the binary.
+        Absolute :class:`Path` to the resolved binary.
 
     Raises:
-        ToolNotAvailable: If tool is not in ``.venv/`` or system PATH.
+        ToolNotAvailable: When no valid candidate exists. The exception
+            carries the full list of paths that were checked so the
+            LLM can present the user with a complete picture (see
+            ``steps/step-00-install.md`` §0.8).
     """
-    # 1. Check .venv/bin/<name> first
-    venv_bin = repo / ".venv" / "bin" / name
-    if venv_bin.is_file() and os.access(str(venv_bin), os.X_OK):
-        return venv_bin.resolve()
-
-    # 2. Fallback to system PATH
-    system_bin = shutil.which(name)
-    if system_bin is not None:
-        return Path(system_bin).resolve()
-
-    raise ToolNotAvailable(name)
+    candidates = find_tool_candidates(
+        name,
+        repo,
+        preferred=preferred,
+        vendor_bin=vendor_bin,
+    )
+    if candidates:
+        return candidates[0].path
+    raise ToolNotAvailable(name, tried=_build_tried_list(name, repo, preferred, vendor_bin))
 
 
 def validate_paths(paths: list[str]) -> None:
@@ -207,194 +383,3 @@ def suggest_max_children() -> int:
         # CPU count unknown → conservative single child.
         return 1
     return max(1, cpus // 2)
-
-
-def ensure_venv(repo: Path) -> Path:
-    """Ensure a ``.venv`` exists in repo. Create one if missing.
-
-    Args:
-        repo: Repository root path.
-
-    Returns:
-        Path to the venv directory (``repo / ".venv"``).
-    """
-    venv_dir = repo / ".venv"
-    if venv_dir.is_dir():
-        return venv_dir
-
-    logger.info("Creating .venv in %s", repo)
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
-    except PermissionError as exc:
-        logger.error("Permission denied creating .venv at %s: %s", venv_dir, exc)
-        raise RuntimeError(
-            f"Cannot create venv at {venv_dir}: check that the repository "
-            f"directory is writable"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        logger.warning("venv creation timed out after 60s at %s: %s", venv_dir, exc)
-    return venv_dir
-
-
-def install_tools(repo: Path) -> dict[str, str]:
-    """Install all Python quality-gate tools into ``.venv`` via ``uv pip install``.
-
-    Args:
-        repo: Repository root path.
-
-    Returns:
-        Dict of ``{tool_name: "installed" | "skipped" | "failed: <reason>"}``.
-    """
-    ensure_venv(repo)
-    venv_python = repo / ".venv" / "bin" / "python"
-    results: dict[str, str] = {}
-
-    # Find uv or fall back to pip
-    uv_bin = shutil.which("uv")
-    pip_cmd = [str(venv_python), "-m", "pip"] if not uv_bin else [uv_bin, "pip"]
-
-    for tool_name, package in PYTHON_TOOLS.items():
-        try:
-            cmd = [*pip_cmd, "install", package]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if result.returncode == 0:
-                results[tool_name] = "installed"
-            else:
-                logger.error(
-                    "Failed to install %s: %s", tool_name, result.stderr.strip()[:200]
-                )
-                results[tool_name] = f"failed: {result.stderr.strip()[:200]}"
-        except Exception as exc:
-            results[tool_name] = f"failed: {exc}"
-
-    installed_count = sum(1 for v in results.values() if v == "installed")
-    failed_count = sum(1 for v in results.values() if v.startswith("failed:"))
-    logger.info(
-        "install_tools complete: %d/%d tools installed, %d failed",
-        installed_count,
-        len(results),
-        failed_count,
-    )
-    return results
-
-
-def verify_tools(repo: Path) -> list[ToolCheckResult]:
-    """Verify all required tools are available and collect version info.
-
-    Args:
-        repo: Repository root path.
-
-    Returns:
-        List of :class:`ToolCheckResult` for each tool.
-    """
-    checks: list[ToolCheckResult] = []
-    all_tools = list(PYTHON_TOOLS.keys()) + ["pyright"]
-
-    for name in all_tools:
-        try:
-            binary = resolve_tool(name, repo)
-            version = _get_version(binary)
-            checks.append(
-                ToolCheckResult(
-                    name=name,
-                    available=True,
-                    version=version,
-                    path=str(binary),
-                )
-            )
-        except ToolNotAvailable:
-            checks.append(
-                ToolCheckResult(
-                    name=name,
-                    available=False,
-                    version=None,
-                    path=None,
-                )
-            )
-
-    available = sum(1 for c in checks if c.available)
-    unavailable = sum(1 for c in checks if not c.available)
-    logger.info(
-        "Verified %d tools: %d available, %d unavailable",
-        len(checks),
-        available,
-        unavailable,
-    )
-    return checks
-
-
-def _get_version(binary: Path) -> str | None:
-    """Get tool version by running ``binary --version``.
-
-    Args:
-        binary: Absolute path to the tool binary.
-
-    Returns:
-        First line of version output, or ``None`` on failure.
-    """
-    try:
-        result = subprocess.run(
-            [str(binary), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = (result.stdout or result.stderr).strip()
-        return output.split("\n")[0] if output else None
-    except Exception:
-        return None
-
-
-def write_manifest(repo: Path) -> Path:
-    """Write ``.venv/hqg-tools-manifest.json`` with tool versions.
-
-    Args:
-        repo: Repository root path.
-
-    Returns:
-        Path to the written manifest file.
-    """
-    ensure_venv(repo)
-    checks = verify_tools(repo)
-    manifest = [
-        {
-            "name": c.name,
-            "version": c.version,
-            "path": c.path,
-            "available": c.available,
-        }
-        for c in checks
-    ]
-    manifest_path = repo / ".venv" / "hqg-tools-manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2),
-        encoding="utf-8",
-    )
-    return manifest_path
-
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ToolCheckResult:
-    """Result of checking a single tool's availability.
-
-    Attributes:
-        name: Tool binary name (e.g. ``"ruff"``).
-        available: Whether the tool binary was found on disk.
-        version: First line of ``tool --version`` output, or ``None``.
-        path: Absolute path to the resolved binary, or ``None``.
-    """
-
-    name: str
-    available: bool
-    version: str | None
-    path: str | None

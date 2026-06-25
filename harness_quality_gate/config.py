@@ -61,6 +61,24 @@ class Config:
     mutmut_max_children: int | None = None
     mutation_threshold: float = 100.0
     coverage_threshold: float = 100.0
+    # ── Tool resolution overrides (per-language, per-tool path) ──
+    # Maps language -> tool_name -> path string (absolute or relative
+    # to repo root). Consumed by :func:`harness_quality_gate.bootstrap.resolve_tool`
+    # via its ``preferred`` kwarg. See ``steps/step-00-install.md`` §0.8.
+    tool_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def get_tool_override(self, language: str, tool_name: str) -> str | None:
+        """Return the override path for ``language.tool_name`` or ``None``.
+
+        Args:
+            language: ``"python"`` or ``"php"``.
+            tool_name: Binary name (e.g. ``"ruff"``, ``"infection"``).
+
+        Returns:
+            The configured path string, or ``None`` when no override
+            exists for this (language, tool) pair.
+        """
+        return self.tool_overrides.get(language, {}).get(tool_name)
 
 
 class ConfigInvalid(Exception):
@@ -146,6 +164,64 @@ def _merge_list_keys(merged: dict, defaults: dict, _project: dict) -> None:  # n
     (override replaces base list).
     """
     pass
+
+
+def _parse_tool_overrides(raw: Any) -> dict[str, dict[str, str]]:
+    """Parse the ``tool_overrides`` block from raw config.
+
+    Schema (each key optional, empty dict is a no-op)::
+
+        tool_overrides:
+          <language>:           # e.g. "python", "php"
+            <tool_name>:        # e.g. "ruff", "infection"
+              <path_string>     # absolute or relative-to-repo path
+
+    Returns:
+        A dict ``{language: {tool_name: path_string}}``. Languages
+        with no overrides are omitted from the result so callers can
+        distinguish "no override configured" from "empty override block".
+
+    Raises:
+        ConfigInvalid: On type errors, empty paths, or null bytes. Paths
+            are NOT resolved against the filesystem here — config parsing
+            is decoupled from runtime resolution. See
+            :func:`harness_quality_gate.bootstrap.resolve_tool` for the
+            runtime side.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigInvalid(
+            f"tool_overrides must be a dict, got {type(raw).__name__}"
+        )
+    result: dict[str, dict[str, str]] = {}
+    for language, tools in raw.items():
+        language_key = str(language)
+        if not isinstance(tools, dict):
+            raise ConfigInvalid(
+                f"tool_overrides.{language_key} must be a dict, "
+                f"got {type(tools).__name__}"
+            )
+        lang_overrides: dict[str, str] = {}
+        for tool_name, path in tools.items():
+            tool_key = str(tool_name)
+            if not isinstance(path, str):
+                raise ConfigInvalid(
+                    f"tool_overrides.{language_key}.{tool_key} must be a "
+                    f"string, got {type(path).__name__}"
+                )
+            if not path:
+                raise ConfigInvalid(
+                    f"tool_overrides.{language_key}.{tool_key} must be non-empty"
+                )
+            if "\x00" in path:
+                raise ConfigInvalid(
+                    f"tool_overrides.{language_key}.{tool_key} contains null byte"
+                )
+            lang_overrides[tool_key] = path
+        if lang_overrides:
+            result[language_key] = lang_overrides
+    return result
 
 
 def validate(raw: dict) -> Config:
@@ -258,6 +334,8 @@ def validate(raw: dict) -> Config:
         mutmut_max_children=mutmut_max_children_val,
         mutation_threshold=mutation_threshold_val,
         coverage_threshold=coverage_threshold_val,
+        # ── Tool resolution overrides (per-language, per-tool) ──
+        tool_overrides=_parse_tool_overrides(raw.get("tool_overrides")),
     )
 
 

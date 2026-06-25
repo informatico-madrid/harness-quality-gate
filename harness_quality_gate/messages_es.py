@@ -22,7 +22,7 @@ MSG: dict[str, str] = {
     # E3: Composer missing AND PHAR download fails (exit 5 INTERNAL_ERROR)
     "E3": "Composer no encontrado y descarga de PHAR falló: {tool}",
     # E4: Critical tool missing (exit 3 INFRA_INCOMPLETE)
-    "E4": "Herramienta crítica faltante: {tool} — ejecute `install-tools`",
+    "E4": "Herramienta crítica faltante: {tool} — el agente debe instalarla siguiendo steps/step-00-install.md o references/security-tools-guide-*.md",
     # E5: Optional tool missing (continue + WARNING)
     "E5": "Paquete opcional ausente: {tool} (continuando)",
     # E6: Infection MSI < 100 (exit 1 FAIL)

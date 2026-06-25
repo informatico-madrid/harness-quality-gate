@@ -128,7 +128,7 @@ EXPECTED_MSG = {
     'E1': 'No se detectó Python ni PHP — añada `.quality-gate-lang`',
     'E2': 'PHP 8.2+ requerido — instale via gestor de paquetes',
     'E3': 'Composer no encontrado y descarga de PHAR falló: {tool}',
-    'E4': 'Herramienta crítica faltante: {tool} — ejecute `install-tools`',
+    'E4': 'Herramienta crítica faltante: {tool} — el agente debe instalarla siguiendo steps/step-00-install.md o references/security-tools-guide-*.md',
     'E5': 'Paquete opcional ausente: {tool} (continuando)',
     'E6': 'MSI = {msi} (< 100) — {escaped} mutantes escapados',
     'E7': 'Covered MSI = {covered_msi} (< 100)',
