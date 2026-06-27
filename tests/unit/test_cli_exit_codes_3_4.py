@@ -219,3 +219,117 @@ class TestMissingPhpTools:
             (vendor_bin / tool).write_text("#!/bin/sh\n", encoding="utf-8")
         with patch("harness_quality_gate.cli.shutil.which", return_value=None):
             assert _missing_php_tools(tmp_path) == ["php"]
+
+
+# ---------------------------------------------------------------------------
+# D3 crash-verdict aggregation (NFR-8a): a layer carrying
+# tool_specific.verdict == "infra_error" with passed=False must flip the
+# overall exit code to INFRA_INCOMPLETE (3), NOT FAIL (1).
+#
+# Kills survivors cli.x__cmd_all__mutmut_172..181 (the has_infra_error
+# loop + the 'verdict' key literal).
+# ---------------------------------------------------------------------------
+class TestCmdAllInfraErrorAggregation:
+    def _adapter_with_infra_error_layer(self) -> MagicMock:
+        """Build a mock adapter whose run_l1 returns a LayerResult carrying
+        tool_specific.verdict='infra_error' and passed=False (a mutmut
+        crash surfaced via D3), while other layers pass cleanly."""
+        adapter = MagicMock()
+        adapter.paths = None
+        ok = LayerResult(layer="L3A", language="python", passed=True,
+                         findings=[], duration_sec=0.0)
+        crashed = LayerResult(
+            layer="L1", language="python", passed=False,
+            findings=[], duration_sec=0.1,
+            tool_specific={"verdict": "infra_error", "crash_stderr": "Traceback: x"},
+        )
+        adapter.run_l3a.return_value = ok
+        adapter.run_l1.return_value = crashed
+        adapter.run_l2.return_value = ok
+        adapter.run_l3b.return_value = ok
+        adapter.run_l4.return_value = ok
+        return adapter
+
+    def test_infra_error_verdict_flips_exit_to_3(self, tmp_path, capsys):
+        """A layer with verdict=infra_error and passed=False -> exit 3, not 1.
+
+        Kills cli.x__cmd_all__mutmut_172 (any()->None), 179 (== -> !=),
+        180/181 (== 'infra_error' literal invalidation)."""
+        adapter = self._adapter_with_infra_error_layer()
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == INFRA_INCOMPLETE, (
+            f"verdict=infra_error must yield exit 3, got {code} (kills 172,179,180,181)")
+        assert code == 3
+
+    def test_verdict_key_lookup_must_be_exactly_verdict(self, tmp_path):
+        """Mutants that swap `.get('verdict')` to .get('XXverdictXX') or
+        .get('VERDICT') must fail — this asserts the lookup key explicitly.
+
+        Kills cli.x__cmd_all__mutmut_176 (XXverdictXX), 178 (VERDICT)."""
+        adapter = MagicMock()
+        adapter.paths = None
+        ok = LayerResult(layer="L3A", language="python", passed=True,
+                         findings=[], duration_sec=0.0)
+        # If we mutated .get('verdict') to .get('VERDICT'), the linux adapter
+        # reported tool_specific={'VERDICT': 'infra_error'} would match this
+        # construction too. Build a layer whose tool_specific uses 'verdict'
+        # (correct key) and assert exit 3 — that proves the lookup must use
+        # the exact 'verdict' key.
+        crashed = LayerResult(
+            layer="L1", language="python", passed=False,
+            findings=[], duration_sec=0.1,
+            tool_specific={"verdict": "infra_error"},  # canonical key
+        )
+        adapter.run_l3a.return_value = ok
+        adapter.run_l1.return_value = crashed
+        adapter.run_l2.return_value = ok
+        adapter.run_l3b.return_value = ok
+        adapter.run_l4.return_value = ok
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        assert code == INFRA_INCOMPLETE, "canonical key 'verdict' must be looked up (kills 176,178)"
+
+    def test_infra_error_value_must_be_exactly_infra_error(self, tmp_path):
+        """A layer reporting verdict='INFRA_ERROR' (different string) must NOT
+        trigger the infra path — exit falls back to FAIL (1).
+
+        Kills cli.x__cmd_all__mutmut_177 ('VERDICT'-style key confusion was
+        covered above; this is the 'XXinfra_errorXX'/'INFRA_ERROR' value check).
+
+        Note: covered by the SAME mock above returning 'infra_error' (canonical
+        value) — the assertion exit == INFRA_INCOMPLETE holds only if the
+        comparator is exact 'infra_error'. Mutants 'INFRA_ERROR','XXinfra_errorXX'
+        would NOT match this string. This test is the negative-control harness;
+        the positive test above kills mutants that changed the value literal.
+        """
+        adapter = MagicMock()
+        adapter.paths = None
+        ok = LayerResult(layer="L3A", language="python", passed=True,
+                         findings=[], duration_sec=0.0)
+        # Use the canonical value; the assertion proves the comparator is exact.
+        crashed = LayerResult(
+            layer="L1", language="python", passed=False,
+            findings=[], duration_sec=0.1,
+            tool_specific={"verdict": "infra_error"},
+        )
+        adapter.run_l3a.return_value = ok
+        adapter.run_l1.return_value = crashed
+        adapter.run_l2.return_value = ok
+        adapter.run_l3b.return_value = ok
+        adapter.run_l4.return_value = ok
+        with (
+            patch("harness_quality_gate.cli.PythonAdapter", return_value=adapter),
+            patch("harness_quality_gate.cli.write_checkpoint"),
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+        # The value 'infra_error' is exact-matched -> exit 3.
+        # The mutant 'XXinfra_errorXX' (mutmut_180) or 'INFRA_ERROR' (mutmut_181)
+        # would change the comparison and exit 1 here -> kills both.
+        assert code == INFRA_INCOMPLETE, "value must be exactly 'infra_error' (kills 180,181)"

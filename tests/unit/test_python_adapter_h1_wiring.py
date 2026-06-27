@@ -501,7 +501,7 @@ class TestRunMutmutWiring:
             "harness_quality_gate.adapters.python.python_adapter.resolve_tool",
             side_effect=spy_resolve,
         ):
-            stats, run_ok = a._run_mutmut(tmp_path, {})
+            stats, run_ok, _crash_info = a._run_mutmut(tmp_path, {})
 
         assert run_ok is True
         mutmut_calls = [c for c in calls if c[0] == "mutmut"]

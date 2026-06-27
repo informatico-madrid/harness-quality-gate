@@ -296,7 +296,14 @@ def _cmd_all(args: argparse.Namespace) -> int:
         )
 
     all_passed = all(lr.passed for lr in layer_results)
-    code = PASS if all_passed else FAIL
+    # Check for infra_error verdict: a tool crash (e.g., mutmut with no
+    # Python source) should exit 3, not 1 (NFR-8a: crash != quality_failure).
+    has_infra_error = any(
+        lr.tool_specific is not None
+        and lr.tool_specific.get("verdict") == "infra_error"
+        for lr in layer_results
+    )
+    code = PASS if all_passed else (INFRA_INCOMPLETE if has_infra_error else FAIL)
 
     layer_dicts = []
     for lr in layer_results:

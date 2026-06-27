@@ -232,10 +232,7 @@ class WeakTestVisitor(ast.NodeVisitor):
         if self.current_test is not None:
             self.current_test["assertions"] += 1
 
-            if (
-                isinstance(node.test, (ast.NameConstant, ast.Constant))
-                and node.test.value is True
-            ):
+            if isinstance(node.test, ast.Constant) and node.test.value is True:
                 self.current_test["has_always_true"] = True
 
             if isinstance(node.test, ast.Compare):

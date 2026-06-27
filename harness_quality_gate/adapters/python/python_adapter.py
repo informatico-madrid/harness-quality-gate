@@ -96,6 +96,11 @@ from .weak_test import run_weak_test_analysis
 logger = logging.getLogger(__name__)
 
 
+def _truncate(text: str, max_len: int) -> str:
+    """Truncate *text* to *max_len* characters for safe logging/reporting."""
+    return text[:max_len]
+
+
 # ---------------------------------------------------------------------------
 # PythonAdapter
 # ---------------------------------------------------------------------------
@@ -200,16 +205,24 @@ class PythonAdapter(BaseAdapter):
         all_findings.extend(pytest_findings)
         logger.info("pytest: %d findings", len(pytest_findings))
 
-        mutation_stats, mutmut_run_ok = self._run_mutmut(repo, env)
-        mutation_passed = (
-            mutmut_run_ok
-            and mutation_stats.survived == 0
-            and mutation_stats.timed_out == 0
-        )
+        mutation_stats, mutmut_run_ok, crash_info = self._run_mutmut(repo, env)
 
-        tool_spec: dict[str, object] = {"mutation_stats": mutation_stats}
-        if not mutation_passed:
-            tool_spec["remediation"] = self._mutation_remediation(mutation_stats)
+        tool_spec: dict[str, object] = {}
+        mutation_passed = False
+
+        if crash_info is not None:
+            tool_spec["verdict"] = crash_info["verdict"]
+            tool_spec["crash_stderr"] = crash_info["stderr"]
+            tool_spec["mutation_stats"] = mutation_stats
+        else:
+            tool_spec["mutation_stats"] = mutation_stats
+            mutation_passed = (
+                mutmut_run_ok
+                and mutation_stats.survived == 0
+                and mutation_stats.timed_out == 0
+            )
+            if not mutation_passed:
+                tool_spec["remediation"] = self._mutation_remediation(mutation_stats)
 
         duration = time.monotonic() - t0
         # Severity policy: only error-severity findings gate (skipped tests
@@ -644,10 +657,13 @@ class PythonAdapter(BaseAdapter):
             return []
 
     def _run_mutmut(self, repo: Path, env: Mapping[str, str]):
-        """Invoke mutmut and return (MutationStats, run_ok).
+        """Invoke mutmut and return (MutationStats, run_ok, crash_info).
 
-        Returns a tuple of (MutationStats, bool) where run_ok is False
-        when the mutmut run failed or the tool is not found.
+        Returns a 3-tuple where *run_ok* is False when the mutmut run failed
+        or the tool is not found, and *crash_info* is a dict with verdict
+        ``"infra_error"`` when mutmut itself crashed with an unhandled exception
+        (e.g., no Python source to mutate). *crash_info* is ``None`` on normal
+        operation or expected failures.
 
         When ``self.paths`` is set, scopes the mutation campaign to
         the specified modules.
@@ -669,7 +685,7 @@ class PythonAdapter(BaseAdapter):
             str(resolve_tool("mutmut", repo))
         except ToolNotAvailable:
             logger.warning("mutmut not found on PATH or .venv, returning empty stats")
-            return (empty_stats, False)
+            return (empty_stats, False, None)
 
         try:
             # Execute the campaign first (parity with PHP's Infection);
@@ -679,15 +695,26 @@ class PythonAdapter(BaseAdapter):
             )
             run_ok = run_inv.exitcode == 0
             if not run_ok:
+                # Classify: crash (traceback in stderr) is infra_error, NOT
+                # quality_failure. Match PHP Infection pattern (D3 fix).
+                if "Traceback" in run_inv.stderr:
+                    crash_info = {
+                        "verdict": "infra_error",
+                        "stderr": _truncate(run_inv.stderr, 200),
+                    }
+                    logger.warning(
+                        "mutmut crash (infra_error): %s", crash_info["stderr"]
+                    )
+                    return (empty_stats, False, crash_info)
                 logger.warning(
                     "mutmut run exited %d: %s", run_inv.exitcode, run_inv.stderr.strip()
                 )
             inv = self.mutmut.invoke(repo, [], env=dict(env) if env else {})
             stats = self.mutmut.parse(inv.stdout, inv.stderr, inv.exitcode)
-            return (stats, run_ok)
+            return (stats, run_ok, None)
         except (OSError, RuntimeError) as exc:
             logger.warning("mutmut invocation failed: %s", exc)
-            return (empty_stats, False)
+            return (empty_stats, False, None)
 
     def _run_bandit(self, repo: Path, env: Mapping[str, str]) -> list[Finding]:
         """Invoke bandit and parse security findings."""

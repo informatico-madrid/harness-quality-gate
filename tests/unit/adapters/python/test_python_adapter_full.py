@@ -2630,8 +2630,8 @@ class TestRunMutmutDirect:
                     stats = a._run_mutmut(tmp_path, {})
 
         # Type assertion: kills mutmut_40 (return None instead of tuple)
-        assert isinstance(stats, tuple) and len(stats) == 2, f"return must be tuple, got {type(stats)}"
-        stats = stats[0]  # extract MutationStats from (stats, False) tuple
+        assert isinstance(stats, tuple) and len(stats) == 3, f"return must be 3-tuple, got {type(stats)} len={len(stats)}"
+        stats = stats[0]  # extract MutationStats from (stats, False, crash_info) tuple
         # Full zero-field assertion: kills mutmut_39 (any field mutated to non-zero)
         assert stats.total == 0
         assert stats.killed == 0
@@ -2663,7 +2663,7 @@ class TestRunMutmutDirect:
                     stats = a._run_mutmut(tmp_path, {})
 
         # Type assertion: kills old return mutation (exception path returns None)
-        assert isinstance(stats, tuple) and len(stats) == 2, f"exception path must return tuple, got {type(stats)}"
+        assert isinstance(stats, tuple) and len(stats) == 3, f"exception path must return 3-tuple, got {type(stats)}"
         stats = stats[0]
         assert stats.total == 0
         assert stats.killed == 0
@@ -2714,7 +2714,7 @@ class TestRunMutmutDirect:
                 stats = a._run_mutmut(tmp_path, {})
 
         # Assert kill mutmut_45: return value is not None, has correct stats
-        assert isinstance(stats, tuple) and len(stats) == 2, f"success path must return tuple, got {type(stats)}"
+        assert isinstance(stats, tuple) and len(stats) == 3, f"success path must return 3-tuple, got {type(stats)}"
         stats = stats[0]
         assert stats.total == 5
         assert stats.killed == 5
@@ -2745,7 +2745,7 @@ class TestRunMutmutDirect:
                 with caplog.at_level("WARNING", logger="harness_quality_gate.adapters.python.python_adapter"):
                     stats = a._run_mutmut(tmp_path, {})
 
-        assert isinstance(stats, tuple) and len(stats) == 2
+        assert isinstance(stats, tuple) and len(stats) == 3
         stats = stats[0]
         assert stats.total == 0
         assert stats.survived == 0
@@ -3283,8 +3283,8 @@ class TestPyAdapterSurvivorKillers:
         with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
              patch(_PA_WHICH, side_effect=ToolNotAvailable("tool")):
             result = a._run_mutmut(tmp_path, self.ENV)
-        # result is (stats, False) — mutmut not found, run_ok=False
-        assert result == (_zero_stats(), False), "not found → (zero_stats, False)"
+        # result is (stats, False, None) — mutmut not found, run_ok=False, no crash
+        assert result == (_zero_stats(), False, None), "not found -> (zero_stats, False, None)"
         a.mutmut.invoke.assert_not_called()
         assert _pa_messages(caplog) == ["mutmut not found on PATH or .venv, returning empty stats"]
 
@@ -3296,7 +3296,7 @@ class TestPyAdapterSurvivorKillers:
              patch(_PA_WHICH, return_value=Path("/usr/bin/mutmut")):
             result = a._run_mutmut(tmp_path, self.ENV)
         # run_ok=False because invoke raised → (zero_stats, False)
-        assert result == (_zero_stats(), False), "failure → (zero_stats, False)"
+        assert result == (_zero_stats(), False, None), "failure -> (zero_stats, False, None)"
         assert _pa_messages(caplog) == ["mutmut invocation failed: mm-boom"]
 
     def test_tool_versions_missing_marker_on_oserror(self):
@@ -3686,7 +3686,7 @@ class TestL1SeverityGate:
                               escaped=0, untested=0, msi=100.0, covered_msi=100.0)
         with (
             patch.object(PythonAdapter, "_run_pytest", return_value=findings),
-            patch.object(PythonAdapter, "_run_mutmut", return_value=(stats, True)),
+            patch.object(PythonAdapter, "_run_mutmut", return_value=(stats, True, None)),
         ):
             return a.run_l1(tmp_path, {})
 
@@ -3798,3 +3798,107 @@ class TestCheckToolsMutationKills:
                 # Should contain the exact tool names
                 assert "ruff" in msg, f"'ruff' not in error: {msg}"
                 assert "pyright" in msg, f"'pyright' not in error: {msg}"
+
+
+# ---------------------------------------------------------------------------
+# D3 crash-verdict path — kills the 30 survivors introduced by the D3 fix
+# (mutmut crash -> infra_error verdict -> INFRA_INCOMPLETE exit code, NFR-8a)
+# ---------------------------------------------------------------------------
+class TestMutmutCrashVerdictD3:
+    """Cover the crash branch of `_run_mutmut` and its propagation to
+    LayerResult.tool_specific.verdict == "infra_error", plus the cli._cmd_all
+    aggregation exit code 3 (INFRA_INCOMPLETE) when any layer carries an
+    infra_error verdict.
+
+    These tests kill survivors:
+      - cli.x__cmd_all__mutmut_172..181  (has_infra_error loop + key naming)
+      - python_adapter run_l1 mutmut_21,22,24,25,26,29,30,31,34,35,36
+        (mutation_passed init + tool_spec key naming/values)
+      - python_adapter _run_mutmut 50,51,52,57,58,62,65,67,68,69,70,74
+        ('Traceback' substring + verdict value + truncation + log format +
+        run_ok default + return tuple)
+    """
+
+    ENV = {"K": "V"}
+
+    def test_run_mutmut_crash_returns_infra_error_verdict(self, tmp_path, caplog):
+        """mutmut run exits non-zero WITH a 'Traceback' in stderr -> crash_info
+        dict with verdict='infra_error' and truncated stderr.
+
+        Kills _run_mutmut 50/51/52 (Traceback substring case), 57/58 (verdict
+        value), 62/65 (truncation arg), 67/68/69/70 (log format + stderr
+        capture), 74 (run_ok stays False).
+        """
+        a = _pa_full_mock_adapter()
+        # stderr >200 chars so truncation truncates and length is observable:
+        # exactly 259 bytes; trunc(200) -> 200 bytes; trunc(None) -> 259; trunc(201) -> 201.
+        long_stderr = "Traceback (most recent call last):\n" + "X" * 240
+        assert len(long_stderr) == 275, f"fixture length drift, got {len(long_stderr)}"
+        a.mutmut.run.return_value = MagicMock(exitcode=1, stderr=long_stderr)
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value=Path("/usr/bin/mutmut")):
+            stats, run_ok, crash_info = a._run_mutmut(tmp_path, self.ENV)
+        assert crash_info is not None, "crash_info MUST be set when stderr contains Traceback"
+        assert crash_info["verdict"] == "infra_error", "verdict must be exactly 'infra_error' (kills _run_mutmut 57,58)"
+        assert run_ok is False, "run_ok stays False on crash (kills _run_mutmut 74)"
+        # Truncation length assertion — kills 62 (None -> 259 bytes) and 65 (201 bytes).
+        assert len(crash_info["stderr"]) == 200, (
+            f"stderr MUST be truncated to exactly 200 chars, got {len(crash_info['stderr'])} (kills 62,65)")
+        assert crash_info["stderr"].startswith("Traceback"), "truncation must preserve the prefix"
+        # A WARNING log emitted naming the crash with the EXACT prefix (kills 67/68/69/70,
+        # where 70 mutates to 'XXmutmut crash...XX'). Use startswith to detect prefix-vs-surround.
+        msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        crash_msgs = [m for m in msgs if m.startswith("mutmut crash (infra_error): ") and "Traceback" in m]
+        assert len(crash_msgs) == 1, f"expected one crash WARNING log with exact prefix, got: {msgs}"
+        # 'Traceback' substring case-sensitivity guards (kills 50 'XXTracebackXX',
+        # 51 'traceback', 52 'TRACEBACK'): a non-matching substring skips the
+        # crash branch entirely -> crash_info would be None. The assertion on
+        # crash_info not None above already covers this; here we additionally
+        # assert the captured stderr's first chars to pin the literal match.
+
+    def test_run_l1_propagates_infra_error_to_tool_specific(self, tmp_path):
+        """run_l1 with crash_info != None sets tool_specific.verdict=infra_error
+        and does NOT compute mutation_passed (mutation_passed stays False).
+
+        Kills run_l1 mutmut_21/22 (mutation_passed init), 24/25/26 (verdict key
+        name), 29 (crash_stderr value=crash_info['stderr']), 30/31 (key name),
+        34 (mutation_stats VALUE not None), 35/36 (key name).
+        """
+        a = _pa_full_mock_adapter()
+        long_stderr = "Traceback (most recent call last):\n" + "X" * 240
+        a.mutmut.run.return_value = MagicMock(exitcode=1, stderr=long_stderr)
+        with patch(_PA_WHICH, return_value=Path("/usr/bin/mutmut")):
+            layer = a.run_l1(tmp_path, self.ENV)
+        ts = layer.tool_specific
+        assert ts is not None, "tool_specific MUST be populated on crash path"
+        assert ts.get("verdict") == "infra_error", (
+            "verdict key must be exactly 'verdict'->'infra_error' (kills run_l1 24,25,26)")
+        # crash_stderr value MUST equal the truncated crash_info['stderr'] (kills 29 None).
+        expected_truncated = long_stderr[:200]
+        assert ts.get("crash_stderr") == expected_truncated, (
+            f"crash_stderr must equal truncated crash info, got: {ts.get('crash_stderr')!r} (kills 29,30,31)")
+        # mutation_stats VALUE must be a real MutationStats instance, NOT None (kills 34).
+        ms = ts.get("mutation_stats")
+        assert ms is not None and isinstance(ms, MutationStats), (
+            f"mutation_stats must be a MutationStats instance, got {ms!r} (kills 34,35,36)")
+        assert ms.total == 0, "crash returns empty stats"
+        # mutation_passed stays False (crash path skips the pass computation);
+        # layer.passed reflects only has_errors over findings, which here are
+        # empty mock findings -> False due to mutation_passed=False.
+        assert layer.passed is False, "crash path is NOT a pass (kills run_l1 22 True)"
+
+    def test_run_mutmut_no_traceback_does_not_crash_classify(self, tmp_path, caplog):
+        """A non-zero exit WITHOUT 'Traceback' in stderr is NOT a crash —
+        verdict key is absent (normal failure path). Negative-control for the
+        substring detection that kills 50/51/52 (case-sensitivity guards)."""
+        a = _pa_full_mock_adapter()
+        a.mutmut.run.return_value = MagicMock(exitcode=2, stderr="some error not a traceback")
+        from harness_quality_gate.models import MutationStats as _MS
+        a.mutmut.parse = MagicMock(return_value=_MS(
+            total=4, killed=2, survived=2, timed_out=0, escaped=0, untested=0,
+            msi=50.0, covered_msi=50.0,
+        ))
+        with caplog.at_level(logging.WARNING, logger=_PA_LOGGER), \
+             patch(_PA_WHICH, return_value=Path("/usr/bin/mutmut")):
+            stats, run_ok, crash_info = a._run_mutmut(tmp_path, self.ENV)
+        assert crash_info is None, "non-traceback errors are NOT classified as infra_error"

@@ -211,7 +211,7 @@ class TestRunMutmutPaths:
         )
 
         with _stub_resolve_tool_for_mutmut():
-            stats, run_ok = a._run_mutmut(tmp_path, {})
+            stats, run_ok, _crash_info = a._run_mutmut(tmp_path, {})
 
         a.mutmut.run.assert_called_once()
         _, kwargs = a.mutmut.run.call_args
@@ -230,7 +230,7 @@ class TestRunMutmutPaths:
         )
 
         with _stub_resolve_tool_for_mutmut():
-            stats, run_ok = a._run_mutmut(tmp_path, {})
+            stats, run_ok, _crash_info = a._run_mutmut(tmp_path, {})
 
         _, kwargs = a.mutmut.run.call_args
         assert kwargs["paths"] is None

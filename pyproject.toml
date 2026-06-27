@@ -35,6 +35,12 @@ dev = [
     "radon",
 ]
 
+security = [
+    "bandit",
+    "safety",
+    "pip-audit",
+]
+
 [tool.pytest.ini_options]
 markers = [
     "integration",
