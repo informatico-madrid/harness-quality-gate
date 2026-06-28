@@ -11,7 +11,7 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -2370,6 +2370,55 @@ class TestDeptracDiscrimination:
         assert len(result.findings) == 0
         # invoke should NOT have been called
         adapter._deptrac.invoke.assert_not_called()
+
+    def test_l3b_deptrac_applicable_success_path(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Applicable + success → findings forwarded, no infra_error."""
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").write_text("rules: {}")
+
+        adapter = PhpAdapter()
+        deptrac_invocation = MagicMock(stdout="{}", stderr="", exitcode=0)
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = deptrac_invocation
+        adapter._deptrac.parse.return_value = [
+            Finding(
+                node="src/Forbidden.php",
+                severity="error",
+                message="Architecture violation",
+                tool="deptrac",
+            )
+        ]
+        self._setup_mocked_l3b(adapter)
+
+        with caplog.at_level(logging.INFO):
+            result = adapter.run_l3b(tmp_path, {})
+
+        # deptrac was invoked and parsed
+        adapter._deptrac.invoke.assert_called_once_with(
+            tmp_path,
+            ["--formatter=json"],
+            env=ANY,
+            timeout=300.0,
+        )
+        adapter._deptrac.parse.assert_called_once_with(
+            deptrac_invocation.stdout,
+            deptrac_invocation.stderr,
+            deptrac_invocation.exitcode,
+        )
+        # Finding propagated → fail (error severity)
+        assert result.passed is False
+        assert len(result.findings) == 1
+        finding = result.findings[0]
+        assert finding.node == "src/Forbidden.php"
+        assert finding.severity == "error"
+        assert finding.message == "Architecture violation"
+        # No crash → tool_specific stays None
+        assert result.tool_specific is None
+        # Log line
+        assert any("L3B deptrac: 1 findings" in r.message for r in caplog.records)
 
 
 # ===========================================================================
