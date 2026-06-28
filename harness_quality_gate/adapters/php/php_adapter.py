@@ -799,32 +799,53 @@ class PhpAdapter(BaseAdapter):
             logger.warning("L3B antipattern-tier-A skipped: %s", exc)
 
         # --- deptrac architecture violations (FR-19) -------------------
-        try:
-            deptrac_invocation = self._deptrac.invoke(
-                repo,
-                ["--formatter=json"],
-                env=env,
-                timeout=300.0,
-            )
-            deptrac_findings = self._deptrac.parse(
-                deptrac_invocation.stdout,
-                deptrac_invocation.stderr,
-                deptrac_invocation.exitcode,
-            )
-            all_findings.extend(deptrac_findings)
-            logger.info("L3B deptrac: %d findings", len(deptrac_findings))
-        except (OSError, RuntimeError) as exc:
-            logger.warning("L3B deptrac skipped: %s", exc)
+        # Check applicability before invoking (NFR-8a discipline)
+        deptrac_bin = repo / "vendor" / "bin" / "deptrac"
+        deptrac_yaml = repo / "deptrac.yaml"
+        deptrac_applicable = deptrac_bin.is_file() and deptrac_yaml.is_file()
+        deptrac_crash: bool = False
+
+        if deptrac_applicable:
+            try:
+                deptrac_invocation = self._deptrac.invoke(
+                    repo,
+                    ["--formatter=json"],
+                    env=env,
+                    timeout=300.0,
+                )
+                deptrac_findings = self._deptrac.parse(
+                    deptrac_invocation.stdout,
+                    deptrac_invocation.stderr,
+                    deptrac_invocation.exitcode,
+                )
+                all_findings.extend(deptrac_findings)
+                logger.info("L3B deptrac: %d findings", len(deptrac_findings))
+            except (OSError, RuntimeError) as exc:
+                # Crash when applicable → infra_error (NFR-8a)
+                deptrac_crash = True
+                all_findings.append(
+                    Finding(
+                        node="deptrac",
+                        severity="error",
+                        message=f"deptrac invocation failed ({exc})",
+                    )
+                )
+        # not applicable → skip silently (correct behavior)
 
         duration = time.monotonic() - t0
         # Severity policy (H11): only error-severity findings gate.
         passed = not any(f.severity == "error" for f in all_findings)
+
+        tool_specific: dict[str, object] | None = None
+        if deptrac_crash:
+            tool_specific = {"verdict": "infra_error"}
 
         return LayerResult(
             layer="L3B",
             language="php",
             passed=passed,
             findings=all_findings,
+            tool_specific=tool_specific,
             duration_sec=round(duration, 3),
         )
 

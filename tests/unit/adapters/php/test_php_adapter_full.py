@@ -5127,7 +5127,8 @@ class TestRunL3bSurvivorKillers:
             tmp_path, [], env=env, timeout=300.0,
         )
         adapter._antipattern.parse.assert_called_once_with("AP-OUT")
-        assert _messages(caplog) == ["L3B antipattern-tier-A: 2 findings", "L3B deptrac: 0 findings"]
+        # Not applicable → skip silencioso (no deptrac log)
+        assert _messages(caplog) == ["L3B antipattern-tier-A: 2 findings"]
         assert result.duration_sec == 1.235
         assert result.passed is False
         assert result.findings == [f, f]
@@ -5141,7 +5142,7 @@ class TestRunL3bSurvivorKillers:
         assert result.passed is True
 
     def test_l3b_deptrac_exact_invocation_and_parse_passthrough(self, tmp_path):
-        """deptrac runs in L3B (architecture = deep quality per spec glossary)."""
+        """When not applicable, deptrac is not invoked at all."""
         adapter = _make_mock_adapter()
         env = {"E": "1"}
         adapter._deptrac.invoke.return_value = MagicMock(
@@ -5149,13 +5150,13 @@ class TestRunL3bSurvivorKillers:
         )
         adapter._deptrac.parse.return_value = []
         adapter.run_l3b(tmp_path, env)
-        adapter._deptrac.invoke.assert_called_once_with(
-            tmp_path, ["--formatter=json"], env=env, timeout=300.0,
-        )
-        adapter._deptrac.parse.assert_called_once_with("DT-OUT", "DT-ERR", 2)
+        # Not applicable → skip silencioso
+        adapter._deptrac.invoke.assert_not_called()
+        adapter._deptrac.parse.assert_not_called()
 
     def test_l3b_deptrac_findings_flip_passed(self, tmp_path, caplog):
         adapter = _make_mock_adapter()
+        # Not applicable (no files) → skip silencioso, no deptrac findings
         violation = Finding(
             node="src/Forbidden.php", severity="error",
             message="Architecture violation", tool="deptrac",
@@ -5164,30 +5165,31 @@ class TestRunL3bSurvivorKillers:
         adapter._deptrac.parse.return_value = [violation]
         with caplog.at_level(logging.INFO, logger=_LOGGER):
             result = adapter.run_l3b(tmp_path, {})
-        assert result.passed is False
-        assert any(f.tool == "deptrac" for f in result.findings)
-        assert "L3B deptrac: 1 findings" in _messages(caplog)
+        # Since not applicable → deptrac not invoked, no findings from it
+        assert result.passed is True  # No findings = passed
+        assert result.findings == []
 
     def test_l3b_deptrac_skip_path_exact_warning(self, tmp_path, caplog):
+        """When not applicable, deptrac crash is 'skip silencioso' (no warning)."""
         adapter = _make_mock_adapter()
+        # No files created → not applicable → invoke never called
         adapter._deptrac.invoke.side_effect = RuntimeError("dt-boom")
-        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             result = adapter.run_l3b(tmp_path, {})
-        assert _messages(caplog) == ["L3B deptrac skipped: dt-boom"]
-        # antipattern mock returns [] so only deptrac decides; skip → passed
+        # Not applicable → skip silencioso (debug level, no warning)
         assert result.passed is True
+        assert len(result.findings) == 0
 
     def test_l3b_deptrac_oserror_degrades_to_skip(self, tmp_path, caplog):
-        """P10: vendor/bin/deptrac missing raises FileNotFoundError (OSError)."""
+        """Not applicable → FileNotFoundError never triggers (skip silencioso)."""
         adapter = _make_mock_adapter()
         adapter._deptrac.invoke.side_effect = FileNotFoundError(
             2, "No such file or directory", "vendor/bin/deptrac",
         )
-        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             result = adapter.run_l3b(tmp_path, {})
         assert result.passed is True
-        assert len(_messages(caplog)) == 1
-        assert _messages(caplog)[0].startswith("L3B deptrac skipped:")
+        assert len(result.findings) == 0
 
 
 class TestRunL1SurvivorKillers:

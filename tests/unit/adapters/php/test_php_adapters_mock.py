@@ -43,6 +43,8 @@ from harness_quality_gate.adapters.php.visitor_runner_adapter import (
     VisitorRunnerAdapter,
 )
 from harness_quality_gate.adapters.php.weak_test_php import PhpWeakTestAdapter
+from harness_quality_gate.adapters.php.php_adapter import PhpAdapter
+from harness_quality_gate.models import Finding
 
 
 # ---------------------------------------------------------------------------
@@ -2288,6 +2290,86 @@ class TestDeptracAdapterGaps:
     def test_parse_stats_report_not_dict(self) -> None:
         stats = DeptracAdapter().parse_stats('{"Report": "bad"}')
         assert stats["violations"] == 0
+
+
+# ===========================================================================
+# Discrimination tests: applicable+crash → infra_error vs skip silencioso
+# ===========================================================================
+
+
+class TestDeptracDiscrimination:
+    """Validate NFR-8a crash discrimination in run_l3b().
+
+    Rule: deptrad is 'applicable' = vendor/bin/deptrac EXISTS AND
+    <target>/deptrac.yaml EXISTS.  Applicable+crash emits infra_error;
+    not applicable skips silently."""
+
+    def _setup_mocked_l3b(self, adapter: "PhpAdapter") -> None:
+        """Mock all L3B inner adaptors so only deptrac is exercised."""
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout="[]", stderr="", exitcode=0,
+        )
+        adapter._antipattern.parse.return_value = []
+        # L1/L2/L4 tools
+        adapter._phpunit = MagicMock()
+        adapter._pest = MagicMock()
+        adapter._pcov = MagicMock()
+        adapter._infection = MagicMock()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._composer_audit = MagicMock()
+        adapter._security_checker = MagicMock()
+        adapter._dead_code = MagicMock()
+        adapter._dep_analyser = MagicMock()
+        adapter._weak_test = MagicMock()
+
+    def test_l3b_deptrac_applicable_crash_infra_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Applicable (bin+yaml exist) + crash → infra_error finding."""
+        # Create files to make deptrad applicable
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").write_text("rules: {}")
+
+        adapter = PhpAdapter()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.side_effect = RuntimeError("segfault")
+        self._setup_mocked_l3b(adapter)
+
+        result = adapter.run_l3b(tmp_path, {})
+
+        # Verify infra_error verdict on LayerResult.tool_specific
+        assert result.tool_specific is not None
+        assert result.tool_specific.get("verdict") == "infra_error", (
+            f"Expected infra_error verdict; got {result.tool_specific}")
+        # Crash finding must be present
+        crash_findings = [f for f in result.findings if f.severity == "error"]
+        assert len(crash_findings) == 1
+        assert "deptrac" in crash_findings[0].node
+
+    def test_l3b_deptrac_not_applicable_skips(
+        self, tmp_path: Path
+    ) -> None:
+        """Not applicable → skip silencioso (no findings, no warning)."""
+        # NO files created → not applicable
+
+        adapter = PhpAdapter()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.side_effect = RuntimeError("should not be called")
+        self._setup_mocked_l3b(adapter)
+
+        result = adapter.run_l3b(tmp_path, {})
+
+        # Must pass with no findings
+        assert result.passed is True
+        assert len(result.findings) == 0
+        # invoke should NOT have been called
+        adapter._deptrac.invoke.assert_not_called()
 
 
 # ===========================================================================
