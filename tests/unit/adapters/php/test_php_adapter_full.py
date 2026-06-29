@@ -53,6 +53,13 @@ def _make_mock_adapter(
     adapter._cs_fixer = MagicMock()
     adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
     adapter._cs_fixer.parse.return_value = []
+    # L3A style tools (Story 5.4)
+    adapter._ecs = MagicMock()
+    adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+    adapter._ecs.parse.return_value = []
+    adapter._rector = MagicMock()
+    adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+    adapter._rector.parse.return_value = []
     # L1 tools
     adapter._phpunit = MagicMock()
     if phpunit_invoke_side_effect:
@@ -1610,6 +1617,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1644,6 +1657,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1662,6 +1681,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1697,6 +1722,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1741,6 +1772,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout='[{"file":"src/Y.php","rule":"AntiPattern"}]', stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = [Finding(
@@ -1758,6 +1795,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1781,6 +1824,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1839,6 +1888,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1860,6 +1915,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.side_effect = RuntimeError("visitor error")
         adapter._antipattern.parse.return_value = []
@@ -1901,6 +1962,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1925,6 +1992,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1940,6 +2013,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -1963,6 +2042,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -3271,6 +3356,12 @@ class TestRunL3aFrameworkInjection:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -3296,6 +3387,12 @@ class TestRunL3aFrameworkInjection:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -3943,6 +4040,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.side_effect = RuntimeError("visitor error")
         adapter._antipattern.parse.return_value = []
@@ -3984,6 +4087,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -4107,6 +4216,12 @@ class TestRunL3a:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = []
@@ -5225,6 +5340,60 @@ class TestRunL1SurvivorKillers:
         )
         assert "mutation" not in (result.tool_specific or {})
 
+    def test_infection_required_finding_exact_message(self, tmp_path):
+        """Kills string-literal mutations in HARNESS_INFECTION_REQUIRED message."""
+        adapter = _make_mock_adapter()
+        adapter._run_infection = MagicMock(return_value=None)
+        result = adapter.run_l1(tmp_path, {"HARNESS_INFECTION_REQUIRED": "1"})
+        inf_f = [f for f in result.findings if f.node == "infection"]
+        assert len(inf_f) == 1
+        assert inf_f[0].message == (
+            "Infection mutation gate required but unavailable "
+            "(HARNESS_INFECTION_REQUIRED=1). "
+            "Install via `composer require --dev infection/infection` "
+            "or see references/security-tools-guide-php.md."
+        )
+
+    def test_scope_guard_finding_layer_and_tool(self, tmp_path):
+        """Kills layer/tool string mutations in scope guard finding."""
+        # Create infection.json5 with wrong scope to trigger guard
+        config = {"source": {"directories": ["src", "tests"]}}
+        (tmp_path / "infection.json5").write_text(
+            json.dumps(config).replace('"', "'").replace("'", '"')
+        )
+        # Patch pest to return None (not a pest project) so we reach infection path
+        adapter = _make_mock_adapter()
+        adapter._pest._pest_binary = MagicMock(return_value=None)
+        adapter._pest._has_mutate_plugin = MagicMock(return_value=False)
+        adapter._run_infection = MagicMock(return_value=MutationStats(
+            total=10, killed=10, survived=0, timed_out=0, escaped=0, untested=0,
+            msi=100.0, covered_msi=100.0,
+        ))
+        result = adapter.run_l1(tmp_path, {})
+        scope_f = [f for f in result.findings if f.node == "infection-scope"]
+        assert len(scope_f) == 1
+        assert scope_f[0].layer == "L1"
+        assert scope_f[0].tool == "infection"
+        assert scope_f[0].severity == "error"
+
+    def test_l3b_deptrac_env_passed(self, tmp_path):
+        """Kills env=env → env=None mutation in run_l3b deptrac invoke."""
+        # Create deptrac binary and yaml so deptrac is applicable
+        (tmp_path / "vendor" / "bin" / "deptrac").parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").write_text("#!/bin/sh\n")
+        (tmp_path / "deptrac.yaml").write_text("")
+        adapter = PhpAdapter()
+        adapter._antipattern = MagicMock()
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._deptrac.parse.return_value = []
+        adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._antipattern.parse.return_value = []
+        env = {"FOO": "bar"}
+        adapter.run_l3b(tmp_path, env)
+        deptrac_call = adapter._deptrac.invoke.call_args
+        assert deptrac_call[1]["env"] == env
+
     def test_mutation_exception_exact_warning(self, tmp_path, caplog):
         adapter = _make_mock_adapter()
         adapter._run_infection = MagicMock(side_effect=RuntimeError("mut-boom"))
@@ -5535,6 +5704,12 @@ class TestPhpSeverityGates:
         adapter._cs_fixer = MagicMock()
         adapter._cs_fixer.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
+        adapter._rector.parse.return_value = []
         adapter._antipattern = MagicMock()
         adapter._antipattern.invoke.return_value = MagicMock(stdout="[]", stderr="", exitcode=0)
         adapter._antipattern.parse.return_value = findings

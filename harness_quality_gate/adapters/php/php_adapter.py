@@ -22,6 +22,7 @@ from .composer_audit_adapter import ComposerAuditAdapter
 from .dead_code_adapter import DeadCodeAdapter
 from .dep_analyser_adapter import DepAnalyserAdapter
 from .deptrac_adapter import DeptracAdapter
+from .ecs_adapter import EcsAdapter
 from .infection_adapter import InfectionAdapter
 from .pcov_adapter import PcovAdapter
 from .pest_adapter import PestAdapter
@@ -30,6 +31,7 @@ from .phpmd_adapter import PhpMdAdapter
 from .phpstan_adapter import PhpStanAdapter
 from .phpunit_adapter import PhpUnitAdapter
 from .psalm_taint_adapter import PsalmTaintAdapter
+from .rector_adapter import RectorAdapter
 from .security_checker_adapter import SecurityCheckerAdapter
 from .weak_test_php import PhpWeakTestLayerAdapter
 
@@ -59,6 +61,10 @@ class PhpAdapter(BaseAdapter):
         self._phpstan = PhpStanAdapter()
         self._phpmd = PhpMdAdapter()
         self._cs_fixer = PhpCsFixerAdapter()
+
+        # Style tools (L3A) — Story 5.4
+        self._ecs = EcsAdapter()
+        self._rector = RectorAdapter()
 
         # L1 test / coverage / mutation tools
         self._phpunit = PhpUnitAdapter()
@@ -396,6 +402,51 @@ class PhpAdapter(BaseAdapter):
         except (OSError, RuntimeError) as exc:
             logger.warning("L3A php-cs-fixer skipped: %s", exc)
 
+        # Crash flags — set when the tool's invoke() raises (binary missing,
+        # config parse error, OOM, timeout). These are caught by the except
+        # blocks and logged as "skipped". The pure core reads these
+        # flags to emit infra_error (NFR-8a).
+        ecs_crashed = False
+        rector_crashed = False
+
+        # --- ECS — coding standard (Story 5.4) --------------------------
+        try:
+            ecs_invocation = self._ecs.invoke(
+                repo,
+                ["check", "--no-progress-bar", "--output-format=json"],
+                env=env,
+                timeout=300.0,
+            )
+            ecs_findings = self._ecs.parse(
+                ecs_invocation.stdout,
+                ecs_invocation.stderr,
+                ecs_invocation.exitcode,
+            )
+            all_findings.extend(ecs_findings)
+            logger.info("L3A ECS: %d findings", len(ecs_findings))
+        except (OSError, RuntimeError) as exc:
+            ecs_crashed = True
+            logger.warning("L3A ECS skipped: %s", exc)
+
+        # --- Rector — idiom + deprecation, dry-run (Story 5.4) -----------
+        try:
+            rector_invocation = self._rector.invoke(
+                repo,
+                ["process", "--dry-run", "--no-progress-bar", "--output-format=json"],
+                env=env,
+                timeout=300.0,
+            )
+            rector_findings = self._rector.parse(
+                rector_invocation.stdout,
+                rector_invocation.stderr,
+                rector_invocation.exitcode,
+            )
+            all_findings.extend(rector_findings)
+            logger.info("L3A Rector: %d findings", len(rector_findings))
+        except (OSError, RuntimeError) as exc:
+            rector_crashed = True
+            logger.warning("L3A Rector skipped: %s", exc)
+
         # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
         try:
             tier_a_findings = self._antipattern_invoke_and_parse(repo, env)
@@ -405,10 +456,17 @@ class PhpAdapter(BaseAdapter):
             logger.warning("L3A tier-A visitors skipped: %s", exc)
 
         duration = time.monotonic() - t0
-        # Severity policy: only error-severity findings block the gate
-        # (Tier-A info findings on test code must not fail a clean repo —
-        # simulation bug H11).
-        passed = not any(f.severity == "error" for f in all_findings)
+
+        # ── Crash signal → infra_error (NFR-8a) ────────────────────────
+        _l3a_verdict: str | None = None
+        if ecs_crashed or rector_crashed:
+            _l3a_verdict = "infra_error"
+            passed = False
+        else:
+            # Severity policy: only error-severity findings block the gate
+            # (Tier-A info findings on test code must not fail a clean repo —
+            # simulation bug H11).
+            passed = not any(f.severity == "error" for f in all_findings)
 
         return LayerResult(
             layer="L3A",
@@ -416,6 +474,9 @@ class PhpAdapter(BaseAdapter):
             passed=passed,
             findings=all_findings,
             duration_sec=round(duration, 3),
+            tool_specific=(
+                {"verdict": _l3a_verdict} if _l3a_verdict else None
+            ),
         )
 
     # -- L1 (Unit-test + coverage + mutation) ------------------------------

@@ -585,10 +585,14 @@ class TestPhpAdapterL3AL2L3BL4:
         with patch.object(a._phpstan, "run_l3a", side_effect=RuntimeError("missing")):
             with patch.object(a._phpmd, "run_l3a", side_effect=RuntimeError("missing")):
                 with patch.object(a._cs_fixer, "invoke", side_effect=RuntimeError("missing")):
-                    with patch.object(a._antipattern, "invoke", side_effect=RuntimeError("missing")):
-                        result = a.run_l3a(tmp_path, {})
+                    with patch.object(a._ecs, "invoke", side_effect=RuntimeError("missing")):
+                        with patch.object(a._rector, "invoke", side_effect=RuntimeError("missing")):
+                            with patch.object(a._antipattern, "invoke", side_effect=RuntimeError("missing")):
+                                result = a.run_l3a(tmp_path, {})
         assert result.layer == "L3A"
-        assert result.passed is True
+        # ECS/Rector crash → infra_error → passed=False (NFR-8a)
+        assert result.passed is False
+        assert result.tool_specific == {"verdict": "infra_error"}
 
     def test_run_l3b_skip(self, tmp_path):
         a = self._adapter()
