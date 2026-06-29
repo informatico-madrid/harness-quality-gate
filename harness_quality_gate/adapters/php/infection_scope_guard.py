@@ -52,7 +52,7 @@ def _load_infection_config(target_dir: Path) -> dict:
         )
     text = config_path.read_text(encoding="utf-8")  # pragma: no mutate
     try:
-        import json5 as _json5  # noqa: F401
+        import json5 as _json5  # noqa: F401  # type: ignore[import-not-found]
 
         return _json5.loads(text)
     except ImportError:

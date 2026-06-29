@@ -59,6 +59,11 @@ norecursedirs = ["fixtures", "mutants", ".mutmut", ".git", "__pycache__", ".venv
 module = "radon.*"
 ignore_missing_imports = true
 
+# json5 is an optional dependency (guarded import in infection_scope_guard)
+[[tool.mypy.overrides]]
+module = "json5.*"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["harness_quality_gate"]
 omit = [
