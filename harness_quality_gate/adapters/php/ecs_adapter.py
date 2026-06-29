@@ -88,7 +88,7 @@ class EcsAdapter(ToolAdapter):
         if cmd is None:
             raise RuntimeError("ecs not found on PATH or in vendor/bin")
         return self._run(
-            [*cmd, "check", "--no-progress-bar", "--output-format=json", str(repo), *args],
+            [*cmd, *args, str(repo)],
             cwd=repo,
             env=env,
             timeout=timeout,

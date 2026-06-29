@@ -77,9 +77,8 @@ class RectorAdapter(ToolAdapter):
         if cmd is None:
             raise RuntimeError("rector not found on PATH or in vendor/bin")
         return self._run(
-            [*cmd, "process", "--dry-run", "--no-progress-bar",
-             "--output-format=json", str(repo), *args],
-            cwd=repo,
+            [*cmd, *args],
+            cwd=str(repo),
             env=env,
             timeout=timeout,
         )
@@ -118,34 +117,31 @@ class RectorAdapter(ToolAdapter):
         except json.JSONDecodeError:
             return findings
 
-        for section_key in ("changed_files", "file_diffs"):
-            entries = data.get(section_key)
-            if not isinstance(entries, list):
+        # file_diffs has applied_rectors; changed_files is just file paths
+        for entry in (data.get("file_diffs") or []):
+            if not isinstance(entry, dict):
                 continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                file_name = entry.get("file")
-                if not file_name:
-                    continue
-                applied = entry.get("applied_rectors")
-                if not isinstance(applied, list):
-                    continue
-                diff = entry.get("diff", "")  # pragma: no mutate — "" and None both normalize to None via `diff if diff else None`
+            file_name = entry.get("file")
+            if not file_name:
+                continue
+            applied = entry.get("applied_rectors")
+            if not isinstance(applied, list):
+                continue
+            diff = entry.get("diff", "")  # pragma: no mutate — "" and None both normalize to None via `diff if diff else None`
 
-                for rector_fqcn in applied:
-                    if not isinstance(rector_fqcn, str):
-                        continue
-                    findings.append(
-                        Finding(
-                            node=file_name,
-                            severity="error",
-                            message=f"{rector_fqcn} on {file_name}",
-                            fix_hint=diff if diff else None,
-                            tool="rector",
-                            layer="L3A",
-                            rule_id=rector_fqcn,
-                        )
+            for rector_fqcn in applied:
+                if not isinstance(rector_fqcn, str):
+                    continue
+                findings.append(
+                    Finding(
+                        node=file_name,
+                        severity="error",
+                        message=f"{rector_fqcn} on {file_name}",
+                        fix_hint=diff if diff else None,
+                        tool="rector",
+                        layer="L3A",
+                        rule_id=rector_fqcn,
                     )
+                )
 
         return findings
