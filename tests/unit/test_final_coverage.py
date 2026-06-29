@@ -55,9 +55,8 @@ def test_base_run_file_not_found(tmp_path: Path) -> None:
 def test_base_run_timeout(tmp_path: Path) -> None:
     from harness_quality_gate.adapters.php.phpstan_adapter import PhpStanAdapter
     with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["sleep"], 0.001)):
-        result = PhpStanAdapter._run(["sleep", "999"], cwd=tmp_path, timeout=0.001)
-    assert result.exitcode == -1
-    assert result.exitcode == -1
+        with pytest.raises(RuntimeError, match=r"timed out.*timeout=0.001"):
+            PhpStanAdapter._run(["sleep", "999"], cwd=tmp_path, timeout=0.001)
 
 
 # ---------------------------------------------------------------------------

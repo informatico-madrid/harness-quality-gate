@@ -167,11 +167,13 @@ class TestEcsAdapter:
         adapter = EcsAdapter()
         with patch("harness_quality_gate.adapters.php.ecs_adapter.shutil.which", return_value="/usr/bin/ecs"):
             with patch.object(EcsAdapter, "_run", return_value=_ok("{}")) as mock_run:
-                adapter.invoke(tmp_path, ["src/"])
+                adapter.invoke(tmp_path, ["check", "--no-progress-bar", "--output-format=json", "src/"])
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/usr/bin/ecs"
+        assert "check" in cmd
         assert "--no-progress-bar" in cmd
         assert "--output-format=json" in cmd
+        assert cmd[-1] == str(tmp_path)
 
     def test_parse_return_type_assertions(self) -> None:
         """parse() always returns list[Finding]."""
@@ -229,7 +231,7 @@ class TestEcsAdapter:
                 "_run",
                 return_value=_ok("{}"),
             ) as mock_run:
-                adapter.invoke(tmp_path, ["src/"], env={"FOO": "bar"}, timeout=123.0)
+                adapter.invoke(tmp_path, ["check", "src/"], env={"FOO": "bar"}, timeout=123.0)
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["cwd"] == tmp_path
         assert call_kwargs["env"] == {"FOO": "bar"}

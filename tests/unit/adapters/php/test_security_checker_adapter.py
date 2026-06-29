@@ -189,10 +189,12 @@ class TestInvoke:
                 adapter.invoke(repo)
                 assert mock_run.call_args[1]["cwd"] == str(repo)
 
-    def test_invoke_timeout_returns_TimeoutExpired_result(self, tmp_path):
-        """TimeoutExpired → exitcode=-1, stderr='TIMEOUT' when exc.stderr is None."""
+    def test_invoke_timeout_raises_runtime_error(self, tmp_path):
+        """TimeoutExpired → RuntimeError per NFR-8a (timeout is infra_error, not quality)."""
         with patch("shutil.which", return_value="/usr/bin/local-php-security-checker"):
-            with patch("subprocess.run") as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.security_checker_adapter.subprocess.run"
+            ) as mock_run:
                 import subprocess as sp
 
                 exc = sp.TimeoutExpired(cmd="check", timeout=30)
@@ -200,21 +202,15 @@ class TestInvoke:
                 exc.stderr = None
                 mock_run.side_effect = exc
                 adapter = _adapter()
-                result = adapter.invoke(tmp_path, timeout=0.001)
-                assert result.exitcode == -1
-                assert result.stderr == "TIMEOUT"
-                # KILL mutmut_73: duration_seconds must be a non-negative number.
-                # Removing the param makes it default to 0.0 — we assert float type
-                # and >=0 to detect None/int mutations elsewhere in the method.
-                assert isinstance(result.duration_seconds, (int, float))
-                assert result.duration_seconds >= 0
-                # KILL mutmut_74: stdout default is '' not 'XXXX'.
-                assert result.stdout == ""
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    adapter.invoke(tmp_path, timeout=0.001)
 
-    def test_invoke_timeout_stderr_bytes(self, tmp_path):
-        """TimeoutExpired with bytes stderr → decoded."""
+    def test_invoke_timeout_stderr_bytes_raises(self, tmp_path):
+        """TimeoutExpired with bytes stderr still raises RuntimeError (no silent decoding)."""
         with patch("shutil.which", return_value="/usr/bin/local-php-security-checker"):
-            with patch("subprocess.run") as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.security_checker_adapter.subprocess.run"
+            ) as mock_run:
                 import subprocess as sp
 
                 exc = sp.TimeoutExpired(cmd="check", timeout=30)
@@ -222,13 +218,15 @@ class TestInvoke:
                 exc.stderr = b"error info"
                 mock_run.side_effect = exc
                 adapter = _adapter()
-                result = adapter.invoke(tmp_path, timeout=0.001)
-                assert "error info" in result.stderr
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    adapter.invoke(tmp_path, timeout=0.001)
 
-    def test_invoke_timeout_stdout_bytes(self, tmp_path):
-        """TimeoutExpired with bytes stdout → decoded."""
+    def test_invoke_timeout_stdout_bytes_raises(self, tmp_path):
+        """TimeoutExpired with bytes stdout still raises RuntimeError (no silent decoding)."""
         with patch("shutil.which", return_value="/usr/bin/local-php-security-checker"):
-            with patch("subprocess.run") as mock_run:
+            with patch(
+                "harness_quality_gate.adapters.php.security_checker_adapter.subprocess.run"
+            ) as mock_run:
                 import subprocess as sp
 
                 exc = sp.TimeoutExpired(cmd="check", timeout=30)
@@ -236,8 +234,8 @@ class TestInvoke:
                 exc.stderr = None
                 mock_run.side_effect = exc
                 adapter = _adapter()
-                result = adapter.invoke(tmp_path, timeout=0.001)
-                assert "some output" in result.stdout
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    adapter.invoke(tmp_path, timeout=0.001)
 
 
 # ---------------------------------------------------------------------------

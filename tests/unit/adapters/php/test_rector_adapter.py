@@ -33,15 +33,6 @@ def _ok(stdout: str = "", stderr: str = "", exitcode: int = 0) -> object:
 _RECTOR_EMPTY = {}
 
 _RECTOR_IDIOM = {
-    "changed_files": [
-        {
-            "file": "src/Foo.php",
-            "diff": "--- a/src/Foo.php\n+++ b/src/Foo.php\n@@ -1,5 +1,5 @@\n-old_function()\n+new_function()\n",
-            "applied_rectors": [
-                "Rector\\Php83\\Rector\\FuncCall\\StringableForNullToStringRector"
-            ],
-        }
-    ],
     "file_diffs": [
         {
             "file": "src/Foo.php",
@@ -54,22 +45,6 @@ _RECTOR_IDIOM = {
 }
 
 _RECTOR_MULTIPLE = {
-    "changed_files": [
-        {
-            "file": "src/A.php",
-            "diff": "diff1",
-            "applied_rectors": [
-                "Rector\\DeadCode\\Rector\\If_\\RemoveAlwaysTrueConditionRector"
-            ],
-        },
-        {
-            "file": "src/B.php",
-            "diff": "diff2",
-            "applied_rectors": [
-                "Rector\\Php8\\Rector\\Class_\\ReadOnlyClassesRector"
-            ],
-        },
-    ],
     "file_diffs": [
         {
             "file": "src/A.php",
@@ -89,16 +64,6 @@ _RECTOR_MULTIPLE = {
 }
 
 _RECTOR_DEPRECATION = {
-    "changed_files": [
-        {
-            "file": "src/Old.php",
-            "diff": "diff",
-            "applied_rectors": [
-                "Rector\\Php80\\Rector\\Class_\\"
-                "AnnotationToAttributeRector"
-            ],
-        }
-    ],
     "file_diffs": [
         {
             "file": "src/Old.php",
@@ -112,7 +77,7 @@ _RECTOR_DEPRECATION = {
 }
 
 _RECTOR_DEPRECATION_REMOVED = {
-    "changed_files": [
+    "file_diffs": [
         {
             "file": "src/Removed.php",
             "diff": "diff",
@@ -121,7 +86,6 @@ _RECTOR_DEPRECATION_REMOVED = {
             ],
         }
     ],
-    "file_diffs": [],
 }
 
 _RECTOR_NO_DIFFS = {
@@ -249,9 +213,12 @@ class TestRectorAdapter:
         adapter = RectorAdapter()
         with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value="/usr/bin/rector"):
             with patch.object(RectorAdapter, "_run", return_value=_ok("{}")) as mock_run:
-                adapter.invoke(tmp_path, ["src/"])
+                adapter.invoke(tmp_path, [
+                    "process", "--dry-run", "--no-progress-bar", "--output-format=json", "src/",
+                ])
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/usr/bin/rector"
+        assert "process" in cmd
         assert "--dry-run" in cmd
         assert "--no-progress-bar" in cmd
         assert "--output-format=json" in cmd
@@ -311,15 +278,14 @@ class TestRectorAdapter:
                 "_run",
                 return_value=_ok("{}"),
             ) as mock_run:
-                adapter.invoke(tmp_path, ["src/"], env={"FOO": "bar"}, timeout=123.0)
+                adapter.invoke(tmp_path, ["process", "--dry-run", "src/"], env={"FOO": "bar"}, timeout=123.0)
         call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["cwd"] == tmp_path
+        assert call_kwargs["cwd"] == str(tmp_path)
         assert call_kwargs["env"] == {"FOO": "bar"}
         assert call_kwargs["timeout"] == 123.0
         cmd = mock_run.call_args[0][0]
         assert "process" in cmd
         assert "--dry-run" in cmd
-        assert str(tmp_path) in cmd
 
     def test_invoke_default_timeout(self, tmp_path: Path) -> None:
         """invoke() uses 300.0s default timeout when not specified."""
@@ -350,10 +316,10 @@ class TestRectorAdapter:
     def test_parse_multiple_sections_one_bad_skips_all(self) -> None:
         """Multiple sections with one bad entry → all good sections still parsed."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "diff": "d1", "applied_rectors": ["R1"]},
             ],
-            "file_diffs": "not-a-list",
+            "changed_files": "not-a-list",
             "other_section": [
                 {"file": "src/B.php", "diff": "d2", "applied_rectors": ["R2"]},
             ],
@@ -377,7 +343,7 @@ class TestRectorAdapter:
     def test_parse_mixed_valid_invalid_entries(self) -> None:
         """Mixed valid/invalid entries → only valid ones emitted."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "diff": "d1", "applied_rectors": ["R1"]},
                 "not-a-dict",
                 {"file": "src/B.php", "diff": "d2", "applied_rectors": ["R2"]},
@@ -391,7 +357,7 @@ class TestRectorAdapter:
     def test_parse_mixed_valid_invalid_applied_rectors(self) -> None:
         """Mixed valid/invalid applied_rectors → only string ones emitted."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {
                     "file": "src/A.php",
                     "diff": "d",
@@ -407,7 +373,7 @@ class TestRectorAdapter:
     def test_parse_entry_with_non_list_applied_rectors(self) -> None:
         """Entry with non-list applied_rectors → skipped (kills continue→break)."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "diff": "d", "applied_rectors": "not-a-list"},
                 {"file": "src/B.php", "diff": "d2", "applied_rectors": ["R1"]},
             ],
@@ -419,7 +385,7 @@ class TestRectorAdapter:
     def test_parse_missing_diff_defaults_empty(self) -> None:
         """Entry missing 'diff' → default '' (not None)."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "applied_rectors": ["R1"]},
             ],
         }
@@ -430,7 +396,7 @@ class TestRectorAdapter:
     def test_parse_with_diff_sets_fix_hint(self) -> None:
         """Entry with non-empty diff → fix_hint populated."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "diff": "some diff text", "applied_rectors": ["R1"]},
             ],
         }
@@ -441,7 +407,7 @@ class TestRectorAdapter:
     def test_parse_message_content(self) -> None:
         """Finding message contains rector FQCN and file name."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"file": "src/A.php", "diff": "d", "applied_rectors": ["Rector\\R1"]},
             ],
         }
@@ -452,7 +418,7 @@ class TestRectorAdapter:
     def test_parse_missing_file_skipped(self) -> None:
         """Entry without 'file' → skipped."""
         payload = {
-            "changed_files": [
+            "file_diffs": [
                 {"diff": "d", "applied_rectors": ["R1"]},
             ],
         }

@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from harness_quality_gate.adapters.base import ToolAdapter
 
 
@@ -95,15 +97,14 @@ def test_run_returns_tool_invocation() -> None:
     assert result.exitcode == 0
 
 
-def test_run_timeout_returns_invocation_with_zero_duration() -> None:
-    """When subprocess.run raises TimeoutExpired, return a ToolInvocation with exitcode=124."""
-    from harness_quality_gate.adapters.base import ToolInvocation
+def test_run_timeout_raises_runtime_error() -> None:
+    """When subprocess.run raises TimeoutExpired, _run re-raises as RuntimeError
+    so callers can classify as infra_error (AC5/NFR-8a: timeout is infra not quality)."""
+    import re
 
     with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ls", 30)):
-        result = ToolAdapter._run(["ls"], cwd=Path("/tmp"), timeout=30)
-    assert isinstance(result, ToolInvocation)
-    # Should have a non-zero exitcode (timeout) and empty stdout
-    assert result.exitcode != 0
+        with pytest.raises(RuntimeError, match=r"timed out.*timeout=30.*cwd=/tmp"):
+            ToolAdapter._run(["ls"], cwd=Path("/tmp"), timeout=30)
 
 
 def test_run_duration_rounded_to_3_decimals() -> None:

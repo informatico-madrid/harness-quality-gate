@@ -95,20 +95,12 @@ class SecurityCheckerAdapter(ToolAdapter):
             )
         except subprocess.TimeoutExpired as exc:
             duration = (datetime.now(timezone.utc) - start).total_seconds()
-            return ToolInvocation(
-                stdout=(
-                    exc.stdout
-                    if isinstance(exc.stdout, str)
-                    else (exc.stdout.decode() if exc.stdout else "")
-                ),
-                stderr=(
-                    exc.stderr
-                    if isinstance(exc.stderr, str)
-                    else (exc.stderr.decode() if exc.stderr else "TIMEOUT")
-                ),
-                exitcode=-1,
-                duration_seconds=round(duration, 3),
+            msg = (
+                f"tool timed out after {round(duration, 3)}s (cmd={exc.cmd!r}, "
+                f"timeout={timeout}s, cwd={repo})"
             )
+            logger.warning(msg)
+            raise RuntimeError(msg) from exc
 
     def parse(  # type: ignore[override]
         self,

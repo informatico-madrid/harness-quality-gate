@@ -1013,7 +1013,8 @@ class TestV14PhpKillers:
         assert f3.message == "function: NM"
         assert f3.node == "n.php:1"
 
-    def test_security_invoke_timeout_branch_fixed_clock(self, tmp_path):
+    def test_security_invoke_timeout_raises_runtime_error(self, tmp_path):
+        """Timeout path: SecurityCheckerAdapter.invoke raises RuntimeError with duration in message."""
         import subprocess
         from datetime import datetime, timezone, timedelta
         from harness_quality_gate.adapters.php.security_checker_adapter import (
@@ -1037,8 +1038,10 @@ class TestV14PhpKillers:
                 fake_dt,
             ),
         ):
-            result = SecurityCheckerAdapter().invoke(tmp_path, [])
-        assert result.duration_seconds == 1.235
+            with pytest.raises(RuntimeError) as info:
+                SecurityCheckerAdapter().invoke(tmp_path, [])
+        # Duration (1.235s) is in the message for debugging
+        assert "1.235" in str(info.value)
 
     def test_security_severity_present_and_links_first(self):
         from harness_quality_gate.adapters.php.security_checker_adapter import (

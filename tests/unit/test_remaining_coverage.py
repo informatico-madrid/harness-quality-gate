@@ -61,25 +61,25 @@ class TestBaseToolAdapter:
         a = _ConcreteAdapter()
         assert a.name == "concrete"
 
-    def test_run_timeout_returns_invocation(self, tmp_path):
-        """_run handles TimeoutExpired and returns exitcode=-1."""
+    def test_run_timeout_raises_runtime_error(self, tmp_path):
+        """_run re-raises TimeoutExpired as RuntimeError (infra_error, not quality_failure)."""
         a = _ConcreteAdapter()
         with patch("harness_quality_gate.adapters.base.subprocess.run",
                    side_effect=subprocess.TimeoutExpired(cmd=["php"], timeout=1)):
-            result = a._run(["php", "-v"], cwd=tmp_path)
-        assert result.exitcode == -1
+            with pytest.raises(RuntimeError, match=r"timed out"):
+                a._run(["php", "-v"], cwd=tmp_path)
 
-    def test_run_timeout_with_bytes_output(self, tmp_path):
-        """_run handles TimeoutExpired where stdout/stderr are bytes."""
+    def test_run_timeout_error_includes_cmd_and_cwd(self, tmp_path):
+        """RuntimeError message contains cmd, timeout, and cwd for debugging."""
         a = _ConcreteAdapter()
-        exc = subprocess.TimeoutExpired(cmd=["php"], timeout=1)
-        exc.stdout = b"some output"
-        exc.stderr = b"some error"
-        with patch("harness_quality_gate.adapters.base.subprocess.run", side_effect=exc):
-            result = a._run(["php", "-v"], cwd=tmp_path)
-        assert result.exitcode == -1
-        assert result.stdout == "some output"
-        assert result.stderr == "some error"
+        with patch("harness_quality_gate.adapters.base.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired(cmd=["php"], timeout=1)):
+            with pytest.raises(RuntimeError) as exc_info:
+                a._run(["php", "-v"], cwd=tmp_path)
+        msg = str(exc_info.value)
+        assert "php" in msg
+        assert "timeout=300.0" in msg  # default timeout value
+        assert str(tmp_path) in msg
 
     def test_run_success(self, tmp_path):
         """_run returns ToolInvocation on success."""

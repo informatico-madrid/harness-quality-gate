@@ -338,7 +338,8 @@ def test_base_run_stderr_passthrough() -> None:
     assert result.stdout == "hi\n"
 
 def test_base_run_timeout_stdout_empty() -> None:
-    """Kill else '' → else 'XXXX': timeout stdout empty when no partial output."""
+    """Timeout raises RuntimeError, not ToolInvocation (AC5/NFR-8a: timeout is infra_error).
+    The old handler that produced ToolInvocation(stdout='', exitcode=-1) is gone."""
     from harness_quality_gate.adapters.php.phpstan_adapter import PhpStanAdapter
     import subprocess
     from unittest.mock import patch
@@ -346,8 +347,8 @@ def test_base_run_timeout_stdout_empty() -> None:
     exc.stdout = None  # No partial output
     exc.stderr = None
     with patch('subprocess.run', side_effect=exc):
-        result = PhpStanAdapter._run(['sleep', '999'], timeout=0.001)
-    assert result.stdout == ""
+        with pytest.raises(RuntimeError, match=r"timed out"):
+            PhpStanAdapter._run(['sleep', '999'], timeout=0.001)
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +390,7 @@ def test_base_run_duration_rounded_to_3_places(tmp_path) -> None:
 
 
 def test_base_run_timeout_duration_rounded_to_3_places() -> None:
-    """Kill round(duration, 3) → round(duration, 4) in timeout handler."""
+    """RuntimeError message includes duration rounded to 3 places for debugging."""
     from harness_quality_gate.adapters.php.phpstan_adapter import PhpStanAdapter
     import subprocess
     from unittest.mock import patch
@@ -398,9 +399,12 @@ def test_base_run_timeout_duration_rounded_to_3_places() -> None:
     exc.stdout = None
     exc.stderr = None
     with patch('subprocess.run', side_effect=exc):
-        result = PhpStanAdapter._run(['echo'], timeout=0.001)
-    assert result.duration_seconds == round(result.duration_seconds, 3)
-    assert result.exitcode == -1
+        with pytest.raises(RuntimeError) as info:
+            PhpStanAdapter._run(['echo'], timeout=0.001)
+    # Message contains rounded duration (e.g. "X.ZZZs")
+    err_msg = str(info.value)
+    assert "timed out" in err_msg
+    assert "timeout=0.001" in err_msg
 
 
 # ---------------------------------------------------------------------------

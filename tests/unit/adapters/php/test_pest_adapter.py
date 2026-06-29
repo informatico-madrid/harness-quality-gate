@@ -483,19 +483,17 @@ class TestInvoke:
         assert hasattr(result, "duration_seconds")
 
     def test_invoke_with_timeout_exc(self, tmp_path: Path) -> None:
-        """invoke() _run catches TimeoutExpired and returns ToolInvocation with exitcode=-1.
+        """invoke() _run re-raises TimeoutExpired as RuntimeError (NFR-8a: timeout = infra_error).
         
-        The _run() method in base.py catches TimeoutExpired and returns ToolInvocation.
-        We mock subprocess.run to raise TimeoutExpired to exercise that code path.
+        The _run() method in base.py re-raises TimeoutExpired as RuntimeError so callers
+        can classify as infra_error. We mock subprocess.run to raise TimeoutExpired.
         """
         adapter = PestAdapter()
         with patch.object(adapter, "_pest_binary", return_value=["/usr/bin/pest"]):
             with patch("subprocess.run",
                        side_effect=subprocess.TimeoutExpired(cmd=["pest"], timeout=300)):
-                result = adapter.invoke(tmp_path, [])
-        # _run catches TimeoutExpired, returns ToolInvocation with exitcode=-1
-        assert hasattr(result, "exitcode")
-        assert result.exitcode == -1
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    adapter.invoke(tmp_path, [])
 
     def test_invoke_oserror(self, tmp_path: Path) -> None:
         """invoke() _run catches OSError from subprocess."""

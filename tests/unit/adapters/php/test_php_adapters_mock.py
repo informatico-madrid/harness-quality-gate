@@ -91,25 +91,26 @@ class TestToolAdapterRun:
         assert result.exitcode == 0
         assert result.stdout == "hi\n"
 
-    def test_run_timeout_returns_invocation_with_minus1(self, tmp_path: Path) -> None:
+    def test_run_timeout_raises_runtime_error(self, tmp_path: Path) -> None:
         exc = subprocess.TimeoutExpired(cmd=["php"], timeout=5)
         exc.stdout = b"partial"
         exc.stderr = None
         with patch("subprocess.run", side_effect=exc):
-            result = ToolAdapter._run(["php", "-v"], cwd=tmp_path)
-        assert result.exitcode == -1
-        assert result.stdout == "partial"
-        assert result.stderr == "TIMEOUT"
+            with pytest.raises(RuntimeError, match=r"timed out.*php*"):
+                ToolAdapter._run(["php", "-v"], cwd=tmp_path)
 
-    def test_run_timeout_str_stdout(self, tmp_path: Path) -> None:
+    def test_run_timeout_error_includes_debug_info(self, tmp_path: Path) -> None:
         exc = subprocess.TimeoutExpired(cmd=["php"], timeout=5)
         exc.stdout = b"text-stdout"
         exc.stderr = b"text-stderr"
         with patch("subprocess.run", side_effect=exc):
-            result = ToolAdapter._run(["php", "-v"], cwd=tmp_path)
-        assert result.exitcode == -1
-        assert result.stdout == "text-stdout"
-        assert result.stderr == "text-stderr"
+            with pytest.raises(RuntimeError) as info:
+                ToolAdapter._run(["php", "-v"], cwd=tmp_path)
+        err_msg = str(info.value)
+        # Contains cmd name, timeout value, and cwd for debugging
+        assert "php" in err_msg
+        assert "timeout=300.0" in err_msg
+        assert str(tmp_path) in err_msg
 
     def test_run_with_env(self, tmp_path: Path) -> None:
         completed = subprocess.CompletedProcess(
@@ -1973,19 +1974,18 @@ class TestSecurityCheckerAdapter:
         exc.stdout = b"partial"
         exc.stderr = None
         with patch("harness_quality_gate.adapters.php.security_checker_adapter.shutil.which", return_value="/usr/bin/local-php-security-checker"):
-            with patch("subprocess.run", side_effect=exc):
-                result = SecurityCheckerAdapter().invoke(tmp_path)
-        assert result.exitcode == -1
+            with patch("harness_quality_gate.adapters.php.security_checker_adapter.subprocess.run", side_effect=exc):
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    SecurityCheckerAdapter().invoke(tmp_path)
 
     def test_invoke_timeout_str_output(self, tmp_path: Path) -> None:
         exc = subprocess.TimeoutExpired(cmd=["checker"], timeout=5)
         exc.stdout = b"partial-str"
         exc.stderr = b"timeout-err"
         with patch("harness_quality_gate.adapters.php.security_checker_adapter.shutil.which", return_value="/usr/bin/local-php-security-checker"):
-            with patch("subprocess.run", side_effect=exc):
-                result = SecurityCheckerAdapter().invoke(tmp_path)
-        assert result.exitcode == -1
-        assert result.stdout == "partial-str"
+            with patch("harness_quality_gate.adapters.php.security_checker_adapter.subprocess.run", side_effect=exc):
+                with pytest.raises(RuntimeError, match=r"timed out"):
+                    SecurityCheckerAdapter().invoke(tmp_path)
 
     def test_parse_empty(self) -> None:
         assert SecurityCheckerAdapter().parse("") == []

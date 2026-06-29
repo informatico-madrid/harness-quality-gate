@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from harness_quality_gate.checkpoint import build, write
 
 
@@ -94,9 +96,10 @@ class TestConfigLoadKillers:
 
 
 class TestBaseRunTimeoutBranchKillers:
-    def test_timeout_invocation_exact_with_fixed_clock(self) -> None:
+    def test_timeout_raises_runtime_error_with_duration(self) -> None:
+        """Timeout path: _run re-raises as RuntimeError with rounded duration in message."""
         import subprocess
-        from harness_quality_gate.adapters.base import ToolAdapter, ToolInvocation
+        from harness_quality_gate.adapters.base import ToolAdapter
         t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
         fake_dt = MagicMock()
         fake_dt.now.side_effect = [t0, t0 + timedelta(seconds=1.23456)]
@@ -105,10 +108,10 @@ class TestBaseRunTimeoutBranchKillers:
             patch("harness_quality_gate.adapters.base.subprocess.run", side_effect=exc),
             patch("harness_quality_gate.adapters.base.datetime", fake_dt),
         ):
-            result = ToolAdapter._run(["x"], timeout=5)
-        assert result == ToolInvocation(
-            stdout="so-far", stderr="TIMEOUT", exitcode=-1, duration_seconds=1.235,
-        )
+            with pytest.raises(RuntimeError) as info:
+                ToolAdapter._run(["x"], timeout=5)
+        # Duration (1.235s) is in the message for debugging
+        assert "1.235" in str(info.value)
 
 
 class TestAllowListLineNumbers:
