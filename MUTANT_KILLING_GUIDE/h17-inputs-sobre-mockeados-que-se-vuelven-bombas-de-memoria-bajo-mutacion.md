@@ -30,7 +30,7 @@ superviviente *disfrazado* de flake (ver H16).
    virtual por proceso para que un mutante descontrolado reciba `MemoryError`
    (cuenta como matado) en vez de tumbar la máquina y la swap:
    ```bash
-   ( ulimit -v 4194304; mutmut run --max-children=20 )   # 4 GB virtual/proceso
+   ( ulimit -v 4194304; uv run mutmut run --max-children=20 )   # 4 GB virtual/proceso
    ```
    La suite normal usa <100 MB de RSS; 4 GB da margen de sobra y caza el
    runaway. (Sin esto, un solo mutante puede llevar un worker a 46 GB y meter

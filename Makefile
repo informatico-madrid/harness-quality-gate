@@ -70,13 +70,13 @@
 #   resolve <frozen importlib._bootstrap> which raises FileNotFoundError.
 #
 # Prevention (ALREADY applied):
-#   - __main__.py is EXCLUDED from paths_to_mutate in pyproject.toml
-#   - pyproject.toml runner uses: pytest tests/unit/ -q --tb=no
-#   - NEVER add mutmut_immune markers or -k filters to runner config
+#   - __main__.py is EXCLUDED from source_paths in pyproject.toml
+#   - pytest_add_cli_args_test_selection = ["tests/unit/"] (avoids e2e)
+#   - NEVER add mutmut_immune markers or -k filters to pytest_add_cli_args
 #
 # If bug recurs: Verify pyproject.toml[tool.mutmut] does NOT list
-#   __main__.py in paths_to_mutate array. Recheck runner= line does
-#   not select tests that import mutated __main__.py.
+#   __main__.py in source_paths array. Recheck pytest_add_cli_args_test_selection
+#   does not select tests that import mutated __main__.py.
 #
 # ═══════════════════════════════════════════════════════════
 
@@ -140,8 +140,8 @@ clean-mutmut:
 # ─────────────────────────────────────────────────────────
 # 4. PRIMARY: Run full mutation testing (all cores, all files)
 # ─────────────────────────────────────────────────────────
-# Config: pyproject.toml [tool.mutmut] — paths_to_mutate, runner, timeout, etc.
-# Source files: 19 Python files from paths_to_mutate config
+# Config: pyproject.toml [tool.mutmut] — source_paths, pytest_add_cli_args*, timeout, etc.
+# Source files: 19 Python files from source_paths config
 # Expected: ~7047 mutants, ~25 min on 18 cores
 mutation:
 	@echo "╔══════════════════════════════════════════╗"

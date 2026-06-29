@@ -13,15 +13,12 @@ audited by `AllowListAuditor`.
 ## How to run
 
 ```bash
-# Using the convenience wrapper:
-bash scripts-dev/run-mutmut.sh
-
-# Or directly:
-mutmut run --paths-to-mutate=harness_quality_gate/
+# Posicional: mutmut run [MUTANT_NAMES]... (filtra por nombre de mutante)
+# Para scope por archivo, usar paths_to_mutate o only_mutate en pyproject.toml
+uv run mutmut run
 ```
 
-The `pyproject.toml` section `[tool.mutmut]` supplies the defaults
-(`paths_to_mutate`, `runner`, `tests_dir`).
+El scope se lee de `pyproject.toml` → `[tool.mutmut] paths_to_mutate` o `only_mutate`.
 
 ## Allow-list policy for `# pragma: no mutate`
 
@@ -69,11 +66,11 @@ pragmas are justified or none exist.
 
 ## Progressive adoption
 
-Start by running `mutmut` on a subset of modules to build confidence before
-extending to the full package:
+Scope is controlled by `paths_to_mutate` or `only_mutate` in
+`pyproject.toml`'s `[tool.mutmut]` — NOT by passing paths as positional args
+(`mutmut run` positional arg is `[MUTANT_NAMES]`, not file paths). Run the
+full scope directly:
 
 ```bash
-bash scripts-dev/run-mutmut.sh --paths-to-mutate=harness_quality_gate/detector.py
+uv run mutmut run
 ```
-
-Then incrementally increase the path until the full package is covered.

@@ -500,6 +500,10 @@ class TestPhpAdapterL1:
 
     def test_run_l1_infection_stats_parsed(self, tmp_path):
         a = self._adapter()
+        # HRM-E5: scope guard now runs before Infection — provide a valid config
+        (tmp_path / "infection.json5").write_text(
+            '{"source": {"directories": ["src"]}}\n', encoding="utf-8"
+        )
         infection_text = (
             "6 mutations were generated:\n"
             "   6 mutants were killed\n"

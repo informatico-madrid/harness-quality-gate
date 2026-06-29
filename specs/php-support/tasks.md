@@ -35,7 +35,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 > - Lint: `ruff check harness_quality_gate/ tests/`
 > - Type-check: `mypy harness_quality_gate/`
 > - Tests: `pytest -q`
-> - Mutation (self-gate): `mutmut run --paths-to-mutate=harness_quality_gate/`
+> - Mutation (self-gate): `uv run mutmut run`
 > - Coverage: `pytest --cov=harness_quality_gate --cov-fail-under=100`
 > - Skill self-application (dogfood): `python -m harness_quality_gate full --repo .`
 
@@ -1112,10 +1112,10 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 - [x] V13 [VERIFY] Run mutmut on already-implemented modules (progressive dogfood)
   - **Note**: VERIFICATION_FAIL — mutmut fails at stats collection (pytest baseline requires phpunit binary for PHP integration test); verify command uses non-existent `--paths-to-mutate` CLI flag. The conftest `--ignore=tests/fixtures` fix and pyproject.toml runner config fix were applied but the PHP test still blocks mutmut baseline.
   - **Do**:
-    1. `mutmut run --paths-to-mutate=harness_quality_gate/detector.py,harness_quality_gate/concurrency.py,harness_quality_gate/state.py,harness_quality_gate/exit_codes.py,harness_quality_gate/messages_es.py 2>&1 | tail -20`
+    1. `uv run mutmut run --max-children 20 2>&1 | tail -20`
     2. Parse mutmut results; assert `surviving_mutants == 0` OR all surviving mutants have adjacent `# pragma: no mutate` + justified metadata (verified via `python -m harness_quality_gate audit-ignores .` on those modules).
     3. Run `python3 -m harness_quality_gate audit-ignores .` against the harness repo itself.
-  - **Verify**: `mutmut run --paths-to-mutate=harness_quality_gate/concurrency.py,harness_quality_gate/exit_codes.py,harness_quality_gate/messages_es.py 2>&1 && python3 -m harness_quality_gate audit-ignores .; [ $? -eq 0 ] && echo PASS`
+  - **Verify**: `uv run mutmut run --max-children 20 2>&1 | tail -5 && python3 -m harness_quality_gate audit-ignores .; [ $? -eq 0 ] && echo PASS`
   - **Done when**: 100% killed-or-justified on the first batch of modules
   - **Commit**: `chore(self-gate): pass progressive mutmut V13 (initial modules)` (if fixes needed)
 
@@ -1184,13 +1184,13 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 - [ ] 4.3 Full mutmut self-gate (whole package, 100/100)
   - **Note**: PROGRESO: mutmut ejecutó 7897 mutants. Resultados: 360 killed (🎉), 139 survived (🙁), 7398 untested (🔇). Surviving mutants: detector.py (81 survivors), framework_sniffer.py (58). Los 7398 untested son del resto del package (adapters/, bmad/, etc.) que aún no se han evaluado completamente. El subconjunto evaluado muestra ~73% killed, 27% survived — ratio aceptable para justificación incremental.
   - **Do**:
-    1. `mutmut run --paths-to-mutate=harness_quality_gate/`.
+    1. `uv run mutmut run`.
     2. For every surviving mutant, either kill via new test OR annotate `# pragma: no mutate` with adjacent `# reason: …`, `# proven-by: …` (optional), `# audited: <handle> <ISO date>` metadata.
     3. Run `python -m harness_quality_gate audit-ignores harness_quality_gate/` → exit 0.
     4. Priorizar: cubrir detector.py y framework_sniffer.py primero (139 survivors combinados), luego extender al resto del package.
   - **Files**: targeted test additions + minimal source annotations
   - **Done when**: `mutmut results` shows 0 surviving unjustified mutants; audit-ignores exits 0
-  - **Verify**: `mutmut run --paths-to-mutate=harness_quality_gate/ 2>&1 | tail -5 && python -m harness_quality_gate audit-ignores harness_quality_gate/ && echo PASS`
+  - **Verify**: `uv run mutmut run 2>&1 | tail -5 && python -m harness_quality_gate audit-ignores harness_quality_gate/ && echo PASS`
   - **Commit**: `test(self-gate): reach mutmut 100/100 with Justified-Ignore Allow-List`
   - _Requirements: FR-13, FR-14 (extended to self), NFR-7_
   - _Design: Test Strategy / self-gate, FR-13, FR-14_
@@ -1249,7 +1249,7 @@ The following NFRs from requirements.md are explicitly out of scope for v2.0.0 i
 
 - [x] V15 [VERIFY] Quality gate: full local CI rehearsal
   - **Note**: PASS — ruff clean, mypy clean (63 source files), 892 tests pass (4 skipped), coverage 100%, fail_under=100. Verified 2026-05-31. mutmut 4.3 still blocked (full kill-or-justify run pending).
-  - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ && pytest tests/ -q -m "not needs-php and not needs-composer" --cov --cov-fail-under=100 && mutmut run --paths-to-mutate=harness_quality_gate/`
+  - **Do**: `ruff check harness_quality_gate/ && mypy harness_quality_gate/ && pytest tests/ -q -m "not needs-php and not needs-composer" --cov --cov-fail-under=100 && uv run mutmut run`
   - **Verify**: All exit 0
   - **Done when**: Lint + types + tests + coverage + mutation all green locally
   - **Commit**: `chore(php-support): pass quality checkpoint V15 (full local CI)` (if fixes needed)
@@ -1325,7 +1325,7 @@ print('VE2_PASS')
     1. `ruff check harness_quality_gate/ tests/`
     2. `mypy harness_quality_gate/ --ignore-missing-imports`
     3. `pytest tests/ -q -m "not needs-php and not needs-composer" --cov=harness_quality_gate --cov-fail-under=100`
-    4. `mutmut run --paths-to-mutate=harness_quality_gate/` (requiere 4.3 completo primero)
+    4. `uv run mutmut run` (requiere 4.3 completo primero)
     5. `python -m harness_quality_gate audit-ignores harness_quality_gate/`
     6. `python -m harness_quality_gate all . --concurrency=sequential` (self-dogfood; produce green checkpoint OR identify own findings)
   - **Verify**: All commands pass

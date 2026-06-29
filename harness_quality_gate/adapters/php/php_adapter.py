@@ -493,6 +493,7 @@ class PhpAdapter(BaseAdapter):
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
         mutation_remediation: dict[str, object] | None = None
+        _l1_verdict: str | None = None  # HRM-E5: scope guard verdict
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -517,8 +518,37 @@ class PhpAdapter(BaseAdapter):
                 )
                 logger.info("L1 mutation skipped (TD-6): %s", mutation_skipped)
             else:
-                # Run Infection with strict thresholds (FR-13, FR-14)
-                mutation_stats = self._run_infection(repo, env, is_pest_project)
+                # HRM-E5: Infection scope guard — MUST run before Infection
+                # subprocess (Story 5.3 / Task 0). Scope violations are
+                # quality_failure (not infra_error / crash).
+                try:
+                    from .infection_scope_guard import (  # noqa: PLC0415
+                        check_infection_scope,
+                    )
+
+                    check_infection_scope(repo)
+                except (FileNotFoundError, RuntimeError, ValueError, TypeError) as scope_exc:
+                    _l1_verdict = "quality_failure"  # HRM-E5: scope, not crash
+                    all_findings.append(
+                        Finding(
+                            node="infection-scope",
+                            severity="error",
+                            message=str(scope_exc),
+                            tool="infection",
+                            layer="L1",
+                            language="php",
+                        )
+                    )
+                    logger.warning(
+                        "L1 Infection scope guard violation: %s", scope_exc
+                    )
+                    # DO NOT proceed to Infection subprocess — scope invalid
+                else:
+                    # Scope is valid — run Infection with strict thresholds
+                    # (FR-13, FR-14)
+                    mutation_stats = self._run_infection(
+                        repo, env, is_pest_project
+                    )
 
                 # Hard-gate: if env flag set and Infection unavailable, fail hard
                 if mutation_stats is None and env.get("HARNESS_INFECTION_REQUIRED"):
@@ -597,6 +627,7 @@ class PhpAdapter(BaseAdapter):
                     "max_timeouts": 0,
                 },
                 **mutation_meta,
+                **({"verdict": _l1_verdict} if _l1_verdict else {}),
             },
         )
 

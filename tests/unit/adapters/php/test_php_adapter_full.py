@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from itertools import chain, repeat
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -4278,7 +4279,7 @@ class TestRunL3a:
         import time as _time
         adapter = _make_mock_adapter()
         # 0.123456 → round(_, 3) = 0.123, round(_, 4) = 0.1235  (different!)
-        ticks = iter([100.0, 100.123456])
+        ticks = chain([100.0, 100.123456], repeat(100.123456))
         monkeypatch.setattr(_time, "monotonic", lambda: next(ticks))
         result = adapter.run_l3a(tmp_path, {})
 
@@ -4930,7 +4931,7 @@ class TestRunL1MutantKilling:
         addition gives 201.234. Round to 3 decimals = 1.234 vs 201.234.
         Asserting exact duration kills the + mutation.
         """
-        tick = iter([100.0, 101.2345])  # t0, then current
+        tick = chain([100.0, 101.2345], repeat(101.2345))  # t0, then current
         monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
 
         adapter = _make_mock_adapter(
@@ -4950,7 +4951,7 @@ class TestRunL1MutantKilling:
         """Additional duration assertion — ensures duration is small positive,
         ruling out addition mutation (which would give ~200s).
         """
-        tick = iter([500.0, 500.5])
+        tick = chain([500.0, 500.5], repeat(500.5))
         monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
 
         adapter = _make_mock_adapter(
@@ -4979,7 +4980,7 @@ class TestRunL1MutantKilling:
         Value mutations (250,252,253,257,258,259,260): round changes
           → dense assert fails because value is wrong.
         """
-        tick = iter([200.0, 200.1])
+        tick = chain([200.0, 200.1], repeat(200.1))
         monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
 
         adapter = _make_mock_adapter(
@@ -5011,7 +5012,7 @@ class TestRunL1MutantKilling:
         H2 — clock mock producing a value where round(x,3) ≠ round(x,4).
         duration = 0.0001 → round(..., 3) = 0.0, round(..., 4) = 0.0001
         """
-        tick = iter([300.0, 300.0001])
+        tick = chain([300.0, 300.0001], repeat(300.0001))
         monkeypatch.setattr(_time, "monotonic", lambda: next(tick))
 
         adapter = _make_mock_adapter(

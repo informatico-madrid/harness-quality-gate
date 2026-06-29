@@ -6,6 +6,7 @@ PhpWeakTestAdapter and returns LayerResult.
 from __future__ import annotations
 
 import json
+from itertools import chain, repeat
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 import logging
@@ -2855,7 +2856,7 @@ class TestInvokeMutants:
 
         # Monkeypatch time.monotonic to produce a controlled duration
         # t0=100.0, t1=100.523456 → duration=0.523456 → round to 3dp = 0.523
-        tick = iter([100.0, 100.523456])  # t0 first, t1 after the work
+        tick = chain([100.0, 100.523456], repeat(100.523456))  # t0 first, t1 after the work
         monkeypatch.setattr("time.monotonic", lambda: next(tick))
 
         with patch.object(

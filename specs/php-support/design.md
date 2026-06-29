@@ -1076,7 +1076,7 @@ layer4:
 
 > Core rule: if it lives in this repo and is not an I/O boundary, test it real.
 
-> **Self-gate (dogfood)**: `mutmut --runner='pytest -x' --paths-to-mutate=harness_quality_gate/` runs as part of CI for this repo with **`100% killed-or-justified`** policy. The same Justified-Ignore Allow-List policy (FR-16, FR-17) applies to `# pragma: no mutate` annotations on Python source — every pragma must carry adjacent `# reason:`, `# proven-by:`, `# audited:` metadata, audited by the existing `allow_list_auditor` adapter (which is language-aware: Python pragmas + PHP `@infection-ignore-all` annotations via per-language regex selectors). Failing the self-gate blocks merge of this skill, identical to the contract enforced on user projects.
+> **Self-gate (dogfood)**: `uv run mutmut run` runs as part of CI for this repo with **`100% killed-or-justified`** policy. The same Justified-Ignore Allow-List policy (FR-16, FR-17) applies to `# pragma: no mutate` annotations on Python source — every pragma must carry adjacent `# reason:`, `# proven-by:`, `# audited:` metadata, audited by the existing `allow_list_auditor` adapter (which is language-aware: Python pragmas + PHP `@infection-ignore-all` annotations via per-language regex selectors). Failing the self-gate blocks merge of this skill, identical to the contract enforced on user projects.
 
 ### Test Double Policy
 
@@ -1247,7 +1247,7 @@ Discovered from current repo (`python3 --version → 3.12.3`; `pytest --version 
 - **NFR-19 (Infection ≤ 30 min on 10k mutants / 8-core)**: enabled by PCOV + `--threads=max` + `--git-diff-lines` + `--only-covering-test-cases` + tmpfs `tmpDir`. Adapter sets these defaults.
 - **NFR-20 (audit-ignores < 5s on 1k annotations + 500 entries)**: AllowListAuditor uses a single token-aware scanner; no per-line regex compilation.
 - **Tmpfs guidance**: when `/dev/shm` is writable, installer copies the PHAR cache there for the duration of a run; falls back to disk otherwise.
-- **Self-gate (dogfood)**: CI for this skill runs `mutmut --runner='pytest -x' --paths-to-mutate=harness_quality_gate/` with the **`100% killed-or-justified`** policy. Wall-clock budget: the self-gate mutation run is targeted at ≤ 15 min on the CI runner (a subset of NFR-19's general ceiling). The same Justified-Ignore Allow-List metadata contract applies to Python `# pragma: no mutate` annotations — audited by `allow_list_auditor` in its language-aware mode (see Component table).
+- **Self-gate (dogfood)**: CI for this skill runs `uv run mutmut run` with the **`100% killed-or-justified`** policy. Wall-clock budget: the self-gate mutation run is targeted at ≤ 15 min on the CI runner (a subset of NFR-19's general ceiling). The same Justified-Ignore Allow-List metadata contract applies to Python `# pragma: no mutate` annotations — audited by `allow_list_auditor` in its language-aware mode (see Component table).
 
 ---
 

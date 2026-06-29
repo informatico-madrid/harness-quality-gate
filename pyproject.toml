@@ -94,9 +94,7 @@ exclude_lines = [
 ]
 
 [tool.mutmut]
-# Matches ha-ev-trip-planner configuration structure
-# Array format for paths_to_mutate (not comma-separated string)
-paths_to_mutate = [
+source_paths = [
     "harness_quality_gate/__init__.py",
     "harness_quality_gate/adapters/__init__.py",
     "harness_quality_gate/adapters/base.py",
@@ -121,15 +119,11 @@ paths_to_mutate = [
     "harness_quality_gate/messages_es.py",
     "harness_quality_gate/models.py",
 ]
-# Tests directory (REQUIRED — was missing, causing mutmut to not find tests)
-tests_dir = ["tests/unit/"]
-# Simple runner — pytest auto-discovers config from pyproject.toml
-# Only run unit tests to avoid multiprocessing context conflicts in integration tests
-runner = "pytest tests/unit/ -q --tb=no -p no:randomly"
-# Use spawn context to avoid multiprocessing fork conflicts with mutated code
-# This is critical: when mutated code imports mutmut, set_start_method('fork') fails
-# because the context is already set by a previous test run
-environment_setup_command = "export PYTHONSTARTUP="
+# mutmut 3.6 uses its own PytestRunner — "runner" key is ignored.
+# Test selection: only unit tests (e2e tests conflict with mutants sandbox).
+pytest_add_cli_args_test_selection = ["tests/unit/"]
+# Extra pytest flags: quiet output, no traceback, deterministic order.
+pytest_add_cli_args = ["-q", "--tb=no", "-p", "no:randomly"]
 # Exclude system paths with broken symlinks (Ubuntu help-lang-pack)
 paths_to_exclude = ["/usr/share/help/", "/usr/share/doc/", "/usr/share/man/", "/usr/share/locale/"]
 # backup = false: Required for mutmut 3.5.0 when repo has broken symlinks
@@ -150,7 +144,7 @@ timeout_multiplier = 30.0
 # mutant is graded.
 # The python_adapter (mutated) imports the coverage-omitted analysis modules
 # (weak_test, solid_metrics, antipattern_tier_a, bmad.diversity_metric); they
-# are NOT mutated (not in paths_to_mutate) but must exist inside mutants/ or
+# are NOT mutated (not in source_paths) but must exist inside mutants/ or
 # the baseline collection fails with ModuleNotFoundError.
 also_copy = [
     "references",

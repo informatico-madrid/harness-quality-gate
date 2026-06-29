@@ -53,8 +53,8 @@ git checkout -- harness_quality_gate/
 # 1. Verifica que el test pase en código ORIGINAL
 .venv/bin/python -m pytest tests/unit/ -q -p no:randomly
 
-# 2. Re-ejecuta SOLO ese módulo de mutantes
-mutmut run 'harness_quality_gate.adapters.python.python_adapter.*'
+# 2. Re-ejecuta SOLO esos mutantes específicos (filtra por nombre, no por path)
+uv run mutmut run
 
 # 3. Si el superviviente sigue vivo:
 #    - Aplicalo, corre tu test solo, revertir (protocolo de §1)
