@@ -14,7 +14,7 @@
         "symplify/easy-coding-standard": "^12.5",
         "rector/rector": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.68",
-        "vimeo/psalm": "^6.0"
+        "vimeo/psalm": "^5.26"
     },
     "autoload": {
         "psr-4": {

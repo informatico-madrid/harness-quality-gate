@@ -48,8 +48,8 @@ jobs:
         run: composer install --no-progress --prefer-dist
         working-directory: harness_quality_gate/adapters/php/visitors
 
-      - name: Composer install (E2E fixture)
-        run: composer install --no-progress --prefer-dist
+      - name: Composer update (E2E fixture)
+        run: composer update --no-progress --prefer-dist
         working-directory: tests/fixtures/php-pure-pass
 
       - name: Install Python package
@@ -97,8 +97,8 @@ jobs:
         run: composer install --no-progress --prefer-dist
         working-directory: harness_quality_gate/adapters/php/visitors
 
-      - name: Composer install (E2E fixture)
-        run: composer install --no-progress --prefer-dist
+      - name: Composer update (E2E fixture)
+        run: composer update --no-progress --prefer-dist
         working-directory: tests/fixtures/php-pure-pass
 
       - name: Install Python package
