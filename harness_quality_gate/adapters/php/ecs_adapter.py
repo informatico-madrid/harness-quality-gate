@@ -147,7 +147,6 @@ class EcsAdapter(ToolAdapter):
                         node=file_path,
                         severity="error",
                         message=detail or file_path,
-                        fix_hint=None,  # pragma: no mutate — Finding.fix_hint defaults to None
                         tool="ecs",
                         layer="L3A",
                         rule_id=source_class if source_class else None,

@@ -280,7 +280,29 @@ class TestEcsAdapter:
         findings = EcsAdapter().parse(json.dumps(payload), "", 8)
         assert len(findings) == 3
 
-    def test_parse_multiple_files_one_bad_skips_all(self) -> None:
+    def test_parse_multiple_files_non_dict_file_data_continues_processing(self) -> None:
+        """Multiple files with one non-dict file_data → continues to next files."""
+        payload = {
+            "files": {
+                "src/Good1.php": {
+                    "errors": [
+                        {"line": 1, "message": "ok", "source_class": "S"},
+                    ]
+                },
+                "src/Bad.php": "not-a-dict file_data",
+                "src/Good2.php": {
+                    "errors": [
+                        {"line": 5, "message": "ok2", "source_class": "S2"},
+                    ]
+                },
+            }
+        }
+        findings = EcsAdapter().parse(json.dumps(payload), "", 8)
+        assert len(findings) == 2
+        nodes = {f.node for f in findings}
+        assert nodes == {"src/Good1.php", "src/Good2.php"}
+
+    def test_parse_multiple_files_one_bad_skips_processing(self) -> None:
         """Multiple files with one bad entry → all good files still parsed."""
         payload = {
             "files": {
@@ -449,13 +471,13 @@ class TestEcsAdapter:
         assert findings[0].rule_id == "PSR12.Indentation"
 
     def test_parse_applied_checkers_item_not_string(self) -> None:
-        """ECS 12.x: 'applied_checkers' item is not a string → skip it."""
+        """ECS 12.x: 'applied_checkers' item is not a string → skip it (kills continue→break)."""
         ecs_with_diffs = {
             "files": {
                 "src/File.php": {
                     "diffs": [
                         {
-                            "applied_checkers": ["PSR12.Indentation", 123],
+                            "applied_checkers": [123, "PSR12.Indentation"],
                         }
                     ]
                 }
@@ -486,3 +508,36 @@ class TestEcsAdapter:
         assert len(findings) == 2
         rules = {f.rule_id for f in findings}
         assert rules == {"S1", "PSR12.Indentation"}
+
+    def test_parse_diffs_non_dict_skips_first_then_processes_second(self) -> None:
+        """ECS 12.x: diffs list with non-dict first → skip it, process next valid diff (kills continue→break)."""
+        ecs_with_diffs = {
+            "files": {
+                "src/File.php": {
+                    "diffs": [
+                        "not-a-dict",
+                        {"applied_checkers": ["PSR12.Indentation"]},
+                    ]
+                }
+            }
+        }
+        findings = EcsAdapter().parse(json.dumps(ecs_with_diffs), "", 1)
+        assert len(findings) == 1
+        assert findings[0].rule_id == "PSR12.Indentation"
+
+
+class TestEcsBinaryLiteral:
+    def test_ecs_binary_which_exact_literal(self, tmp_path: Path) -> None:
+        """Verify shutil.which is called with exactly 'ecs' (kills XX-wrap and case mutations)."""
+
+        def check_which(name: str):
+            assert name == "ecs", f"Expected exactly 'ecs' but got '{name}'"
+            return "/usr/bin/ecs"
+
+        adapter = EcsAdapter()
+        with patch(
+            "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
+            side_effect=check_which,
+        ):
+            result = adapter._ecs_binary(tmp_path)
+        assert result == ["/usr/bin/ecs"]
