@@ -195,8 +195,27 @@ class TestEcsAdapter:
         assert len(r) == 1
         assert isinstance(r[0], Finding)
 
+    def test_binary_repo_bin_before_vendor_bin(self, tmp_path: Path) -> None:
+        """When bin/ecs exists, it wins over vendor/bin/ecs (config.bin-dir: bin)."""
+        adapter = EcsAdapter()
+        bin_dir = tmp_path / "bin" / "ecs"
+        bin_dir.parent.mkdir(parents=True, exist_ok=True)
+        bin_dir.write_text("#!/bin/sh\n")
+        bin_dir.chmod(0o755)
+        # vendor/bin/ecs also exists but bin/ wins
+        vendor_bin = tmp_path / "vendor" / "bin" / "ecs"
+        vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+        vendor_bin.write_text("#!/bin/sh\n")
+        vendor_bin.chmod(0o755)
+        with patch(
+            "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
+            return_value=None,
+        ):
+            result = adapter._ecs_binary(tmp_path)
+        assert result == [str(bin_dir)], f"Expected bin/ecs, got: {result}"
+
     def test_binary_fallback_to_vendor_bin(self, tmp_path: Path) -> None:
-        """When ecs is not on PATH, _ecs_binary falls back to vendor/bin/ecs."""
+        """When bin/ecs does not exist, _ecs_binary falls back to vendor/bin/ecs."""
         adapter = EcsAdapter()
         vendor_bin = tmp_path / "vendor" / "bin" / "ecs"
         vendor_bin.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +227,43 @@ class TestEcsAdapter:
         ):
             result = adapter._ecs_binary(tmp_path)
         assert result == [str(vendor_bin)]
+
+    def test_version_binary_not_found_raises(self, tmp_path: Path) -> None:
+        """version() raises RuntimeError when ecs binary is not on PATH or in vendor/bin."""
+        adapter = EcsAdapter()
+        with patch(
+            "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
+            return_value=None,
+        ):
+            with pytest.raises(RuntimeError, match="ecs not found"):
+                adapter.version(tmp_path)
+
+    def test_version_with_system_binary(self, tmp_path: Path) -> None:
+        """version() returns output from --version when binary exists."""
+        adapter = EcsAdapter()
+        with (
+            patch("harness_quality_gate.adapters.php.ecs_adapter.shutil.which", return_value="/usr/bin/ecs"),
+            patch("harness_quality_gate.adapters.php.ecs_adapter.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {
+                "returncode": 0, "stdout": "ECS 12.5.0", "stderr": ""
+            })()
+            result = adapter.version(tmp_path)
+        assert result == "ECS 12.5.0"
+        mock_run.assert_called_once()
+
+    def test_version_with_nonzero_exit(self, tmp_path: Path) -> None:
+        """version() raises RuntimeError when --version fails."""
+        adapter = EcsAdapter()
+        with (
+            patch("harness_quality_gate.adapters.php.ecs_adapter.shutil.which", return_value="/usr/bin/ecs"),
+            patch("harness_quality_gate.adapters.php.ecs_adapter.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {
+                "returncode": 1, "stdout": "", "stderr": "error"
+            })()
+            with pytest.raises(RuntimeError, match="ecs --version failed"):
+                adapter.version(tmp_path)
 
     def test_binary_vendor_path_not_found(self, tmp_path: Path) -> None:
         """When vendor/bin/ecs does not exist, _ecs_binary returns None."""
@@ -526,6 +582,33 @@ class TestEcsAdapter:
         findings = EcsAdapter().parse(json.dumps(ecs_with_diffs), "", 1)
         assert len(findings) == 1
         assert findings[0].rule_id == "PSR12.Indentation"
+
+    def test_version_with_system_binary(self, tmp_path: Path) -> None:
+        """version() returns output from --version."""
+        adapter = EcsAdapter()
+        with (
+            patch("harness_quality_gate.adapters.php.ecs_adapter.shutil.which", return_value="/usr/bin/ecs"),
+            patch("harness_quality_gate.adapters.php.ecs_adapter.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {
+                "returncode": 0, "stdout": "ECS 12.5.0", "stderr": ""
+            })()
+            result = adapter.version(tmp_path)
+        assert result == "ECS 12.5.0"
+        mock_run.assert_called_once()
+
+    def test_version_with_nonzero_exit(self, tmp_path: Path) -> None:
+        """version() raises RuntimeError on non-zero exit code."""
+        adapter = EcsAdapter()
+        with (
+            patch("harness_quality_gate.adapters.php.ecs_adapter.shutil.which", return_value="/usr/bin/ecs"),
+            patch("harness_quality_gate.adapters.php.ecs_adapter.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {
+                "returncode": 1, "stdout": "", "stderr": "not found"
+            })()
+            with pytest.raises(RuntimeError, match="ecs --version failed"):
+                adapter.version(tmp_path)
 
 
 class TestEcsBinaryLiteral:

@@ -54,10 +54,13 @@ class RectorAdapter(ToolAdapter):
         return "2.0"
 
     def _rector_binary(self, repo: Path) -> list[str] | None:
-        """Resolve the rector binary: system PATH > vendor/bin/rector."""
+        """Resolve the rector binary: system PATH > bin/ > vendor/bin/rector."""
         system = shutil.which("rector")
         if system:
             return [system]
+        bin_dir = repo / "bin" / "rector"
+        if bin_dir.is_file():
+            return [str(bin_dir)]
         vendor_bin = repo / "vendor" / "bin" / "rector"
         if vendor_bin.is_file():
             return [str(vendor_bin)]

@@ -721,6 +721,48 @@ def test_phpstan_binary_system_path() -> None:
             assert result == ['/usr/bin/phpstan']
 
 
+def test_phpstan_binary_repo_bin() -> None:
+    """_phpstan_binary checks bin/ before vendor/bin/ (config.bin-dir: bin).
+
+    Kills mutmut resolving bin_dir.is_file() → not bin_dir.is_file().
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        bin_dir = repo / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "phpstan").touch()
+        # vendor also exists but bin/ should win
+        vendor_bin = repo / "vendor" / "bin"
+        vendor_bin.mkdir(parents=True)
+        (vendor_bin / "phpstan").touch()
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.shutil.which', return_value=None):
+            result = _adapter()._phpstan_binary(repo)
+            assert result is not None
+            assert 'bin/phpstan' in result[0], f"Expected bin/ path, got: {result[0]}"
+            assert 'vendor' not in result[0], "bin/ should be checked before vendor/bin/"
+
+
+def test_phpstan_binary_repo_bin() -> None:
+    """_phpstan_binary checks bin/ before vendor/bin/ (config.bin-dir: bin).
+
+    Kills mutmut resolving bin_dir.is_file() → not bin_dir.is_file().
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        bin_dir = repo / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "phpstan").touch()
+        # vendor also exists but bin/ should win
+        vendor_bin = repo / "vendor" / "bin"
+        vendor_bin.mkdir(parents=True)
+        (vendor_bin / "phpstan").touch()
+        with patch('harness_quality_gate.adapters.php.phpstan_adapter.shutil.which', return_value=None):
+            result = _adapter()._phpstan_binary(repo)
+            assert result is not None
+            assert 'bin/phpstan' in result[0], f"Expected bin/ path, got: {result[0]}"
+            assert 'vendor' not in result[0], "bin/ should be checked before vendor/bin/"
+
+
 def test_phpstan_binary_vendor_bin() -> None:
     """_phpstan_binary falls back to vendor/bin/phpstan.
 

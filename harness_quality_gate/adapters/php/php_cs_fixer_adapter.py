@@ -67,10 +67,13 @@ class PhpCsFixerAdapter(ToolAdapter):
         return result.stdout.strip()
 
     def _cs_fixer_binary(self, repo: Path) -> list[str] | None:
-        """Resolve the php-cs-fixer binary: system PATH > vendor/bin."""
+        """Resolve the php-cs-fixer binary: system PATH > bin/ > vendor/bin."""
         system = shutil.which("php-cs-fixer")
         if system:
             return [system]
+        bin_dir = repo / "bin" / "php-cs-fixer"
+        if bin_dir.is_file():
+            return [str(bin_dir)]
         vendor_bin = repo / "vendor" / "bin" / "php-cs-fixer"
         if vendor_bin.is_file():
             return [str(vendor_bin)]

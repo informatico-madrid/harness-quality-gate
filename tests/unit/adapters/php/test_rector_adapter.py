@@ -208,6 +208,23 @@ class TestRectorAdapter:
             with pytest.raises(RuntimeError, match="rector not found"):
                 adapter.invoke(tmp_path, [])
 
+    def test_version_with_binary_available(self, tmp_path: Path) -> None:
+        """version() returns '2.0' when rector binary is found."""
+        adapter = RectorAdapter()
+        with (
+            patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value="/usr/bin/rector"),
+            patch.object(RectorAdapter, "_rector_binary", return_value=["/usr/bin/rector"]),
+        ):
+            result = adapter.version(tmp_path)
+        assert result == "2.0"
+
+    def test_version_without_binary(self, tmp_path: Path) -> None:
+        """version() raises RuntimeError when rector binary is not found."""
+        adapter = RectorAdapter()
+        with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="rector not found"):
+                adapter.version(tmp_path)
+
     def test_invoke_with_mocked_binary(self, tmp_path: Path) -> None:
         """When rector binary exists, invoke() calls _run with correct args."""
         adapter = RectorAdapter()
@@ -241,20 +258,33 @@ class TestRectorAdapter:
         assert len(r) >= 1
         assert isinstance(r[0], Finding)
 
-    def test_binary_fallback_to_vendor_bin(self, tmp_path: Path) -> None:
-        """When rector is not on PATH, _rector_binary falls back to vendor/bin/rector."""
+    def test_binary_repo_bin_before_vendor_bin(self, tmp_path: Path) -> None:
+        """When bin/rector exists, it wins over vendor/bin/rector (config.bin-dir)."""
+        adapter = RectorAdapter()
+        bin_file = tmp_path / "bin" / "rector"
+        bin_file.parent.mkdir(parents=True, exist_ok=True)
+        bin_file.write_text("#!/bin/sh\n")
+        bin_file.chmod(0o755)
+        # vendor/bin/rector also exists but bin/ wins
+        vendor_bin = tmp_path / "vendor" / "bin" / "rector"
+        vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+        vendor_bin.write_text("#!/bin/sh\n")
+        vendor_bin.chmod(0o755)
+        with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value=None):
+            result = adapter._rector_binary(tmp_path)
+        assert result == [str(bin_file)], f"Expected bin/rector, got: {result}"
+        assert 'vendor' not in result[0], f"bin/ should win over vendor/bin/, got: {result}"
+
+    def test_binary_vendor_bin_fallback(self, tmp_path: Path) -> None:
+        """When vendor/bin/rector exists but bin/rector doesn't, vendor wins."""
         adapter = RectorAdapter()
         vendor_bin = tmp_path / "vendor" / "bin" / "rector"
         vendor_bin.parent.mkdir(parents=True, exist_ok=True)
         vendor_bin.write_text("#!/bin/sh\n")
         vendor_bin.chmod(0o755)
-        with patch(
-            "harness_quality_gate.adapters.php.rector_adapter.shutil.which",
-            return_value=None,
-        ) as mock_which:
+        with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value=None):
             result = adapter._rector_binary(tmp_path)
-        assert result == [str(vendor_bin)]
-        mock_which.assert_called_with("rector")
+        assert result == [str(vendor_bin)], f"Expected vendor/bin/rector, got: {result}"
 
     def test_binary_vendor_path_not_found(self, tmp_path: Path) -> None:
         """When vendor/bin/rector does not exist, _rector_binary returns None."""

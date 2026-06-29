@@ -762,6 +762,23 @@ class TestPhpMdAdapter:
         # Verify env is passed
         assert "APP_ENV" in call_args[1].get("env", {})
 
+    def test_phpmd_binary_repo_bin_before_vendor(self, tmp_path: Path) -> None:
+        """When bin/phpmd exists, it wins over vendor/bin/phpmd (config.bin-dir)."""
+        adapter = PhpMdAdapter()
+        bin_file = tmp_path / "bin" / "phpmd"
+        bin_file.parent.mkdir(parents=True, exist_ok=True)
+        bin_file.touch()
+        vendor_bin = tmp_path / "vendor" / "bin" / "phpmd"
+        vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+        vendor_bin.touch()
+        with patch(
+            "harness_quality_gate.adapters.php.phpmd_adapter.shutil.which",
+            return_value=None,
+        ):
+            result = adapter._phpmd_binary(tmp_path)
+        assert result == [str(bin_file)], f"Expected bin/phpmd, got: {result}"
+        assert 'bin/phpmd' in repr(result), "bin/ should be checked before vendor/bin/"
+
     def test_phpmd_binary_type_assertion(self, tmp_path: Path) -> None:
         """_phpmd_binary returns list[str] or None — kills return type mutations."""
         adapter = PhpMdAdapter()
@@ -1252,6 +1269,22 @@ class TestPhpUnitAdapter:
 class TestPhpCsFixerAdapter:
     def test_name(self) -> None:
         assert PhpCsFixerAdapter().name == "php-cs-fixer"
+
+    def test_cs_fixer_binary_repo_bin_before_vendor(self, tmp_path: Path) -> None:
+        """When bin/php-cs-fixer exists, it wins over vendor/bin (config.bin-dir)."""
+        adapter = PhpCsFixerAdapter()
+        bin_file = tmp_path / "bin" / "php-cs-fixer"
+        bin_file.parent.mkdir(parents=True, exist_ok=True)
+        bin_file.touch()
+        vendor_bin = tmp_path / "vendor" / "bin" / "php-cs-fixer"
+        vendor_bin.parent.mkdir(parents=True, exist_ok=True)
+        vendor_bin.touch()
+        with patch(
+            "harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which",
+            return_value=None,
+        ):
+            result = adapter._cs_fixer_binary(tmp_path)
+        assert result == [str(bin_file)], f"Expected bin/php-cs-fixer, got: {result}"
 
     def test_invoke_no_binary_raises(self, tmp_path: Path) -> None:
         with patch("harness_quality_gate.adapters.php.php_cs_fixer_adapter.shutil.which", return_value=None):

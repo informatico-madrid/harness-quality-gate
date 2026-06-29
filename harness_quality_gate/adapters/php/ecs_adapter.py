@@ -65,10 +65,13 @@ class EcsAdapter(ToolAdapter):
         return result.stdout.strip()
 
     def _ecs_binary(self, repo: Path) -> list[str] | None:
-        """Resolve the ecs binary: system PATH > vendor/bin/ecs."""
+        """Resolve the ecs binary: system PATH > bin/ > vendor/bin/ecs."""
         system = shutil.which("ecs")
         if system:
             return [system]
+        bin_dir = repo / "bin" / "ecs"
+        if bin_dir.is_file():
+            return [str(bin_dir)]
         vendor_bin = repo / "vendor" / "bin" / "ecs"
         if vendor_bin.is_file():
             return [str(vendor_bin)]
