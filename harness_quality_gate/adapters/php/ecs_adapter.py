@@ -141,7 +141,9 @@ class EcsAdapter(ToolAdapter):
                     continue
                 line = err.get("line")
                 message = err.get("message", "")
-                source_class = err.get("source_class", "")  # pragma: no mutate — "" and None both normalize to None via `source_class if source_class else None`
+                # reason: default "" vs None both normalize to None via `source_class if source_class else None` below; mutation is undetectable
+                # audited: 2026-06-29
+                source_class = err.get("source_class", "")  # pragma: no mutate
                 detail = message
                 if line:
                     detail = f"line {line}: {detail}"
@@ -161,7 +163,9 @@ class EcsAdapter(ToolAdapter):
                 applied = diff.get("applied_checkers")
                 if not isinstance(applied, list):
                     continue
-                raw_diff = diff.get("diff", "")  # pragma: no mutate — "" and None both normalize to None via `raw_diff if raw_diff else None`
+                # reason: default "" vs None both normalize to None via `raw_diff if raw_diff else None`
+                # audited: 2026-06-29
+                raw_diff = diff.get("diff", "")  # pragma: no mutate
                 for checker in applied:
                     if not isinstance(checker, str):
                         continue

@@ -130,7 +130,9 @@ class RectorAdapter(ToolAdapter):
             applied = entry.get("applied_rectors")
             if not isinstance(applied, list):
                 continue
-            diff = entry.get("diff", "")  # pragma: no mutate — "" and None both normalize to None via `diff if diff else None`
+            # reason: default "" vs None both normalize to None via `diff if diff else None`; mutation is undetectable
+            # audited: 2026-06-29
+            diff = entry.get("diff", "")  # pragma: no mutate
 
             for rector_fqcn in applied:
                 if not isinstance(rector_fqcn, str):
