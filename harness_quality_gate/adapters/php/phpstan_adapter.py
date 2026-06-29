@@ -66,10 +66,13 @@ class PhpStanAdapter(ToolAdapter):
         return result.stdout.strip()
 
     def _phpstan_binary(self, repo: Path) -> list[str] | None:
-        """Resolve the phpstan binary: system PATH > vendor/bin."""
+        """Resolve the phpstan binary: system PATH > bin/ > vendor/bin/."""
         system = shutil.which("phpstan")
         if system:
             return [system]
+        bin_dir = repo / "bin" / "phpstan"
+        if bin_dir.is_file():
+            return [str(bin_dir)]
         vendor_bin = repo / "vendor" / "bin" / "phpstan"
         if vendor_bin.is_file():
             return [str(vendor_bin)]
