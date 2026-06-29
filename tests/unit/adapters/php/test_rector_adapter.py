@@ -280,7 +280,7 @@ class TestRectorAdapter:
             ) as mock_run:
                 adapter.invoke(tmp_path, ["process", "--dry-run", "src/"], env={"FOO": "bar"}, timeout=123.0)
         call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["cwd"] == str(tmp_path)
+        assert call_kwargs["cwd"] == tmp_path
         assert call_kwargs["env"] == {"FOO": "bar"}
         assert call_kwargs["timeout"] == 123.0
         cmd = mock_run.call_args[0][0]

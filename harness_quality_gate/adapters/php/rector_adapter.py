@@ -78,7 +78,7 @@ class RectorAdapter(ToolAdapter):
             raise RuntimeError("rector not found on PATH or in vendor/bin")
         return self._run(
             [*cmd, *args],
-            cwd=str(repo),
+            cwd=repo,
             env=env,
             timeout=timeout,
         )
