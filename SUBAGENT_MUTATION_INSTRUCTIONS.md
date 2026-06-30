@@ -72,6 +72,60 @@ uv run mutmut run
    - Verifica: `python -m harness_quality_gate audit-ignores harness_quality_gate`
      → exit 0
 
+## 4b. Formato OBLIGATORIO para pragmas (evita fallo de audit-ignores)
+
+**CRÍTICO**: Un pragma sin `# reason:` + `# audited:` causa que CI falle en el paso
+"Audit suppressions" (`.github/workflows/ci.yml` línea 70-71).
+
+### Requisitos:
+
+1. **Metadatos en las 5 líneas PREVIAS al pragma**:
+   ```python
+   # reason: el mutante timeout=600→601 es equivalente porque...
+   # audited: 2026-06-30
+   # pragma: no mutate
+   timeout: float = 600.0
+   ```
+   Ambas líneas (`# reason:` y `# audited:`) deben estar presentes en las 5 líneas anteriores.
+   El auditor las busca con regex (ver `allow_list_auditor.py:_METADATA_WINDOW=5`).
+
+2. **Pragma en línea ÚNICA (mismo token físico)**:
+   ```python
+   # ✓ CORRECTO: pragma en la misma línea del token mutado
+   timeout: float = 600.0  # pragma: no mutate
+   
+   # ✗ INCORRECTO: pragma en línea separada (NO detectado por mutmut)
+   timeout: float = 600.0
+   # pragma: no mutate
+   
+   # ✗ INCORRECTO: pragma en llamada multi-línea (NO funciona)
+   result = subprocess.run(
+       cmd,
+       timeout=600.0,  # pragma: no mutate — ← FALLA aquí
+   )
+   ```
+   Si el pragma está en una línea separada o dentro de una llamada multi-línea, mutmut
+   no lo reconoce y el mutante sigue vivo. Probado 2026-06-24 (3 mutantes escaparon así).
+
+3. **Verificación ANTES de hacer push**:
+   ```bash
+   python -m harness_quality_gate audit-ignores harness_quality_gate
+   # Exit 0 = todos los pragmas tienen # reason: + # audited:
+   # Exit 1 = pragmas unjustified → CI fallará en GitHub
+   ```
+
+### Patrón correcto (cópiate si es necesario):
+
+```python
+# reason: <tipo de equivalencia A/B/C/D/E> + <por qué §4/§5 no aplica>
+# audited: <YYYY-MM-DD>
+DEFAULT_TIMEOUT = 600.0  # pragma: no mutate
+```
+
+**Nota**: si el mutante es en realidad matrable, refactor es mejor (código más limpio,
+cero pragmas). Solo usa pragma si exhaustiste §4 (test denso, spies, boundaries, etc.)
+y §5 (refactor para eliminar el mutante).
+
 ## 5. Al terminar la tandada (final)
 
 ```bash
