@@ -42,6 +42,12 @@ logger = logging.getLogger(__name__)
 _INFECTION_MIN_MSI: float = 100
 _INFECTION_MIN_COVERED_MSI: float = 100
 
+# Sentinel: a Story-5.4 L3A tool (ECS/Rector) crashed → emit infra_error
+# (NFR-8a). Only its identity is read (``is not None``); it carries no payload,
+# so there is no mutatable literal to survive — the verdict string is set
+# independently in :meth:`run_l3a`.
+_TOOL_CRASHED = object()
+
 
 class PhpAdapter(BaseAdapter):
     """Orchestrates PHP quality tools across the five quality layers.
@@ -402,12 +408,13 @@ class PhpAdapter(BaseAdapter):
         except (OSError, RuntimeError) as exc:
             logger.warning("L3A php-cs-fixer skipped: %s", exc)
 
-        # Crash results — set when the tool's invoke() raises (binary missing,
-        # config parse error, OOM, timeout). These are caught by the except
-        # blocks and logged as "skipped". The pure core reads these results
-        # to emit infra_error (NFR-8a).
-        ecs_result: dict[str, object] | None = None
-        rector_result: dict[str, object] | None = None
+        # Crash signals — set to the _TOOL_CRASHED sentinel when the tool's
+        # invoke() raises (binary missing, config parse error, OOM, timeout).
+        # These are caught by the except blocks and logged as "skipped". The
+        # pure core reads only their identity (``is not None``) to emit
+        # infra_error (NFR-8a); the verdict string is built independently below.
+        ecs_crashed: object | None = None
+        rector_crashed: object | None = None
 
         # --- ECS — coding standard (Story 5.4) --------------------------
         try:
@@ -425,7 +432,7 @@ class PhpAdapter(BaseAdapter):
             all_findings.extend(ecs_findings)
             logger.info("L3A ECS: %d findings", len(ecs_findings))
         except (OSError, RuntimeError) as exc:
-            ecs_result = {"verdict": "infra_error", "tool": "ecs"}
+            ecs_crashed = _TOOL_CRASHED
             logger.warning("L3A ECS skipped: %s", exc)
 
         # --- Rector — idiom + deprecation, dry-run (Story 5.4) -----------
@@ -444,7 +451,7 @@ class PhpAdapter(BaseAdapter):
             all_findings.extend(rector_findings)
             logger.info("L3A Rector: %d findings", len(rector_findings))
         except (OSError, RuntimeError) as exc:
-            rector_result = {"verdict": "infra_error", "tool": "rector"}
+            rector_crashed = _TOOL_CRASHED
             logger.warning("L3A Rector skipped: %s", exc)
 
         # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
@@ -459,7 +466,7 @@ class PhpAdapter(BaseAdapter):
 
         # ── Crash signal → infra_error (NFR-8a) ────────────────────────
         _l3a_verdict: str | None = None
-        if ecs_result is not None or rector_result is not None:
+        if ecs_crashed is not None or rector_crashed is not None:
             _l3a_verdict = "infra_error"
             passed = False
         else:

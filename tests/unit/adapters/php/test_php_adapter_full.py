@@ -5942,6 +5942,19 @@ class TestRunL3aEcsRectorWiring:
         assert result.passed is True
         assert result.tool_specific is None
 
+    def test_crash_tool_specific_exact_shape(self, tmp_path):
+        """Crash → tool_specific is EXACTLY {'verdict': 'infra_error'}.
+
+        Locks the surfaced contract shape (key + value) so any mutation of the
+        ``"verdict"`` key (line 481) or the ``"infra_error"`` value (line 466)
+        breaks the equality. The crash *signal* itself is the content-free
+        ``_TOOL_CRASHED`` sentinel — it has no literal to mutate.
+        """
+        adapter = self._setup_l3a_adapter()
+        adapter._ecs.invoke.side_effect = RuntimeError("ecs gone")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.tool_specific == {"verdict": "infra_error"}
+
 
 # ===========================================================================
 # MUTANT KILLING: run_l1 infection-scope guard
