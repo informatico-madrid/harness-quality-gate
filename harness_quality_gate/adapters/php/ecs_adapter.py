@@ -19,8 +19,6 @@ from typing import Mapping
 from ...models import Finding
 from ..base import ToolAdapter, ToolInvocation
 
-# reason: logger name mutation does not change observability; only the __name__ label differs.
-# audited: 2026-06-04
 logger = logging.getLogger(__name__)
 
 
@@ -141,9 +139,7 @@ class EcsAdapter(ToolAdapter):
                     continue
                 line = err.get("line")
                 message = err.get("message", "")
-                # reason: default "" vs None both normalize to None via `source_class if source_class else None` below; mutation is undetectable
-                # audited: 2026-06-29
-                source_class = err.get("source_class", "")  # pragma: no mutate
+                source_class = err.get("source_class")
                 detail = message
                 if line:
                     detail = f"line {line}: {detail}"
@@ -163,9 +159,7 @@ class EcsAdapter(ToolAdapter):
                 applied = diff.get("applied_checkers")
                 if not isinstance(applied, list):
                     continue
-                # reason: default "" vs None both normalize to None via `raw_diff if raw_diff else None`
-                # audited: 2026-06-29
-                raw_diff = diff.get("diff", "")  # pragma: no mutate
+                raw_diff = diff.get("diff")
                 for checker in applied:
                     if not isinstance(checker, str):
                         continue

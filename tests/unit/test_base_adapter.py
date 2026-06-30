@@ -6,7 +6,9 @@ subprocess.run kwargs (cmd, cwd, env, capture_output, text, timeout).
 
 from __future__ import annotations
 
+import logging
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -100,11 +102,42 @@ def test_run_returns_tool_invocation() -> None:
 def test_run_timeout_raises_runtime_error() -> None:
     """When subprocess.run raises TimeoutExpired, _run re-raises as RuntimeError
     so callers can classify as infra_error (AC5/NFR-8a: timeout is infra not quality)."""
-    import re
-
     with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ls", 30)):
         with pytest.raises(RuntimeError, match=r"timed out.*timeout=30.*cwd=/tmp"):
             ToolAdapter._run(["ls"], cwd=Path("/tmp"), timeout=30)
+
+
+def test_run_timeout_logs_warning_message(caplog) -> None:
+    """Kill logger.warning(msg)→logger.warning(None) mutation (H3).
+
+    The timeout path emits a WARNING log before raising RuntimeError.
+    The test asserts the exact warning message content, so that a mutation
+    replacing `msg` with `None` (or any other value) is detected."""
+    import logging
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import MagicMock
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t1 = t0 + timedelta(seconds=3.45678)  # 3.457s when rounded to 3 decimals
+    fake_dt = MagicMock()
+    fake_dt.now.side_effect = [t0, t1]
+
+    caplog.set_level(logging.WARNING)
+    with (
+        patch(
+            "harness_quality_gate.adapters.base.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("ls", 30),
+        ),
+        patch("harness_quality_gate.adapters.base.datetime", fake_dt),
+    ):
+        with pytest.raises(RuntimeError):
+            ToolAdapter._run(["ls"], cwd=Path("/tmp"), timeout=30)
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    # The warning message must contain the exact timeout value (30s) and the
+    # exact command repr ('ls') — mutations to None or "" make this fail.
+    assert record.getMessage() == "tool timed out after 3.457s (cmd='ls', timeout=30s, cwd=/tmp)"
 
 
 def test_run_duration_rounded_to_3_decimals() -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -222,8 +222,16 @@ class TestRectorAdapter:
         """version() raises RuntimeError when rector binary is not found."""
         adapter = RectorAdapter()
         with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="rector not found"):
+            with pytest.raises(RuntimeError, match=r"rector not found on PATH or in vendor/bin"):
                 adapter.version(tmp_path)
+
+    def test_version_error_message_exact_match(self, tmp_path: Path) -> None:
+        """version() RuntimeError message is exact — kills XXwrap and case mutations."""
+        adapter = RectorAdapter()
+        with patch("harness_quality_gate.adapters.php.rector_adapter.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError) as exc_info:
+                adapter.version(tmp_path)
+        assert str(exc_info.value) == "rector not found on PATH or in vendor/bin"
 
     def test_invoke_with_mocked_binary(self, tmp_path: Path) -> None:
         """When rector binary exists, invoke() calls _run with correct args."""
@@ -257,6 +265,20 @@ class TestRectorAdapter:
         assert isinstance(r, list)
         assert len(r) >= 1
         assert isinstance(r[0], Finding)
+
+    def test_binary_system_call_uses_exact_name(self, tmp_path: Path) -> None:
+        """_rector_binary() calls shutil.which('rector') with exact string — kills XXwrap."""
+        adapter = RectorAdapter()
+        which_spy = patch(
+            "harness_quality_gate.adapters.php.rector_adapter.shutil.which",
+            return_value=None,
+        )
+        with which_spy as mock_which:
+            adapter._rector_binary(tmp_path)
+        # The first and only call must be with exact string "rector"
+        mock_which.assert_called_once_with("rector")
+        assert mock_which.call_args == call("rector")
+        assert mock_which.call_args[0][0] == "rector"
 
     def test_binary_repo_bin_before_vendor_bin(self, tmp_path: Path) -> None:
         """When bin/rector exists, it wins over vendor/bin/rector (config.bin-dir)."""
@@ -292,9 +314,12 @@ class TestRectorAdapter:
         with patch(
             "harness_quality_gate.adapters.php.rector_adapter.shutil.which",
             return_value=None,
-        ):
+        ) as mock_which:
             result = adapter._rector_binary(tmp_path)
         assert result is None
+        # Verify correct argument to shutil.which — kills "rector"→"XXrectorXX"/"RECTOR" mutations
+        assert mock_which.call_args_list == [call("rector")]
+        assert mock_which.call_args[0][0] == "rector"
 
     def test_invoke_passes_correct_args_to_run(self, tmp_path: Path) -> None:
         """invoke() forwards correct command, cwd, env, and timeout to _run."""
@@ -454,3 +479,20 @@ class TestRectorAdapter:
         }
         findings = RectorAdapter().parse(json.dumps(payload), "", 5)
         assert findings == []
+
+    def test_parse_missing_file_before_valid_entries_kills_break(self) -> None:
+        """Missing file_entry FIRST → loop continues (kills continue→break)."""
+        payload = {
+            "file_diffs": [
+                # Bad entry (no 'file') comes FIRST — if continue→break, loop stops here
+                {"diff": "d", "applied_rectors": ["MissingFileRector"]},
+                # Valid entry comes AFTER — only reach-able if loop continues past bad entry
+                {"file": "src/Good.php", "diff": "d2", "applied_rectors": ["Rector\\Valid\\GoodRector"]},
+            ],
+        }
+        findings = RectorAdapter().parse(json.dumps(payload), "", 5)
+        # With continue: skips bad entry, processes good entry → 1 finding
+        # With break: exits after bad entry → 0 findings
+        assert len(findings) == 1
+        assert findings[0].node == "src/Good.php"
+        assert findings[0].rule_id == "Rector\\Valid\\GoodRector"

@@ -5771,3 +5771,387 @@ class TestPhpSeverityGates:
         adapter = self._l4_adapter([_error_finding("L4", "psalm-taint")])
         result = adapter.run_l4(tmp_path, {})
         assert result.passed is False
+# ===========================================================================
+# MUTANT KILLING: run_l3a ECS + Rector wiring (H1 pattern)
+# Kills: ~37 ECS/rector survivors (mutmut_98-134, 136-140, 144-177, 179-182,
+#        206-207) plus duration_sec and verdict logic
+# ===========================================================================
+
+class TestRunL3aEcsRectorWiring:
+    """Comprehensive H1 wiring tests for ECS and Rector blocks in run_l3a."""
+
+    def _setup_l3a_adapter(self):
+        adapter = PhpAdapter()
+        adapter._phpstan = MagicMock()
+        adapter._phpstan.run_l3a.return_value = []
+        adapter._phpmd = MagicMock()
+        adapter._phpmd.run_l3a.return_value = []
+        adapter._cs_fixer = MagicMock()
+        adapter._cs_fixer.invoke.return_value = MagicMock(
+            stdout="[]", stderr="cs_err", exitcode=0
+        )
+        adapter._cs_fixer.parse.return_value = []
+        adapter._ecs = MagicMock()
+        adapter._ecs.invoke.return_value = MagicMock(
+            stdout="[]", stderr="ecs_err", exitcode=0
+        )
+        adapter._ecs.parse.return_value = []
+        adapter._rector = MagicMock()
+        adapter._rector.invoke.return_value = MagicMock(
+            stdout="[]", stderr="rector_err", exitcode=0
+        )
+        adapter._rector.parse.return_value = []
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout="[]", stderr="", exitcode=0
+        )
+        adapter._antipattern.parse.return_value = []
+        return adapter
+
+    # -----------------------------------------------------------------------
+    # ECS block: H1 wiring
+    # -----------------------------------------------------------------------
+
+    def test_ecs_invoke_exact_args(self, tmp_path):
+        """Kill mutmut_104-117: ECS invoke argument mutations."""
+        adapter = self._setup_l3a_adapter()
+        env = {"HARNESS_PHASE": "l3a-ecs"}
+        adapter.run_l3a(tmp_path, env)
+        adapter._ecs.invoke.assert_called_once_with(
+            tmp_path,
+            ["check", "--no-progress-bar", "--output-format=json"],
+            env=env,
+            timeout=300.0,
+        )
+
+    def test_ecs_parse_exact_args(self, tmp_path):
+        """Kill mutmut_119-124: ECS parse argument mutations."""
+        adapter = self._setup_l3a_adapter()
+        adapter.run_l3a(tmp_path, {})
+        inv = adapter._ecs.invoke.return_value
+        adapter._ecs.parse.assert_called_once_with(
+            inv.stdout, inv.stderr, inv.exitcode
+        )
+
+    # -----------------------------------------------------------------------
+    # Rector block: H1 wiring
+    # -----------------------------------------------------------------------
+
+    def test_rector_invoke_exact_args(self, tmp_path):
+        """Kill mutmut_144-159: Rector invoke argument mutations."""
+        adapter = self._setup_l3a_adapter()
+        env = {"HARNESS_PHASE": "l3a-rector"}
+        adapter.run_l3a(tmp_path, env)
+        adapter._rector.invoke.assert_called_once_with(
+            tmp_path,
+            ["process", "--dry-run", "--no-progress-bar", "--output-format=json"],
+            env=env,
+            timeout=300.0,
+        )
+
+    def test_rector_parse_exact_args(self, tmp_path):
+        """Kill mutmut_161-168: Rector parse argument mutations."""
+        adapter = self._setup_l3a_adapter()
+        adapter.run_l3a(tmp_path, {})
+        inv = adapter._rector.invoke.return_value
+        adapter._rector.parse.assert_called_once_with(
+            inv.stdout, inv.stderr, inv.exitcode
+        )
+
+    # -----------------------------------------------------------------------
+    # Logger output assertions (ECS + Rector)
+    # -----------------------------------------------------------------------
+
+    def test_ecs_log_message_exact(self, tmp_path, caplog):
+        """Kill mutmut_128-134, 136-140: ECS logger.info mutations."""
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3a_adapter()
+        adapter._ecs.parse.return_value = [
+            Finding(node="src/A.php", severity="warning", message="x", tool="ecs")
+        ]
+        adapter.run_l3a(tmp_path, {})
+        ecs_logs = [m for m in caplog.messages if m.startswith("L3A ECS:")]
+        assert len(ecs_logs) == 1
+        assert ecs_logs[0] == "L3A ECS: 1 findings"
+
+    def test_rector_log_message_exact(self, tmp_path, caplog):
+        """Kill mutmut log mutations on Rector logging."""
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3a_adapter()
+        adapter._rector.parse.return_value = [
+            Finding(node="src/B.php", severity="warning", message="y", tool="rector"),
+            Finding(node="src/C.php", severity="warning", message="z", tool="rector"),
+        ]
+        adapter.run_l3a(tmp_path, {})
+        rector_logs = [m for m in caplog.messages if m.startswith("L3A Rector:")]
+        assert len(rector_logs) == 1
+        assert rector_logs[0] == "L3A Rector: 2 findings"
+
+    # -----------------------------------------------------------------------
+    # ECS / Rector crash paths
+    # -----------------------------------------------------------------------
+
+    def test_ecs_crash_verdict_infra_error(self, tmp_path, caplog):
+        """Kill ecs_crashed=True path and crash flag mutations."""
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3a_adapter()
+        adapter._ecs.invoke.side_effect = RuntimeError("ecs not found")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is False
+        assert result.tool_specific is not None
+        assert result.tool_specific.get("verdict") == "infra_error"
+        warnings = [m for m in caplog.messages if "L3A ECS skipped" in m]
+        assert len(warnings) == 1
+        assert warnings[0] == "L3A ECS skipped: ecs not found"
+
+    def test_rector_crash_verdict_infra_error(self, tmp_path, caplog):
+        """Kill rector_crashed=True path and crash flag mutations."""
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3a_adapter()
+        adapter._rector.invoke.side_effect = RuntimeError("rector not found")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is False
+        assert result.tool_specific is not None
+        assert result.tool_specific.get("verdict") == "infra_error"
+        warnings = [m for m in caplog.messages if "L3A Rector skipped" in m]
+        assert len(warnings) == 1
+        assert warnings[0] == "L3A Rector skipped: rector not found"
+
+    def test_ecs_only_crash_triggers_infra_error(self, tmp_path):
+        """ECS crashes but Rector OK → or triggers infra_error.
+        Kills ecs_crashed or rector_crashed → and mutation."""
+        adapter = self._setup_l3a_adapter()
+        adapter._ecs.invoke.side_effect = RuntimeError("ecs gone")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is False
+        assert result.tool_specific.get("verdict") == "infra_error"
+
+    def test_both_crash_still_infra_error(self, tmp_path):
+        """Both crash → verdict='infra_error'."""
+        adapter = self._setup_l3a_adapter()
+        adapter._ecs.invoke.side_effect = RuntimeError("ecs missing")
+        adapter._rector.invoke.side_effect = RuntimeError("rector missing")
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is False
+        assert result.tool_specific.get("verdict") == "infra_error"
+
+    def test_success_path_no_verdict(self, tmp_path):
+        """No crash → no verdict key."""
+        adapter = self._setup_l3a_adapter()
+        result = adapter.run_l3a(tmp_path, {})
+        assert result.passed is True
+        assert result.tool_specific is None
+
+
+# ===========================================================================
+# MUTANT KILLING: run_l1 infection-scope guard
+# (mutmut_164-203, 347, 348)
+# ===========================================================================
+
+class TestRunL1InfectionScopeGuard:
+    """Kill all infection-scope-guard survivors in run_l1."""
+
+    def _setup_l1_adapter(self):
+        adapter = PhpAdapter()
+        adapter._pcov = MagicMock()
+        adapter._pcov.probe.return_value = "pcov"
+        adapter._phpunit = MagicMock()
+        adapter._phpunit.invoke.return_value = MagicMock(stdout="", stderr="", exitcode=0)
+        adapter._phpunit.parse.return_value = []
+        adapter._pest = MagicMock()
+        adapter._pest._pest_binary.return_value = None
+        adapter._pest._has_mutate_plugin.return_value = True
+        adapter._pest.invoke.return_value = MagicMock(exitcode=0, stdout="", stderr="")
+        adapter._infection = MagicMock()
+        adapter._infection.invoke.return_value = MagicMock(
+            stdout="Mutation Score Indicator (MSI): 100%", stderr="", exitcode=0
+        )
+        adapter._infection.parse.return_value = MutationStats(
+            total=10, killed=10, survived=0, escaped=0, timed_out=0,
+            untested=0, msi=100.0, covered_msi=100.0
+        )
+        return adapter
+
+    def test_scope_guard_verdict_quality_failure(self, tmp_path, caplog):
+        """Kill mutmut_164/165/166: _l1_verdict string mutations."""
+        import logging
+        from unittest.mock import patch, MagicMock as _MG
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l1_adapter()
+
+        with patch.object(
+            adapter, "_pest",
+            _MG(_pest_binary=_MG(return_value=None),
+                _has_mutate_plugin=_MG(return_value=True),
+                invoke=_MG(return_value=_MG(exitcode=0, stdout="", stderr="" )))
+        ):
+            with patch(
+                'harness_quality_gate.adapters.php.infection_scope_guard.check_infection_scope',
+                side_effect=ValueError("scope_violation_test_error"),
+            ):
+                result = adapter.run_l1(tmp_path, {})
+
+        assert result.tool_specific.get("verdict") == "quality_failure", (
+            f'Mut164/165/166: verdict="quality_failure", got: '
+            f'{result.tool_specific.get("verdict")}'
+        )
+
+    def test_scope_guard_finding_fields_exact(self, tmp_path):
+        """Kill mutmut_173/179/184/189/190: Finding field mutations."""
+        from unittest.mock import patch
+        adapter = self._setup_l1_adapter()
+
+        with patch(
+            'harness_quality_gate.adapters.php.infection_scope_guard.check_infection_scope',
+            side_effect=RuntimeError("test_scope_error_unique_msg"),
+        ):
+            result = adapter.run_l1(tmp_path, {})
+
+        scope_findings = [f for f in result.findings if f.node == "infection-scope"]
+        assert len(scope_findings) == 1, f"Expected 1 scope finding, got: {[f.node for f in result.findings]}"
+        f = scope_findings[0]
+        assert f.language == "php", f'Mut173/179/189/190: language="php", got: {f.language}'
+        assert "test_scope_error_unique_msg" in f.message, (
+            f'Mut184: message must contain exception text, got: {f.message}'
+        )
+        assert f.severity == "error"
+        assert f.tool == "infection"
+        assert f.layer == "L1"
+
+    def test_scope_guard_log_message_exact(self, tmp_path, caplog):
+        """Kill mutmut_192-196: logger.warning format/string mutations."""
+        from unittest.mock import patch
+        import logging
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l1_adapter()
+        scope_msg = "scope_guard_unique_test_error"
+        with patch(
+            'harness_quality_gate.adapters.php.infection_scope_guard.check_infection_scope',
+            side_effect=ValueError(scope_msg),
+        ):
+            adapter.run_l1(tmp_path, {})
+        scope_warns = [m for m in caplog.messages if "L1 Infection scope guard violation" in m]
+        assert len(scope_warns) == 1
+        assert scope_warns[0] == f"L1 Infection scope guard violation: {scope_msg}"
+
+    def test_scope_guard_passes_are_false(self, tmp_path):
+        """Scope guard error → layer must fail."""
+        from unittest.mock import patch
+        adapter = self._setup_l1_adapter()
+        with patch(
+            'harness_quality_gate.adapters.php.infection_scope_guard.check_infection_scope',
+            side_effect=FileNotFoundError("deptrac.yaml not found"),
+        ):
+            result = adapter.run_l1(tmp_path, {})
+        assert result.passed is False
+        assert any(f.node == "infection-scope" for f in result.findings)
+
+    def test_scope_guard_verdict_key_exact(self, tmp_path):
+        """Kill mutmut_347 (XXverdictXX) and 348 (VERDICT)."""
+        from unittest.mock import patch
+        adapter = self._setup_l1_adapter()
+        with patch(
+            'harness_quality_gate.adapters.php.infection_scope_guard.check_infection_scope',
+            side_effect=TypeError("scope type error"),
+        ):
+            result = adapter.run_l1(tmp_path, {})
+        assert "verdict" in result.tool_specific, (
+            f'Mut347/348: "verdict" key must exist, got: {list(result.tool_specific.keys())}'
+        )
+        assert result.tool_specific["verdict"] == "quality_failure"
+
+
+# ===========================================================================
+# MUTANT KILLING: run_l3b deptrac block (mutmut_45, 46, 72, 80, 84)
+# ===========================================================================
+
+class TestRunL3bDeptracBlock:
+    """Kill deptrac survivors in run_l3b."""
+
+    def _setup_l3b_adapter(self):
+        adapter = PhpAdapter()
+        adapter._antipattern = MagicMock()
+        adapter._antipattern.invoke.return_value = MagicMock(
+            stdout="[]", stderr="", exitcode=0
+        )
+        adapter._antipattern.parse.return_value = []
+        adapter._deptrac = MagicMock()
+        adapter._deptrac.invoke.return_value = MagicMock(
+            stdout="[]", stderr="deptrac_err", exitcode=0
+        )
+        adapter._deptrac.parse.return_value = []
+        return adapter
+
+    def test_deptrac_and_vs_or_boundary(self, tmp_path):
+        """Kill mutmut_45: and → or in deptrac_applicable.
+        Boundary: bin exists, yaml does NOT → skip deptrac.
+        """
+        adapter = self._setup_l3b_adapter()
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        adapter.run_l3b(tmp_path, {})
+        assert not adapter._deptrac.invoke.called, (
+            "Mut45: deptrac must NOT be invoked when yaml is missing"
+        )
+
+    def test_deptrac_both_exist_invoke_called(self, tmp_path):
+        """Verify deptrac IS invoked when both files exist."""
+        adapter = self._setup_l3b_adapter()
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").touch()
+        adapter.run_l3b(tmp_path, {})
+        assert adapter._deptrac.invoke.called
+
+    def test_deptrac_success_log_message(self, tmp_path, caplog):
+        """Kill mutmut_72: XXL3B deptrac...XX decoration."""
+        import logging
+        caplog.set_level(logging.INFO, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3b_adapter()
+        adapter._deptrac.parse.return_value = [Finding(
+            node="src/X.php", severity="warning", message="violation", tool="deptrac"
+        )]
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").touch()
+        adapter.run_l3b(tmp_path, {})
+        dep_logs = [m for m in caplog.messages if m.startswith("L3B deptrac:")]
+        assert len(dep_logs) == 1
+        assert dep_logs[0] == "L3B deptrac: 1 findings"
+
+    def test_deptrac_crash_finding_fields(self, tmp_path, caplog):
+        """Kill mutmut_80 (message→None) and 84 (node→XXdeptracXX)."""
+        import logging
+        caplog.set_level(logging.WARNING, logger="harness_quality_gate.adapters.php.php_adapter")
+        adapter = self._setup_l3b_adapter()
+        adapter._deptrac.invoke.side_effect = RuntimeError("deptrac crash error")
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").touch()
+        result = adapter.run_l3b(tmp_path, {})
+        crash_findings = [f for f in result.findings if f.node == "deptrac"]
+        assert len(crash_findings) == 1, f"Expected 1 deptrac crash finding, got: {result.findings}"
+        f = crash_findings[0]
+        assert f.node == "deptrac", f'Mut84: node="deptrac", got: {f.node}'
+        assert "deptrac crash error" in f.message, (
+            f'Mut80: message must contain exception text, got: {f.message}'
+        )
+        assert f.severity == "error"
+
+    def test_deptrac_crash_verdict_infra_error(self, tmp_path):
+        """deptrac crash → verdict='infra_error', passed=False."""
+        adapter = self._setup_l3b_adapter()
+        adapter._deptrac.invoke.side_effect = RuntimeError("crash")
+        (tmp_path / "vendor" / "bin").mkdir(parents=True)
+        (tmp_path / "vendor" / "bin" / "deptrac").touch()
+        (tmp_path / "deptrac.yaml").touch()
+        result = adapter.run_l3b(tmp_path, {})
+        assert result.passed is False
+        assert result.tool_specific is not None
+        assert result.tool_specific.get("verdict") == "infra_error"
+
+    def test_deptrac_not_applicable_skipped(self, tmp_path):
+        """When neither bin nor yaml exists, deptrac is NOT invoked."""
+        adapter = self._setup_l3b_adapter()
+        adapter.run_l3b(tmp_path, {})
+        assert not adapter._deptrac.invoke.called

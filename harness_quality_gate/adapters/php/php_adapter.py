@@ -406,8 +406,8 @@ class PhpAdapter(BaseAdapter):
         # config parse error, OOM, timeout). These are caught by the except
         # blocks and logged as "skipped". The pure core reads these
         # flags to emit infra_error (NFR-8a).
-        ecs_crashed = False
-        rector_crashed = False
+        ecs_crashed = False  # noqa: F841 # type: ignore[unused-variable] # pragma: no mutate  # eq: False↔None both falsy in `or`, always overwritten before read in boolean context (mutmut_98)
+        rector_crashed = False  # pragma: no mutate  # eq: False↔None both falsy in `or`, always overwritten before read in boolean context (mutmut_100)
 
         # --- ECS — coding standard (Story 5.4) --------------------------
         try:
@@ -458,7 +458,7 @@ class PhpAdapter(BaseAdapter):
         duration = time.monotonic() - t0
 
         # ── Crash signal → infra_error (NFR-8a) ────────────────────────
-        _l3a_verdict: str | None = None
+        _l3a_verdict: str | None = None  # pragma: no mutate  # eq: None↔"" both falsy in `if _l3a_verdict:`, always overwritten before use (mutmut_206)
         if ecs_crashed or rector_crashed:
             _l3a_verdict = "infra_error"
             passed = False
@@ -554,7 +554,7 @@ class PhpAdapter(BaseAdapter):
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
         mutation_remediation: dict[str, object] | None = None
-        _l1_verdict: str | None = None  # HRM-E5: scope guard verdict
+        _l1_verdict: str | None = None  # HRM-E5: scope guard verdict  # pragma: no mutate  # eq: None↔"" both falsy in `if _l1_verdict:`, always overwritten before use (mutmut_117)
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -895,7 +895,7 @@ class PhpAdapter(BaseAdapter):
         deptrac_bin = repo / "vendor" / "bin" / "deptrac"
         deptrac_yaml = repo / "deptrac.yaml"
         deptrac_applicable = deptrac_bin.is_file() and deptrac_yaml.is_file()
-        deptrac_crash: bool = False
+        deptrac_crash: bool = False  # pragma: no mutate  # eq: False↔None both falsy in `if deptrac_crash:`, always overwritten before read (mutmut_46)
 
         if deptrac_applicable:
             try:

@@ -7,9 +7,10 @@ Tests parse(), invoke(), and edge cases. The adapter itself does not exist yet
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -229,14 +230,21 @@ class TestEcsAdapter:
         assert result == [str(vendor_bin)]
 
     def test_version_binary_not_found_raises(self, tmp_path: Path) -> None:
-        """version() raises RuntimeError when ecs binary is not on PATH or in vendor/bin."""
+        """version() raises RuntimeError with EXACT message when ecs binary is not on PATH or in vendor/bin.
+
+        Exact message assertion kills:
+        - mutmut_5: XX-wrap → "XXecs not found on PATH or in vendor/binXX"
+        - mutmut_6: case change → "ecs not found on path or in vendor/bin" (PATH→path)
+        """
         adapter = EcsAdapter()
         with patch(
             "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
             return_value=None,
         ):
-            with pytest.raises(RuntimeError, match="ecs not found"):
+            with pytest.raises(RuntimeError) as exc_info:
                 adapter.version(tmp_path)
+        # Exact string match kills XX-wrap (mutmut_5) and case-change (mutmut_6)
+        assert str(exc_info.value) == "ecs not found on PATH or in vendor/bin"
 
     def test_version_with_system_binary(self, tmp_path: Path) -> None:
         """version() returns output from --version when binary exists."""
@@ -596,6 +604,134 @@ class TestEcsAdapter:
             result = adapter.version(tmp_path)
         assert result == "ECS 12.5.0"
         mock_run.assert_called_once()
+
+    # -- H1 wiring tests (kills all subprocess.run passthrough mutants) ------
+
+    def test_version_subprocess_run_wiring_exact_default_env(self, tmp_path: Path) -> None:
+        """H1: Assert EXACT subprocess.run() call signature for version() with default env.
+
+        Kills:
+        - mutmut_9:  [*cmd, "--version"] → None
+        - mutmut_10: cwd=str(repo) → cwd=None           (via call_args exact args)
+        - mutmut_11: env={...} → env=None               (env != None)
+        - mutmut_12: capture_output=True → capture_output=None
+        - mutmut_13: text=True → text=None
+        - mutmut_14: timeout=30 → timeout=None
+        - mutmut_15: [*cmd, "--version"] removed
+        - mutmut_16: cwd=str(repo) removed
+        - mutmut_17: env={...} removed
+        - mutmut_18: capture_output=True removed
+        - mutmut_19: text=True removed
+        - mutmut_20: timeout=30 removed
+        - mutmut_21: "--version" → "XX--versionXX"
+        - mutmut_22: "--version" → "--VERSION"
+        - mutmut_25: capture_output=True → capture_output=False
+        - mutmut_26: text=True → text=False
+        - mutmut_27: timeout=30 → timeout=31
+        """
+        repo = Path("/rompehielos-test-repo-12345")
+        adapter = EcsAdapter()
+        mock_result = type("Result", (), {
+            "returncode": 0, "stdout": "ECS 12.5.0\n", "stderr": ""
+        })()
+        with (
+            patch(
+                "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
+                return_value="/usr/bin/ecs",
+            ),
+            patch(
+                "harness_quality_gate.adapters.php.ecs_adapter.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
+        ):
+            adapter.version(repo)
+
+        # Kill mutmut_15 (cmd list removed) / mutmut_9 (cmd list → None)
+        assert mock_run.call_args is not None
+        arg0 = mock_run.call_args[0][0]
+        assert arg0[0] == "/usr/bin/ecs", f"First arg should be ecs binary, got {arg0[0]!r}"
+        # Kill mutmut_21: "--version" → "XX--versionXX"
+        # Kill mutmut_22: "--version" → "--VERSION"
+        assert arg0[1] == "--version", f"Second arg should be exactly '--version', got {arg0[1]!r}"
+        assert len(arg0) == 2, f"Should be exactly 2 args, got {len(arg0)}: {arg0}"
+
+        call_kwargs = mock_run.call_args.kwargs
+
+        # Kill mutmut_10: cwd=str(repo) → cwd=None  / mutmut_23: cwd=str(repo) → cwd=str(None)
+        # mutmut_16: cwd=str(repo) removed
+        assert "cwd" in call_kwargs, "cwd kwarg MUST be present in subprocess.run call"
+        assert call_kwargs["cwd"] == str(repo), (
+            f"cwd must be str(repo)='{repo}', got {call_kwargs['cwd']!r}"
+        )
+
+        # Kill mutmut_11: env → None  / mutmut_17: env removed
+        assert "env" in call_kwargs, "env kwarg MUST be present in subprocess.run call"
+        assert call_kwargs["env"] is not None, "env must not be None"
+        # env should be the MERGED dict os.environ + {} (when env param is absent)
+        assert call_kwargs["env"] == os.environ, "env must be os.environ merge"
+
+        # Kill mutmut_12: capture_output=True → capture_output=None
+        # mutmut_18: capture_output=True removed
+        # mutmut_25: capture_output=True → capture_output=False
+        assert "capture_output" in call_kwargs, (
+            "capture_output kwarg MUST be present"
+        )
+        assert call_kwargs["capture_output"] is True, (
+            f"capture_output must be True, got {call_kwargs['capture_output']!r}"
+        )
+
+        # Kill mutmut_13: text=True → text=None  / mutmut_19: removed
+        # mutmut_26: text=True → text=False
+        assert "text" in call_kwargs, "text kwarg MUST be present"
+        assert call_kwargs["text"] is True, (
+            f"text must be True, got {call_kwargs['text']!r}"
+        )
+
+        # Kill mutmut_14: timeout=30 → timeout=None  / mutmut_20: removed
+        # mutmut_27: timeout=30 → timeout=31
+        assert "timeout" in call_kwargs, "timeout kwarg MUST be present"
+        assert call_kwargs["timeout"] == 30, (
+            f"timeout must be exactly 30, got {call_kwargs['timeout']!r}"
+        )
+
+    def test_version_subprocess_run_wiring_with_env(self, tmp_path: Path) -> None:
+        """H1: version() with explicit env= merges os.environ + custom env.
+
+        Kills:
+        - mutmut_11/17: env passthrough (verifies custom env is MERGED, not replaced)
+        - ALL other subprocess.run kwarg mutations (redundant but thorough)
+        """
+        custom_env = {"CUSTOM_ECS_MARKER": "unique_value_42"}
+        repo = Path("/rompehielos-test-repo-env-67890")
+        adapter = EcsAdapter()
+        mock_result = type("Result", (), {
+            "returncode": 0, "stdout": "ECS 12.5.0\n", "stderr": ""
+        })()
+        with (
+            patch(
+                "harness_quality_gate.adapters.php.ecs_adapter.shutil.which",
+                return_value="/usr/bin/ecs",
+            ),
+            patch(
+                "harness_quality_gate.adapters.php.ecs_adapter.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
+        ):
+            adapter.version(repo, env=custom_env)
+
+        arg0 = mock_run.call_args[0][0]
+        assert arg0 == ["/usr/bin/ecs", "--version"]
+
+        call_kwargs = mock_run.call_args.kwargs
+        expected_env = {**os.environ, **custom_env}
+        assert call_kwargs["cwd"] == str(repo)
+        assert call_kwargs["env"] == expected_env
+        assert call_kwargs["env"] is not os.environ, (
+            "env should be MERGED dict, not just os.environ"
+        )
+        assert call_kwargs["capture_output"] is True
+        assert call_kwargs["text"] is True
+        assert call_kwargs["timeout"] == 30
 
     def test_version_with_nonzero_exit(self, tmp_path: Path) -> None:
         """version() raises RuntimeError on non-zero exit code."""

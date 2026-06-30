@@ -12,6 +12,7 @@ string comparison and list membership is individually asserted.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -189,7 +190,7 @@ class TestInvoke:
                 adapter.invoke(repo)
                 assert mock_run.call_args[1]["cwd"] == str(repo)
 
-    def test_invoke_timeout_raises_runtime_error(self, tmp_path):
+    def test_invoke_timeout_raises_runtime_error(self, tmp_path, caplog):
         """TimeoutExpired → RuntimeError per NFR-8a (timeout is infra_error, not quality)."""
         with patch("shutil.which", return_value="/usr/bin/local-php-security-checker"):
             with patch(
@@ -202,8 +203,12 @@ class TestInvoke:
                 exc.stderr = None
                 mock_run.side_effect = exc
                 adapter = _adapter()
-                with pytest.raises(RuntimeError, match=r"timed out"):
-                    adapter.invoke(tmp_path, timeout=0.001)
+                with caplog.at_level(logging.WARNING):
+                    with pytest.raises(RuntimeError, match=r"timed out"):
+                        adapter.invoke(tmp_path, timeout=0.001)
+                # KILL mutmut_64: logger.warning(None) would log 'None', not the actual message.
+                assert len(caplog.records) >= 1
+                assert "timed out" in caplog.records[-1].message
 
     def test_invoke_timeout_stderr_bytes_raises(self, tmp_path):
         """TimeoutExpired with bytes stderr still raises RuntimeError (no silent decoding)."""

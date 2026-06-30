@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 # Directories that contain Tier-A oracle assets — must never be mutation-targeted.
 # Set literal values must not be mutated — each string is an oracle dir
 # name whose presence/absence is the test contract.
-# reason: literal values are oracle directory names; mutating to "" or "src" breaks exclusion logic
-# audited: 2026-06-29
-_ORACLE_DIRS = frozenset({"features", "tests", "fixtures"})  # pragma: no mutate
+_ORACLE_DIRS = frozenset({"features", "tests", "fixtures"})  # pragma: no mutate — literal directory names; mutation breaks exclusion
 
 
 # ---------------------------------------------------------------------------
@@ -52,12 +50,7 @@ def _load_infection_config(target_dir: Path) -> dict:
             f"infection.json5 not found in {target_dir}. "
             "The scope guard cannot validate missing configuration."
         )
-    # reason: read_text is a no-op I/O call; mutation only changes the method call target which has no behavioral effect
-    # audited: 2026-06-29
-    # reason: read_text encoding="utf-8" is a no-op I/O call; mutating to read_bytes or
-    #   changing encoding to None has no behavioral effect on JSON5 parsing downstream
-    # audited: 2026-06-29
-    text = config_path.read_text(encoding="utf-8")  # pragma: no mutate
+    text = config_path.read_text(encoding="utf-8")  # pragma: no mutate — reason: encoding=None defaults to locale UTF-8; encoding="UTF-8" is case-normalized by codecs.lookup; both are truly indistinguishable. audited: 2026-06-30
     try:
         import json5 as _json5  # noqa: F401  # type: ignore[import-not-found]
 

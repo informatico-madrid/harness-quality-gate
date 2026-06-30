@@ -226,13 +226,22 @@ class TestCheckInfectionScope:
     def test_warning_logged_for_missing_excludes(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """No excludes → warning 'source.excludes is not configured' is logged."""
+        """No excludes → exact warning message is logged.
+
+        Exact match kills string-wrap mutations (mutmut_36):
+        ``"XXinfection: source.excludes is not configured — XX"``.
+        """
         _write_infection_json5(tmp_path, ["src"], excludes=None)
         import logging
+
         with caplog.at_level(logging.WARNING):
             check_infection_scope(tmp_path)
-        messages = [r.message for r in caplog.records]
-        assert any("source.excludes is not configured" in m for m in messages)
+        assert len(caplog.records) == 1
+        assert caplog.records[0].message == (
+            "infection: source.excludes is not configured — "
+            "consider adding 'features' to reduce false-positive "
+            "mutation targets"
+        )
 
     def test_no_warning_when_excludes_include_features(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -254,8 +263,11 @@ class TestCheckInfectionScope:
         import logging
         with caplog.at_level(logging.WARNING):
             check_infection_scope(tmp_path)
-        messages = [r.message for r in caplog.records]
-        assert any("does not include 'features'" in m for m in messages)
+        assert len(caplog.records) == 1
+        assert caplog.records[0].message == (
+            "infection: source.excludes does not include 'features' — "
+            "the Tier-A oracle Behat features may still be mutation-targeted"
+        )
 
 
 class TestLoadInfectionConfig:
@@ -267,6 +279,23 @@ class TestLoadInfectionConfig:
         empty_dir.mkdir()
         with pytest.raises(FileNotFoundError, match="infection.json5 not found"):
             _load_infection_config(empty_dir)
+
+    def test_file_not_found_exact_message(self, tmp_path: Path) -> None:
+        """Exact FileNotFoundError message including dir path.
+
+        Kills XX-wrap, lowercase, uppercase mutations (mutmut_7, 8, 9) on
+        both fragments of the error message:
+        ``infection.json5 not found in {path}`` and ``The scope guard cannot
+        validate missing configuration.
+        """
+        empty_dir = tmp_path / "absent_config_dir"
+        empty_dir.mkdir()
+        with pytest.raises(FileNotFoundError) as exc_info:
+            _load_infection_config(empty_dir)
+        assert str(exc_info.value) == (
+            f"infection.json5 not found in {empty_dir}. "
+            "The scope guard cannot validate missing configuration."
+        )
 
     def test_json5_full_line_comment_stripped(self, tmp_path: Path) -> None:
         """A full-line // comment is stripped so JSON parses cleanly."""
@@ -297,12 +326,41 @@ class TestLoadInfectionConfig:
         exercise the library branch (``_json5.loads``) — covering the
         otherwise-unreachable import-success path.
         """
+        file_content = '{"source": {"directories": ["src"]}}\n'
         sentinel = {"source": {"directories": ["src"]}}
         fake_json5 = types.ModuleType("json5")
-        fake_json5.loads = lambda text: sentinel  # type: ignore[attr-defined]
+        # H1 kill (mutmut_11): the fake MUST validate the exact text argument
+        # so the mutant ``_json5.loads(None)`` raises TypeError.
+        def _strict_json5_loads(text: str) -> dict:
+            if not isinstance(text, str):
+                raise TypeError(f"loads expects str, got {type(text).__name__}")
+            return sentinel
+
+        fake_json5.loads = _strict_json5_loads  # type: ignore[attr-defined]
         (tmp_path / "infection.json5").write_text(
-            '{"source": {"directories": ["src"]}}\n', encoding="utf-8"
+            file_content, encoding="utf-8"
         )
         with patch.dict(sys.modules, {"json5": fake_json5}):
             config = _load_infection_config(tmp_path)
         assert config is sentinel
+
+    def test_load_infection_config_parse_dict_structure(self, tmp_path: Path) -> None:
+        """Verify structural equality of the full parsed config dict.
+
+        Dense assertion of top-level keys (not just ``source.directories``)
+        so that any mutation altering the parser, key names, or nested
+        structure is detected. Also round-trips non-ASCII content: if the
+        encoding parameter is mutated (``'utf-8'`` → ``None`` or ``'UTF-8'``),
+        on most platforms the content survives but the assert still
+        enforces full structural equality on the output.
+        """
+        raw = (
+            '{"source": {"directories": ["src"], "note": "caf\\u00e9"},'
+            ' "other": true}\n'
+        )
+        (tmp_path / "infection.json5").write_text(raw, encoding="utf-8")
+        config = _load_infection_config(tmp_path)
+        assert config == {
+            "source": {"directories": ["src"], "note": "café"},
+            "other": True,
+        }
