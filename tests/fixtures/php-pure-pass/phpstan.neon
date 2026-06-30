@@ -1,0 +1,9 @@
+parameters:
+    # Pure-pass smoke fixture: the harness invokes `phpstan analyse --level=max
+    # <repo>`, passing the repo root as the analysis path. Without excludePaths
+    # PHPStan walks the installed vendor/ tree (~87 packages) at level max, which
+    # took ~87s locally and blew past the CI timeout on a 2-core runner — the e2e
+    # hang this fixes. Scoping out vendor/var keeps analysis on src/+tests/ only.
+    excludePaths:
+        - vendor/*
+        - var/*
