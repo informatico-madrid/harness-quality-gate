@@ -402,16 +402,12 @@ class PhpAdapter(BaseAdapter):
         except (OSError, RuntimeError) as exc:
             logger.warning("L3A php-cs-fixer skipped: %s", exc)
 
-        # Crash flags — set when the tool's invoke() raises (binary missing,
+        # Crash results — set when the tool's invoke() raises (binary missing,
         # config parse error, OOM, timeout). These are caught by the except
-        # blocks and logged as "skipped". The pure core reads these
-        # flags to emit infra_error (NFR-8a).
-        # reason: H15 — False↔None both falsy in `or`, always overwritten before read.
-        # audited: 2026-06-30
-        ecs_crashed = False  # pragma: no mutate
-        # reason: H15 — False↔None both falsy in `or`, always overwritten before read.
-        # audited: 2026-06-30
-        rector_crashed = False  # pragma: no mutate
+        # blocks and logged as "skipped". The pure core reads these results
+        # to emit infra_error (NFR-8a).
+        ecs_result: dict[str, object] | None = None
+        rector_result: dict[str, object] | None = None
 
         # --- ECS — coding standard (Story 5.4) --------------------------
         try:
@@ -429,7 +425,7 @@ class PhpAdapter(BaseAdapter):
             all_findings.extend(ecs_findings)
             logger.info("L3A ECS: %d findings", len(ecs_findings))
         except (OSError, RuntimeError) as exc:
-            ecs_crashed = True
+            ecs_result = {"verdict": "infra_error", "tool": "ecs"}
             logger.warning("L3A ECS skipped: %s", exc)
 
         # --- Rector — idiom + deprecation, dry-run (Story 5.4) -----------
@@ -448,7 +444,7 @@ class PhpAdapter(BaseAdapter):
             all_findings.extend(rector_findings)
             logger.info("L3A Rector: %d findings", len(rector_findings))
         except (OSError, RuntimeError) as exc:
-            rector_crashed = True
+            rector_result = {"verdict": "infra_error", "tool": "rector"}
             logger.warning("L3A Rector skipped: %s", exc)
 
         # --- Tier-A visitors — antipatterns not covered by PHPMD ----------
@@ -463,7 +459,7 @@ class PhpAdapter(BaseAdapter):
 
         # ── Crash signal → infra_error (NFR-8a) ────────────────────────
         _l3a_verdict: str | None = None
-        if ecs_crashed or rector_crashed:
+        if ecs_result is not None or rector_result is not None:
             _l3a_verdict = "infra_error"
             passed = False
         else:
@@ -558,10 +554,7 @@ class PhpAdapter(BaseAdapter):
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
         mutation_remediation: dict[str, object] | None = None
-        # reason: H15 — None↔"" both falsy in truthiness checks and serialized
-        # via `if _l1_verdict`, so both produce `{}` in tool_specific.
-        # audited: 2026-06-30
-        _l1_verdict: str | None = None  # pragma: no mutate
+        _l1_verdict: str | None = None
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -695,7 +688,7 @@ class PhpAdapter(BaseAdapter):
                     "max_timeouts": 0,
                 },
                 **mutation_meta,
-                **({"verdict": _l1_verdict} if _l1_verdict else {}),
+                **({"verdict": _l1_verdict} if _l1_verdict is not None else {}),
             },
         )
 
@@ -902,10 +895,7 @@ class PhpAdapter(BaseAdapter):
         deptrac_bin = repo / "vendor" / "bin" / "deptrac"
         deptrac_yaml = repo / "deptrac.yaml"
         deptrac_applicable = deptrac_bin.is_file() and deptrac_yaml.is_file()
-        # reason: H15 — False↔None both falsy in `if deptrac_crash`, always
-        # overwritten before read in the no-crash path.
-        # audited: 2026-06-30
-        deptrac_crash: bool = False  # pragma: no mutate
+        deptrac_result: dict[str, object] | None = None
 
         if deptrac_applicable:
             try:
@@ -924,7 +914,7 @@ class PhpAdapter(BaseAdapter):
                 logger.info("L3B deptrac: %d findings", len(deptrac_findings))
             except (OSError, RuntimeError) as exc:
                 # Crash when applicable → infra_error (NFR-8a)
-                deptrac_crash = True
+                deptrac_result = {"verdict": "infra_error"}
                 all_findings.append(
                     Finding(
                         node="deptrac",
@@ -939,8 +929,8 @@ class PhpAdapter(BaseAdapter):
         passed = not any(f.severity == "error" for f in all_findings)
 
         tool_specific: dict[str, object] | None = None
-        if deptrac_crash:
-            tool_specific = {"verdict": "infra_error"}
+        if deptrac_result is not None:
+            tool_specific = deptrac_result
 
         return LayerResult(
             layer="L3B",
