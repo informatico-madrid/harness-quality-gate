@@ -406,8 +406,12 @@ class PhpAdapter(BaseAdapter):
         # config parse error, OOM, timeout). These are caught by the except
         # blocks and logged as "skipped". The pure core reads these
         # flags to emit infra_error (NFR-8a).
-        ecs_crashed = False  # noqa: F841 # type: ignore[unused-variable] # pragma: no mutate  # eq: False↔None both falsy in `or`, always overwritten before read in boolean context (mutmut_98)
-        rector_crashed = False  # pragma: no mutate  # eq: False↔None both falsy in `or`, always overwritten before read in boolean context (mutmut_100)
+        # reason: H15 — False↔None both falsy in `or`, always overwritten before read.
+        # audited: 2026-06-30
+        ecs_crashed = False  # pragma: no mutate
+        # reason: H15 — False↔None both falsy in `or`, always overwritten before read.
+        # audited: 2026-06-30
+        rector_crashed = False  # pragma: no mutate
 
         # --- ECS — coding standard (Story 5.4) --------------------------
         try:
@@ -458,7 +462,7 @@ class PhpAdapter(BaseAdapter):
         duration = time.monotonic() - t0
 
         # ── Crash signal → infra_error (NFR-8a) ────────────────────────
-        _l3a_verdict: str | None = None  # pragma: no mutate  # eq: None↔"" both falsy in `if _l3a_verdict:`, always overwritten before use (mutmut_206)
+        _l3a_verdict: str | None = None
         if ecs_crashed or rector_crashed:
             _l3a_verdict = "infra_error"
             passed = False
@@ -554,7 +558,10 @@ class PhpAdapter(BaseAdapter):
         mutation_stats: MutationStats | None = None
         mutation_skipped: str | None = None
         mutation_remediation: dict[str, object] | None = None
-        _l1_verdict: str | None = None  # HRM-E5: scope guard verdict  # pragma: no mutate  # eq: None↔"" both falsy in `if _l1_verdict:`, always overwritten before use (mutmut_117)
+        # reason: H15 — None↔"" both falsy in truthiness checks and serialized
+        # via `if _l1_verdict`, so both produce `{}` in tool_specific.
+        # audited: 2026-06-30
+        _l1_verdict: str | None = None  # pragma: no mutate
 
         try:
             pest_binary = self._pest._pest_binary(repo)
@@ -895,7 +902,10 @@ class PhpAdapter(BaseAdapter):
         deptrac_bin = repo / "vendor" / "bin" / "deptrac"
         deptrac_yaml = repo / "deptrac.yaml"
         deptrac_applicable = deptrac_bin.is_file() and deptrac_yaml.is_file()
-        deptrac_crash: bool = False  # pragma: no mutate  # eq: False↔None both falsy in `if deptrac_crash:`, always overwritten before read (mutmut_46)
+        # reason: H15 — False↔None both falsy in `if deptrac_crash`, always
+        # overwritten before read in the no-crash path.
+        # audited: 2026-06-30
+        deptrac_crash: bool = False  # pragma: no mutate
 
         if deptrac_applicable:
             try:
