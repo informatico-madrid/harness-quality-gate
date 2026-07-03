@@ -58,7 +58,7 @@ Cada entrada enlaza al shard correspondiente. Las primeras secciones de introduc
 
 ---
 
-## PARTE II — Casos difíciles (H1–H17)
+## PARTE II — Casos difíciles (H1–H20)
 
 Casos con supervivientes reales de este repo. Cada caso incluye: diff, por qué
 sobrevive, y receta exacta.
@@ -80,6 +80,9 @@ sobrevive, y receta exacta.
 - [H15. Gemelos falsy en inicializadores](MUTANT_KILLING_GUIDE/h15-gemelos-falsy-en-inicializadores-none-falsenone-none.md)
 - [H16. Exit -24 (SIGXCPU) en runs paralelos](MUTANT_KILLING_GUIDE/h16-exit-24-sigxcpu-en-runs-paralelos-casi-siempre-es-flake-no-timeout.md)
 - [H17. Inputs sobre-mockeados que se vuelven bombas de memoria bajo mutación 💣](MUTANT_KILLING_GUIDE/h17-inputs-sobre-mockeados-que-se-vuelven-bombas-de-memoria-bajo-mutacion.md) — *el `MagicMock` que un mutante arrastra a un OOM de 46 GB*
+- [H18. `inspect.signature` NO mata defaults: el trampolín conserva la firma ⭐](MUTANT_KILLING_GUIDE/h18-inspect-signature-no-mata-defaults-el-trampoln-conserva-la-firma.md) — *el default mutado vive en `x_..._mutmut_N`, no en el dispatcher*
+- [H19. Coverage gap por tier: el mutante vivo cuyo test está en `@integration` (excluido)](MUTANT_KILLING_GUIDE/h19-coverage-gap-por-tier-el-mutante-vivo-que-solo-cubre-integration-excluido.md) — *no es equivalente, es un hueco; y ramas gemelas*
+- [H20. `path_map` de LangGraph: identidad→`None` es equivalente, clave/valor mangleado NO](MUTANT_KILLING_GUIDE/h20-path-map-identidad-none-equivalente-clave-valor-mangleado-no.md)
 
 ---
 

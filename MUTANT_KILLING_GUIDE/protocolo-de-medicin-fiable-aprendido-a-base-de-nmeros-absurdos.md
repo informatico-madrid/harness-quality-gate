@@ -33,3 +33,19 @@
    board "limpio" tras un run parcial es una **mentira**. → Antes de fiarte de
    cualquier conteo: `pytest tests/unit/ --cov=harness_quality_gate
    --cov-report=` con el scope COMPLETO, luego `make clean-mutmut` y run amplio.
+8. **Un `mutmut run` largo (>10 min) necesita backgrounding REAL, no un
+   `nohup ... & echo PID; disown` metido dentro de una llamada de shell normal.**
+   Ese patrón hace que el harness marque la tarea "completed" en cuanto el
+   WRAPPER (el `echo`) termina — no cuando `mutmut` de verdad acaba — porque
+   `disown` desliga el proceso de la sesión pero no cambia qué comando está
+   siendo trackeado. Leer `export-cicd-stats` en ese punto captura el sqlite de
+   mutmut A MITAD DE ESCRITURA: produce basura tipo `killed=0, survived=0,
+   total=N` que parece "mutmut roto" (dispara la regla del punto 4) pero es
+   solo una condición de carrera del propio operador, no un fallo de mutmut.
+   Caso real (2026-07-02): confirmado con `ps aux` que el proceso seguía vivo
+   (`grep mutmut`) mientras el export ya mostraba 0/0. → Usa el parámetro nativo
+   de backgrounding de tu herramienta (el que el harness trackea de verdad y te
+   notifica al terminar), NO un truco manual de shell. Si ya lanzaste mal:
+   verifica con `ps aux | grep mutmut` antes de leer ningún número — si hay
+   proceso vivo, espera a que `ps` no muestre nada (ni siquiera `<defunct>`)
+   antes de exportar.

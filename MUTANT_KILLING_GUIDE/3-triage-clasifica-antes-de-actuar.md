@@ -12,6 +12,21 @@ Por cada `mutmut show`, responde en orden:
    doble de test?** → Candidato a equivalente: ve a §5 y busca su tipo.
    Casi siempre hay un refactor que lo elimina.
 
+**Antes de escribir "equivalente", descarta las OTRAS dos causas (tripartición).**
+Un mutante que "no se deja matar" casi nunca es un equivalente inocente: es una
+**señal**. El fin del mutation testing no es matar por deporte, es encontrar
+deficiencias. Un superviviente difícil suele ser una de tres cosas — y cada una
+tiene una acción distinta:
+
+| Causa | Señal | Acción correcta |
+|---|---|---|
+| **Código muerto** | el mutante está sobre un nodo/rama/símbolo sin usar (sin edge, sin caller) | **BORRAR** el código muerto → el mutante desaparece. NO pragma |
+| **Coverage gap** | el comportamiento es real pero ningún test del *tier del gate* lo recorre (está en `@integration`, o en una rama gemela sin cubrir) | Escribir el test **offline en el tier del gate** ([H19](h19-coverage-gap-por-tier-el-mutante-vivo-que-solo-cubre-integration-excluido.md)). NO pragma |
+| **Señal de diseño** | inmatable porque el valor está saturado / es una fuente de verdad duplicada / desconectada | **Rediseñar** (el mutante muere al arreglar el diseño) — ver [H18](h18-inspect-signature-no-mata-defaults-el-trampoln-conserva-la-firma.md) |
+
+Solo lo que sobrevive a las TRES (no es muerto, sí está cubierto en el tier del
+gate, el diseño es correcto) es candidato legítimo a equivalente/pragma (§5, §7).
+
 Anti-patrones de test que generan supervivientes (búscalos primero en el test
 existente antes de escribir uno nuevo):
 
