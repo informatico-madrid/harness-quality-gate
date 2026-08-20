@@ -29,3 +29,20 @@ sin redondear (1.23456 → 1.235 ≠ 1 ≠ 1.23456). Lo mismo aplica a
 `datetime.now`, `uuid4`, `tempfile`, `random`: **inyectar o monkeypatchear,
 nunca assertar "aproximadamente"**. `pytest.approx` con tolerancia ancha es
 un criadero de mutantes aritméticos.
+
+**Trampa de razonamiento — `timezone.utc → None` NO es equivalente "en máquinas
+UTC".** Diff típico: `datetime.now(datetime.timezone.utc)` → `datetime.now(None)`.
+Es tentador declarar esto equivalente ("en un servidor en UTC el reloj de pared
+es el mismo, así que da igual"). Es **falso**: `datetime.now(None)` produce un
+objeto **naive** (sin `tzinfo`) mientras que `datetime.now(timezone.utc)` produce
+uno **aware**; `.isoformat()` de un naive NUNCA lleva el sufijo `+00:00`/`Z`,
+sea cual sea la zona horaria de la máquina que ejecuta el test. Es observable
+en **cualquier** entorno, no solo en no-UTC — no hace falta viajar de zona
+horaria ni congelar el reloj con un valor "raro": basta con assertar que la
+cadena termina en `+00:00` o `Z` (o que `datetime.fromisoformat(...).tzinfo is
+not None`). Caso real (rompehielos, `finalise_calibration`, 2026-07-04): un
+agente declaró este mutante "indistinguible en máquinas UTC" — razonamiento
+igual de plausible y de falso que el `isinstance([], list)` del caso de
+`psalm_taint_adapter` (regla de oro #3): en ambos casos, **probarlo habría
+tardado menos que escribirlo**. Antes de aceptar cualquier "es igual en mi
+entorno", ejecuta los dos objetos y compara `.tzinfo` o el string exacto.

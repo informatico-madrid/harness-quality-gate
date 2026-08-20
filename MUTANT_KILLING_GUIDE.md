@@ -49,6 +49,7 @@ Cada entrada enlaza al shard correspondiente. Las primeras secciones de introduc
   - [Tipo G — is ↔ == con singletons](MUTANT_KILLING_GUIDE/5-taxonoma-de-presuntos-equivalentes-y-solucin-por-tipo.md#tipo-g-con-singletons-sentinels)
   - [Tipo H — Mensajes/representaciones "que no importan"](MUTANT_KILLING_GUIDE/5-taxonoma-de-presuntos-equivalentes-y-solucin-por-tipo.md#tipo-h-mensajesrepresentaciones-que-no-importan)
   - [Tipo I — Mutación con efecto solo en rendimiento](MUTANT_KILLING_GUIDE/5-taxonoma-de-presuntos-equivalentes-y-solucin-por-tipo.md#tipo-i-mutacin-con-efecto-solo-en-el-rendimiento-de-la-suite-timeouts)
+  - [Tipo J — Literal insensible a mayúsculas/formato en frontera de stdlib](MUTANT_KILLING_GUIDE/5-taxonoma-de-presuntos-equivalentes-y-solucin-por-tipo.md#tipo-j-literal-insensible-a-maysculasformato-en-frontera-de-stdlib-nombres-de-codec-cabeceras-http)
 
 ### Estrategia y política
 
@@ -83,6 +84,7 @@ sobrevive, y receta exacta.
 - [H18. `inspect.signature` NO mata defaults: el trampolín conserva la firma ⭐](MUTANT_KILLING_GUIDE/h18-inspect-signature-no-mata-defaults-el-trampoln-conserva-la-firma.md) — *el default mutado vive en `x_..._mutmut_N`, no en el dispatcher*
 - [H19. Coverage gap por tier: el mutante vivo cuyo test está en `@integration` (excluido)](MUTANT_KILLING_GUIDE/h19-coverage-gap-por-tier-el-mutante-vivo-que-solo-cubre-integration-excluido.md) — *no es equivalente, es un hueco; y ramas gemelas*
 - [H20. `path_map` de LangGraph: identidad→`None` es equivalente, clave/valor mangleado NO](MUTANT_KILLING_GUIDE/h20-path-map-identidad-none-equivalente-clave-valor-mangleado-no.md)
+- [H21. Parsers de índice manual: el clúster de timeouts+supervivientes es un olor arquitectónico](MUTANT_KILLING_GUIDE/h21-parsers-de-indice-manual-el-cluster-de-timeouts-y-supervivientes-es-un-olor-arquitectonico.md) — *reescribir a stateful (flags) no basta, hace falta stateless*
 
 ---
 

@@ -110,6 +110,29 @@ Un mutante `timeout` (⏰) suele ser un loop infinito creado por la mutación �
 cuenta como muerto para el MSI de mutmut pero el gate de CI lo rechaza.
 Investiga: casi siempre indica que falta un test rápido y específico que
 mate ese mutante ANTES de colgar la suite (test unitario de la condición del
-loop con frontera exacta).
+loop con frontera exacta). Si el clúster de timeouts+supervivientes de una
+función es grande y son todos variaciones de aritmética de índice, el
+problema es la función, no los tests uno a uno — ver
+[H21](h21-parsers-de-indice-manual-el-cluster-de-timeouts-y-supervivientes-es-un-olor-arquitectonico.md).
+
+## Tipo J — Literal insensible a mayúsculas/formato en frontera de stdlib (nombres de codec, cabeceras HTTP)
+
+`"ascii"` → `"ASCII"` en `str.encode("ascii", "ignore")` es un equivalente
+REAL: el lookup de codecs de Python normaliza mayúsculas/guiones
+(`encodings.normalize_encoding`), así que ambos strings resuelven al mismo
+codec — ningún test puede diferenciarlos por diseño de la stdlib. Lo mismo
+aplica a nombres de cabecera HTTP contra un dict case-insensitive, o
+palabras clave SQL. No es pereza de test: es una propiedad genuina de la
+API de destino.
+- **Diagnóstico**: ¿el literal se pasa a una función/API cuya documentación
+  dice explícitamente "case-insensitive"? → equivalente real, no sigas
+  buscando un test.
+- **Refactor preferido sobre pragma**: reformula sin el literal mutable.
+  Caso real (rompehielos, `_normalise_name`, 2026-07-04):
+  `decomposed.encode("ascii", "ignore").decode("ascii")` (2 supervivientes,
+  `"ascii"→"ASCII"` en cada `.encode`/`.decode`) → `"".join(ch for ch in
+  decomposed if ch.isascii())`. Mismo resultado, cero literales de codec que
+  mutar — el mutante desaparece estructuralmente en vez de quedar
+  documentado como equivalente.
 
 ---
