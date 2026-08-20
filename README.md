@@ -494,6 +494,30 @@ The gate continues with degraded functionality, but users are always informed.
 - Python 3.10+
 - pip
 
+For development from a source checkout:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+pytest tests/unit/ -q
+```
+
+The unit suite is hermetic and does not require PHP or Composer. To reproduce the
+complete CI matrix, including PHP adapter and E2E compatibility checks, also install:
+
+- PHP 8.2, 8.3, or 8.4;
+- Composer 2;
+- PCOV (recommended by CI for coverage);
+- the PHP visitor dependencies with
+  `composer install --working-dir=harness_quality_gate/adapters/php/visitors`;
+- the PHP fixture dependencies with
+  `composer update --working-dir=tests/fixtures/php-pure-pass`.
+
+CI uses PHP 8.3 for the main Python matrix and PHP 8.2/8.4 for the compatibility
+jobs. Without those optional local tools, PHP E2E checks may skip, but unit tests
+must still pass.
+
 ### Install Code Tools
 
 ```bash
@@ -611,7 +635,7 @@ Contributions are welcome! If this skill proves useful to you, please consider g
 2. **Create a branch** for your feature or fix (`git checkout -b feature/amazing-feature`)
 3. **Ensure all checks pass** (run L3A smoke test first: `python3 -m harness_quality_gate all .`)
 4. **Run the full quality gate before pushing**:
-   - `ruff check harness_quality_gate/ tests/`
+   - `ruff check harness_quality_gate/`
    - `pytest tests/unit/ -q --cov=harness_quality_gate --cov-fail-under=100 -p no:randomly`
    - `python -m harness_quality_gate audit-ignores harness_quality_gate` (must exit 0)
    - `make mutation` (CI checks `mutants/mutmut-cicd-stats.json`; must have 0 survived/no_tests/suspicious/timeout)

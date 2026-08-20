@@ -4002,9 +4002,11 @@ class TestPhpWeakTestAdapter:
         tests_dir.mkdir()
         test_file = tests_dir / "FooTest.php"
         test_file.touch()
-        # With no visitor scripts present (they won't exist), invoke should run
-        # but skip each visitor gracefully and return empty findings
-        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        with patch(
+            "harness_quality_gate.adapters.php.weak_test_php._WEAK_TEST_VISITORS",
+            ("missing_visitor",),
+        ):
+            result = PhpWeakTestAdapter().invoke(tmp_path, [])
         assert result.exitcode == 0
         assert json.loads(result.stdout) == []
 
@@ -6107,9 +6109,14 @@ class TestComposerAuditInvokeArgs:
         
         Assert exact return type, not just "not None".
         """
-        with patch(
-            "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
-            return_value="/usr/bin/composer",
+        with (
+            patch(
+                "harness_quality_gate.adapters.php.composer_audit_adapter.shutil.which",
+                return_value="/usr/bin/composer",
+            ),
+            patch.object(
+                ComposerAuditAdapter, "_run", return_value=_ok("{}"),
+            ),
         ):
             result = ComposerAuditAdapter().invoke(_repo(Path("/tmp")))
         # Must be exactly a ToolInvocation (not just "not None")
@@ -6262,4 +6269,3 @@ class TestComposerAuditParseDetailedFields:
         assert f.cve == "CVE-2024-1234"
         assert f.fix_hint == "https://example.com/advisory"
         assert f.cwe == ""
-

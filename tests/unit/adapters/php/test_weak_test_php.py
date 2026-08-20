@@ -591,7 +591,11 @@ class TestInvokeDirect:
         test_file = tests_dir / "FooTest.php"
         test_file.touch()
 
-        result = PhpWeakTestAdapter().invoke(tmp_path, [])
+        with patch(
+            "harness_quality_gate.adapters.php.weak_test_php._WEAK_TEST_VISITORS",
+            ("missing_visitor",),
+        ):
+            result = PhpWeakTestAdapter().invoke(tmp_path, [])
         assert json.loads(result.stdout) == []
         assert result.exitcode == 0
 
