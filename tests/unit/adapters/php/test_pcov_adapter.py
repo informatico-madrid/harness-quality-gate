@@ -428,7 +428,10 @@ class TestProbeLayerResultDirect:
 
     def test_layerresult_pcov_exact_object(self) -> None:
         """probe() → 'pcov' → passed=True, findings=[], kills return-path mutations."""
-        with patch("subprocess.run", return_value=self._make_completed("pcov\nCore")):
+        with (
+            patch("shutil.which", return_value="/usr/bin/php"),
+            patch("subprocess.run", return_value=self._make_completed("pcov\nCore")),
+        ):
             result = PcovAdapter().probe_layer_result(Path("/tmp"))
 
         # Exact object comparison kills all field mutations (node, severity,
@@ -451,9 +454,12 @@ class TestProbeLayerResultDirect:
           - line 172: return LayerResult mutation (swap True↔False)
           - logger.info at line 157 (string mutation "coverage_driver="→...)
         """
-        with patch("subprocess.run", return_value=self._make_completed("xdebug 3\nCore")):
-            with patch("glob.glob", return_value=[]):
-                result = PcovAdapter().probe_layer_result(Path("/tmp"))
+        with (
+            patch("shutil.which", return_value="/usr/bin/php"),
+            patch("subprocess.run", return_value=self._make_completed("xdebug 3\nCore")),
+            patch("glob.glob", return_value=[]),
+        ):
+            result = PcovAdapter().probe_layer_result(Path("/tmp"))
 
         assert isinstance(result, LayerResult)
         assert result.passed is True
@@ -478,9 +484,12 @@ class TestProbeLayerResultDirect:
           - F-string mutation in message
           - passed=False → passed=True mutation
         """
-        with patch("subprocess.run", side_effect=RuntimeError("php not found")):
-            with patch("glob.glob", return_value=[]):
-                result = PcovAdapter().probe_layer_result(Path("/tmp"))
+        with (
+            patch("shutil.which", return_value="/usr/bin/php"),
+            patch("subprocess.run", side_effect=RuntimeError("php not found")),
+            patch("glob.glob", return_value=[]),
+        ):
+            result = PcovAdapter().probe_layer_result(Path("/tmp"))
 
         assert isinstance(result, LayerResult)
         assert result == LayerResult(

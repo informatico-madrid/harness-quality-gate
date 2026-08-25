@@ -8,7 +8,7 @@
 # STEP BY STEP (ALL STEPS ARE MANDATORY — MUST follow this exact order):
 #
 #   1. make check-tests
-#      ── Verify ALL 1139 tests pass BEFORE mutation (MANDATORY)
+#      ── Verify ALL unit tests pass BEFORE mutation (MANDATORY)
 #
 #   2. make coverage
 #      ── Verify test coverage is 100% (MANDATORY — fails if < 100%)
@@ -97,7 +97,7 @@ VENV = .venv
 help:
 	@echo ""
 	@echo "Available targets:"
-	@echo "  make check-tests                          - Run all 1139 tests (step 1)"
+	@echo "  make check-tests                          - Run all unit tests (step 1)"
 	@echo "  make coverage                              - Run coverage (step 2)"
 	@echo "  make clean-mutmut                          - Clear mutmut cache (step 3)"
 	@echo "  make mutation                              - Full mutation on all files (step 4)"

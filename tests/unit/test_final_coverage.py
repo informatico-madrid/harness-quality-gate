@@ -429,9 +429,12 @@ def test_weak_test_invoke_with_test_file(tmp_path: Path) -> None:
     # Create a Test PHP file
     (tmp_path / "FooTest.php").write_text("<?php class FooTest extends TestCase {}")
     adapter = PhpWeakTestAdapter()
-    # Mock the runner invoke to avoid running real PHP
-    with patch.object(adapter._runner, "invoke",
-                      return_value=ToolInvocation(stdout="[]", stderr="", exitcode=0)):
+    completed = MagicMock(returncode=0, stdout="[]", stderr="")
+    # Unit tests must not require the local PHP runtime.
+    with patch(
+        "harness_quality_gate.adapters.php.weak_test_php.subprocess.run",
+        return_value=completed,
+    ):
         result = adapter.invoke(tmp_path, env={})
     assert result.exitcode == 0
 

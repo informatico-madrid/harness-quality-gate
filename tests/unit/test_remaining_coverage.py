@@ -1253,8 +1253,11 @@ class TestPhpWeakTestAdapter:
         # Create a test file so we pass the early-exit check
         test_file = tmp_path / "FooTest.php"
         test_file.write_text("<?php", encoding="utf-8")
-        # All visitor scripts will be missing since tmp_path is not the real visitors dir
-        inv = a.invoke(tmp_path, [])
+        with patch(
+            "harness_quality_gate.adapters.php.weak_test_php._WEAK_TEST_VISITORS",
+            ("missing_visitor",),
+        ):
+            inv = a.invoke(tmp_path, [])
         assert inv is not None
 
     def test_collect_test_files(self, tmp_path):
