@@ -508,6 +508,18 @@ The gate continues with degraded functionality, but users are always informed.
 
 - Python 3.10+
 - pip
+- uv (for the isolated remote installation below)
+
+For isolated use against another repository, install the harness directly from
+GitHub without an editable checkout. Pin `HQG_REF` to a full commit SHA in CI:
+
+```bash
+HQG_REF=main
+uv venv .harness-venv
+uv pip install --python .harness-venv/bin/python \
+  "harness-quality-gate @ git+https://github.com/informatico-madrid/harness-quality-gate.git@${HQG_REF}"
+.harness-venv/bin/python -m harness_quality_gate all /path/to/repository --json
+```
 
 For development from a source checkout:
 
