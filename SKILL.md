@@ -24,8 +24,10 @@ Do NOT activate this skill when:
 
 ## Inputs Required
 
-- `{project-root}`: The repository working directory (must contain `src/` and `tests/`)
-- Language is auto-detected: Python (via `pyproject.toml` / `setup.py`) or PHP (via `composer.json`)
+- `{project-root}`: The repository working directory.
+- Language is declared by root `.quality-gate-lang` when present; otherwise
+  `composer.json` selects PHP, `tsconfig.json` identifies unsupported TypeScript,
+  and Python remains the legacy fallback.
 
 ## Conventions
 
@@ -49,10 +51,16 @@ The quality gate uses a **5-layer validation approach** (L3A→L1→L2→L3B→L
   local-php-security-checker, shipmonk/dead-code-detector,
   shipmonk/composer-dependency-analyser, gitleaks, semgrep
 
-> **Detection policy:** a repo containing `composer.json` is treated as
-> **PHP-only**; anything else is treated as Python. Hybrid Python+PHP repos
-> are deliberately not supported (decision 69b05df, ratified): no 3-tier
-> detection, no detection cache, no hybrid dispatch.
+> **Detection policy:** detection is the first repository preflight, before
+> configuration, tool checks, adapters, or layers. A root
+> `.quality-gate-lang` declaration has precedence, followed by `composer.json`
+> (PHP) and `tsconfig.json` (TypeScript); Python remains the legacy fallback.
+> Only Python and PHP are supported. Any declared or detected other language
+> exits `2` with JSON diagnostics and creates no checkpoint. Projects that have
+> not materialized package files should declare their intended language in
+> `.quality-gate-lang`. The marker must contain one language token; embedded
+> whitespace or control characters make it invalid. Hybrid dispatch remains
+> unsupported.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐

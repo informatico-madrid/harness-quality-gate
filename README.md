@@ -44,7 +44,22 @@ This skill implements a **multi-layer quality gate harness** for autonomous codi
 - **Code quality analysis** (SOLID principles, design principles, antipatterns; PHP adds deptrac architecture validation in L3B)
 - **Security scanning** (Python: bandit, vulture, deptry, gitleaks, semgrep, checkov, trivy · PHP: psalm --taint-analysis, composer audit, local-php-security-checker, shipmonk/dead-code-detector, shipmonk/composer-dependency-analyser)
 
-Language detection is automatic and deliberately simple: a repo with `composer.json` is treated as **PHP-only**, anything else as Python. Hybrid repos are not supported.
+Language detection runs as the first repository preflight, before virtual-environment diagnostics, configuration, tool checks, adapters, or quality layers. Detection precedence is:
+
+1. root `.quality-gate-lang` declaration;
+2. root `composer.json` -> PHP;
+3. root `tsconfig.json` -> TypeScript;
+4. Python as the legacy fallback.
+
+Only Python and PHP are supported. A declared or detected language such as TypeScript exits `2` with an actionable JSON diagnostic and does not run any layer or write a checkpoint. Use `.quality-gate-lang` when the intended stack must be known before its package files exist:
+
+```text
+typescript
+```
+
+The marker accepts one language token: `python`/`py`, `php`, `typescript`/`ts`,
+or `javascript`/`js`. Embedded whitespace or control characters make it invalid.
+Unsupported values fail closed. Hybrid repos are not supported.
 
 The output is a **checkpoint JSON** that agents can parse to verify their own output before committing.
 
@@ -503,6 +518,16 @@ pip install -e ".[dev]"
 pytest tests/unit/ -q
 ```
 
+On Debian/Ubuntu, `python -m venv` also requires the matching system package
+(`python3-venv` or `python3.X-venv`). If modifying system packages is undesirable,
+the equivalent isolated installation with `uv` is:
+
+```bash
+uv venv .venv
+uv pip install --python .venv/bin/python -e ".[dev]"
+.venv/bin/pytest tests/unit/ -q
+```
+
 The unit suite is hermetic and does not require PHP or Composer. To reproduce the
 complete CI matrix, including PHP adapter and E2E compatibility checks, also install:
 
@@ -592,6 +617,15 @@ python3 -m harness_quality_gate all .
 # 1. Read steps/step-00-install.md (if tools may be missing)
 # 2. Read steps/step-01-init.md
 # 3. Follow steps in sequence L3A → L1 → L2 → L3B → L4
+```
+
+For a pre-bootstrap TypeScript project, declare the language and verify the
+unsupported result before installing project tools:
+
+```bash
+printf 'typescript\n' > .quality-gate-lang
+python3 -m harness_quality_gate all . --json
+# exit 2; no adapter, layer, or checkpoint is created
 ```
 
 ### CLI Subcommands

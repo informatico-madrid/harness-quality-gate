@@ -65,6 +65,71 @@ class TestDetectLanguage:
     def test_empty_dir_defaults_to_python(self, tmp_path):
         assert _detect_language(tmp_path) == "python"
 
+    def test_explicit_language_marker_is_available_before_bootstrap(self, tmp_path):
+        marker = tmp_path / ".quality-gate-lang"
+        marker.write_text("python\n", encoding="utf-8")
+        assert _detect_language(tmp_path) == "python"
+
+        marker.write_text("php\n", encoding="utf-8")
+        assert _detect_language(tmp_path) == "php"
+
+        marker.write_text("typescript\n", encoding="utf-8")
+        assert _detect_language(tmp_path) == "typescript"
+
+    def test_explicit_language_marker_takes_priority(self, tmp_path):
+        (tmp_path / ".quality-gate-lang").write_text("typescript\n", encoding="utf-8")
+        (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
+        assert _detect_language(tmp_path) == "typescript"
+
+    def test_typescript_when_tsconfig_present(self, tmp_path):
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        assert _detect_language(tmp_path) == "typescript"
+
+    def test_composer_takes_priority_over_tsconfig(self, tmp_path):
+        (tmp_path / "composer.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        assert _detect_language(tmp_path) == "php"
+
+    def test_language_marker_normalizes_documented_aliases(self, tmp_path):
+        marker = tmp_path / ".quality-gate-lang"
+        for declared, expected in (
+            (" Py ", "python"),
+            ("TS", "typescript"),
+            ("js", "javascript"),
+        ):
+            marker.write_text(declared, encoding="utf-8")
+            assert _detect_language(tmp_path) == expected
+
+    def test_invalid_or_empty_language_marker_fails_closed(self, tmp_path):
+        marker = tmp_path / ".quality-gate-lang"
+        for invalid in ("", "typescript\nphp", "type script", "type\x00script"):
+            marker.write_text(invalid, encoding="utf-8")
+            assert _detect_language(tmp_path) == "invalid-marker"
+
+        marker.write_bytes(b"\xff")
+        assert _detect_language(tmp_path) == "invalid-marker"
+
+    def test_language_marker_is_read_with_explicit_utf8(self, tmp_path):
+        marker = tmp_path / ".quality-gate-lang"
+        marker.touch()
+        encodings = []
+
+        def read_marker(path, *, encoding=None, errors=None):
+            assert path == marker
+            encodings.append(encoding)
+            return "typescript"
+
+        with patch.object(Path, "read_text", read_marker):
+            assert _detect_language(tmp_path) == "typescript"
+
+        assert encodings[0] is not None
+        assert encodings[0].lower().replace("_", "-") == "utf-8"
+
+    def test_marker_names_must_be_files(self, tmp_path):
+        (tmp_path / "composer.json").mkdir()
+        (tmp_path / "tsconfig.json").mkdir()
+        assert _detect_language(tmp_path) == "python"
+
 
 # ---------------------------------------------------------------------------
 # _asdict
@@ -155,6 +220,73 @@ class TestCmdAll:
     def test_nonexistent_repo_returns_unsupported(self, tmp_path):
         code = _cmd_all(_make_args(repo=str(tmp_path / "nowhere")))
         assert code == UNSUPPORTED
+
+    def test_typescript_stops_before_setup_or_layers(self, tmp_path, capsys):
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        with (
+            patch(
+                "harness_quality_gate.cli._check_venv",
+                side_effect=AssertionError("venv diagnostic must not run"),
+            ),
+            patch(
+                "harness_quality_gate.cli.load_with_defaults",
+                side_effect=AssertionError("config must not load"),
+            ),
+            patch(
+                "harness_quality_gate.cli.PythonAdapter",
+                side_effect=AssertionError("Python adapter must not load"),
+            ),
+            patch(
+                "harness_quality_gate.cli.PhpAdapter",
+                side_effect=AssertionError("PHP adapter must not load"),
+            ),
+            patch("harness_quality_gate.cli.write_checkpoint") as write_checkpoint,
+        ):
+            code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+
+        assert code == UNSUPPORTED
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "unsupported project language: typescript",
+            "language": "typescript",
+            "supported_languages": ["python", "php"],
+            "exit_code": UNSUPPORTED,
+        }
+        write_checkpoint.assert_not_called()
+        assert not (tmp_path / "_quality-gate").exists()
+
+    def test_invalid_language_marker_returns_actionable_error(self, tmp_path, capsys):
+        (tmp_path / ".quality-gate-lang").write_bytes(b"\xff")
+
+        code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+
+        assert code == UNSUPPORTED
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "invalid .quality-gate-lang: expected a UTF-8 language name",
+            "language": "unknown",
+            "supported_languages": ["python", "php"],
+            "exit_code": UNSUPPORTED,
+        }
+
+    def test_unknown_language_marker_preserves_declared_name(self, tmp_path, capsys):
+        (tmp_path / ".quality-gate-lang").write_text("Ruby\n", encoding="utf-8")
+
+        code = _cmd_all(_make_args(repo=str(tmp_path), json=True))
+
+        assert code == UNSUPPORTED
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "unsupported project language: ruby",
+            "language": "ruby",
+            "supported_languages": ["python", "php"],
+            "exit_code": UNSUPPORTED,
+        }
+
+    def test_unsupported_language_quiet_suppresses_output(self, tmp_path, capsys):
+        (tmp_path / ".quality-gate-lang").write_text("typescript", encoding="utf-8")
+
+        code = _cmd_all(_make_args(repo=str(tmp_path), quiet=True))
+
+        assert code == UNSUPPORTED
+        assert capsys.readouterr().out == ""
 
     def test_python_repo_all_pass(self, tmp_path):
         adapter = self._make_mock_adapter(passed=True)
@@ -990,4 +1122,3 @@ class TestCheckVenv:
         with patch("harness_quality_gate.cli.sys.executable", str(venv_py)):
             warnings = _check_venv(tmp_path, "python")
         assert warnings == []
-

@@ -86,14 +86,41 @@ def _check_venv(repo: Path, language: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Language detection (5 lines — no 419-LOC detector module needed)
+# Language detection
 # ---------------------------------------------------------------------------
+
+_SUPPORTED_LANGUAGES = ("python", "php")
+_LANGUAGE_ALIASES = {
+    "py": "python",
+    "python": "python",
+    "php": "php",
+    "js": "javascript",
+    "javascript": "javascript",
+    "ts": "typescript",
+    "typescript": "typescript",
+}
 
 
 def _detect_language(repo: Path) -> str:
-    """Return 'php' if composer.json is present, else 'python'."""
-    if (repo / "composer.json").exists():
+    """Detect the declared project language before loading any toolchain."""
+    marker = repo / ".quality-gate-lang"
+    if marker.is_file():
+        try:
+            # reason: UTF-8 spelling aliases are behaviorally equivalent.
+            # audited: 2026-08-26
+            raw = marker.read_text(encoding="utf-8")  # pragma: no mutate
+            declared = raw.strip().lower()
+        except (OSError, UnicodeError):
+            return "invalid-marker"
+        if not declared or any(
+            char.isspace() or not char.isprintable() for char in declared
+        ):
+            return "invalid-marker"
+        return _LANGUAGE_ALIASES.get(declared, declared)
+    if (repo / "composer.json").is_file():
         return "php"
+    if (repo / "tsconfig.json").is_file():
+        return "typescript"
     return "python"
 
 
@@ -174,6 +201,22 @@ def _cmd_all(args: argparse.Namespace) -> int:
         )
 
     language = _detect_language(repo)
+    if language not in _SUPPORTED_LANGUAGES:
+        invalid_marker = language == "invalid-marker"
+        return _exit_with(
+            UNSUPPORTED,
+            {
+                "error": (
+                    "invalid .quality-gate-lang: expected a UTF-8 language name"
+                    if invalid_marker
+                    else f"unsupported project language: {language}"
+                ),
+                "language": "unknown" if invalid_marker else language,
+                "supported_languages": list(_SUPPORTED_LANGUAGES),
+                "exit_code": UNSUPPORTED,
+            },
+            quiet=args.quiet,
+        )
 
     # --paths with no values is ambiguous: reject it (security fix #5)
     if args.paths is not None and len(args.paths) == 0:
